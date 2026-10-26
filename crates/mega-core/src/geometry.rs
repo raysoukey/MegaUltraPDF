@@ -80,6 +80,15 @@ impl Rotation {
         matches!(self, Rotation::Cw90 | Rotation::Cw270)
     }
 
+    pub(crate) fn from_pdfium(r: PdfPageRenderRotation) -> Rotation {
+        match r {
+            PdfPageRenderRotation::None => Rotation::None,
+            PdfPageRenderRotation::Degrees90 => Rotation::Cw90,
+            PdfPageRenderRotation::Degrees180 => Rotation::Cw180,
+            PdfPageRenderRotation::Degrees270 => Rotation::Cw270,
+        }
+    }
+
     pub(crate) fn to_pdfium(self) -> PdfPageRenderRotation {
         match self {
             Rotation::None => PdfPageRenderRotation::None,

@@ -148,6 +148,14 @@ impl Document {
         Ok(PdfPageIndex::from(index))
     }
 
+    /// Accès mutable au document PDFium sous-jacent, réservé aux autres modules du crate.
+    #[allow(clippy::expect_used)]
+    pub(crate) fn inner_mut(&mut self) -> &mut PdfDocument<'static> {
+        self.inner
+            .as_mut()
+            .expect("le document PDFium n'est libéré que dans Drop")
+    }
+
     /// Accès au document PDFium sous-jacent, réservé aux autres modules du crate.
     ///
     /// Invariant : `inner` n'est `None` que pendant `Drop`, où plus aucune méthode ne peut

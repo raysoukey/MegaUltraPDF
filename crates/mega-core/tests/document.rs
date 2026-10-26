@@ -161,3 +161,119 @@ fn open_rejects_more_than_u16_max_pages() {
     let ok = Document::from_bytes(mega_core::testing::many_pages_pdf(65_535), None).unwrap();
     assert_eq!(ok.page_count(), 65_535);
 }
+
+// ---- Lot 1 : texte, recherche, signets, liens, propriétés, rotation ----
+
+#[test]
+fn text_boxes_read_page_label() {
+    let doc = Document::from_bytes(sample_pdf(3, "x"), None).unwrap();
+    let boxes = doc.text_boxes(1).unwrap();
+    let text: String = boxes
+        .iter()
+        .map(|b| b.ch)
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert!(text.starts_with("Page2"), "{text}");
+    assert!(boxes.iter().all(|b| b.rect.h > 0.0 && b.rect.w >= 0.0));
+}
+
+#[test]
+fn text_boxes_empty_on_blank_page() {
+    let doc = Document::from_bytes(mega_core::testing::blank_pdf(200.0, 200.0), None).unwrap();
+    assert!(doc.text_boxes(0).unwrap().is_empty());
+    let hits = doc
+        .search_page(0, "rien", &mega_core::SearchOptions::default())
+        .unwrap();
+    assert!(hits.is_empty());
+}
+
+#[test]
+fn search_finds_each_page_once() {
+    let doc = Document::from_bytes(sample_pdf(3, "x"), None).unwrap();
+    let opts = mega_core::SearchOptions::default();
+    for page in 0..3 {
+        let hits = doc.search_page(page, "Page", &opts).unwrap();
+        assert_eq!(hits.len(), 1, "page {page}");
+        assert_eq!(hits[0].page, page);
+        assert_eq!(hits[0].rects.len(), 1);
+    }
+}
+
+#[test]
+fn search_respects_case() {
+    let doc = Document::from_bytes(sample_pdf(1, "x"), None).unwrap();
+    let strict = mega_core::SearchOptions {
+        match_case: true,
+        whole_word: false,
+    };
+    assert!(doc.search_page(0, "page", &strict).unwrap().is_empty());
+    assert_eq!(
+        doc.search_page(0, "page", &mega_core::SearchOptions::default())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn outline_tree_has_child() {
+    let doc = Document::from_bytes(mega_core::testing::outlined_pdf(), None).unwrap();
+    let outline = doc.outline().unwrap();
+    assert_eq!(outline.len(), 2);
+    assert_eq!(outline[0].title, "Chapitre 1");
+    assert_eq!(outline[0].page, Some(0));
+    assert_eq!(outline[0].children.len(), 1);
+    assert_eq!(outline[0].children[0].title, "Section 1.1");
+    assert_eq!(outline[0].children[0].page, Some(1));
+    assert_eq!(outline[1].page, Some(2));
+    assert!(
+        Document::from_bytes(sample_pdf(1, "x"), None)
+            .unwrap()
+            .outline()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn links_internal_and_uri() {
+    use mega_core::LinkTarget;
+    let doc = Document::from_bytes(mega_core::testing::outlined_pdf(), None).unwrap();
+    let links = doc.links(0).unwrap();
+    assert_eq!(links.len(), 2);
+    assert!(
+        links
+            .iter()
+            .any(|l| matches!(l.target, LinkTarget::Page(2)))
+    );
+    assert!(
+        links
+            .iter()
+            .any(|l| matches!(&l.target, LinkTarget::Uri(u) if u == "https://example.org"))
+    );
+    assert!(links.iter().all(|l| l.rect.w > 0.0 && l.rect.h > 0.0));
+    assert!(doc.links(1).unwrap().is_empty());
+}
+
+#[test]
+fn properties_expose_title_and_version() {
+    let doc = Document::from_bytes(sample_pdf(2, "Propriétés"), None).unwrap();
+    let p = doc.properties().unwrap();
+    assert_eq!(p.title.as_deref(), Some("Propriétés"));
+    assert!(p.pdf_version.starts_with("1."), "{}", p.pdf_version);
+    assert_eq!(p.page_count, 2);
+    assert_eq!(p.producer.as_deref(), Some("MegaUltraPDF tests"));
+}
+
+#[test]
+fn render_rotated_swaps_dimensions() {
+    use mega_core::Rotation;
+    let doc = Document::from_bytes(sample_pdf(1, "x"), None).unwrap();
+    let upright = doc.render_page_with(0, 0.5, Rotation::None).unwrap();
+    let turned = doc.render_page_with(0, 0.5, Rotation::Cw90).unwrap();
+    assert!(upright.height_px > upright.width_px);
+    assert_eq!(
+        (turned.width_px, turned.height_px),
+        (upright.height_px, upright.width_px)
+    );
+}

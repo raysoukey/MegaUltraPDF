@@ -30,13 +30,23 @@
 pub mod document;
 pub mod engine;
 pub mod error;
+pub mod geometry;
+pub mod links;
+pub mod outline;
+pub mod properties;
 pub mod render;
 #[cfg(feature = "testing")]
 pub mod testing;
+pub mod text;
 
 pub use document::{Document, PageSize};
 pub use error::{CoreError, CoreResult};
+pub use geometry::{Rect, Rotation};
+pub use links::{LinkTarget, PageLink};
+pub use outline::OutlineNode;
+pub use properties::DocumentProperties;
 pub use render::RenderedPage;
+pub use text::{SearchHit, SearchOptions, TextBox};
 
 /// Version du crate, lue depuis `Cargo.toml` au moment de la compilation.
 ///

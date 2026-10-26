@@ -149,3 +149,15 @@ fn open_encrypted_with_wrong_password_is_wrong_password() {
         Err(CoreError::WrongPassword)
     ));
 }
+
+#[test]
+fn open_rejects_more_than_u16_max_pages() {
+    let bytes = mega_core::testing::many_pages_pdf(65_536);
+    assert!(matches!(
+        Document::from_bytes(bytes, None),
+        Err(CoreError::InvalidPdf(msg)) if msg.contains("65 535")
+    ));
+    // Juste sous la limite : accepté, et le compte est exact.
+    let ok = Document::from_bytes(mega_core::testing::many_pages_pdf(65_535), None).unwrap();
+    assert_eq!(ok.page_count(), 65_535);
+}

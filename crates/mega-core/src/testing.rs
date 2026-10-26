@@ -47,6 +47,48 @@ pub fn minimal_pdf_with_title(title: &str) -> Vec<u8> {
     out.into_bytes()
 }
 
+/// Un PDF écrit à la main avec `n` pages vides (arbre `/Pages` plat), pour tester les
+/// limites de comptage. Aucun contenu, aucune police : le fichier reste petit et rapide.
+pub fn many_pages_pdf(n: u32) -> Vec<u8> {
+    // Objets : 1 = Catalog, 2 = Pages, 3..=n+2 = pages.
+    let mut objects: Vec<String> = Vec::with_capacity(n as usize + 2);
+    objects.push("<< /Type /Catalog /Pages 2 0 R >>".to_string());
+    let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", i + 3)).collect();
+    objects.push(format!(
+        "<< /Type /Pages /Kids [{}] /Count {n} >>",
+        kids.join(" ")
+    ));
+    for _ in 0..n {
+        objects.push("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string());
+    }
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,
+/// avec une table `xref` aux positions exactes.
+fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {
+    let mut out = String::from("%PDF-1.7\n");
+    let mut offsets = Vec::with_capacity(objects.len() + 1);
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{body}\nendobj\n", i + 1));
+    }
+    let info_id = objects.len() + 1;
+    offsets.push(out.len());
+    out.push_str(&format!("{info_id} 0 obj\n{info}\nendobj\n"));
+    let xref_offset = out.len();
+    out.push_str(&format!("xref\n0 {}\n", info_id + 1));
+    out.push_str("0000000000 65535 f \n");
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R /Info {info_id} 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+        info_id + 1
+    ));
+    out.into_bytes()
+}
+
 /// Encode une chaîne de texte PDF en hexadécimal UTF-16BE précédé du BOM `FEFF`.
 ///
 /// Une chaîne littérale `(…)` sans BOM est lue en *PDFDocEncoding*, un encodage

@@ -12,7 +12,7 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 
 | Lot | Contenu | État |
 |---|---|---|
-| 0 | Fondations : cœur Rust, CLI `info`/`render`, application qui affiche la page 1, outillage | 🚧 |
+| 0 | Fondations : cœur Rust, CLI `info`/`render`, application qui affiche la page 1, outillage | ✅ |
 | 1 | Lecteur complet (zoom, navigation, recherche, sélection, onglets) | ⬜ |
 | 2 | Pages et documents (fusion, scission, rotation, annuler/rétablir) | ⬜ |
 | 3 → 7 | Annotations, formulaires, édition de contenu, export/sécurité, finition | ⬜ |

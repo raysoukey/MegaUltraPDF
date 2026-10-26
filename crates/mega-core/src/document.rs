@@ -31,6 +31,9 @@ pub struct Document {
     /// qui doit libérer le `PdfDocument` en tenant le jeton PDFium (voir [`engine::guard`]).
     inner: Option<PdfDocument<'static>>,
     path: Option<PathBuf>,
+    /// Mot de passe d'ouverture, nécessaire pour recharger les instantanés d'un PDF chiffré
+    /// (PDFium réenregistre un document chiffré **chiffré**, avec le même mot de passe).
+    password: Option<String>,
     /// Historique annuler / rétablir (module `edit`).
     pub(crate) history: crate::edit::History,
 }
@@ -84,6 +87,7 @@ impl Document {
         Ok(Document {
             inner: Some(inner),
             path: None,
+            password: password.map(str::to_string),
             history: crate::edit::History::new(crate::edit::HistoryLimits::default()),
         })
     }
@@ -155,6 +159,11 @@ impl Document {
     /// sous le jeton que l'appelant tient.
     pub(crate) fn replace_inner(&mut self, inner: PdfDocument<'static>) {
         self.inner = Some(inner);
+    }
+
+    /// Mot de passe d'ouverture (pour recharger des octets issus de ce document).
+    pub(crate) fn password(&self) -> Option<&str> {
+        self.password.as_deref()
     }
 
     /// Change le chemin associé (après « Enregistrer sous »).

@@ -1,15 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import { pickPdfFiles, pickSavePath, extractPages } from '$lib/api';
+  import { pickPdfFiles, pickSavePath } from '$lib/api';
   import { rotatedSize } from '$lib/logic/geometry';
-  import { clickSelection, moveTarget } from '$lib/logic/pageselection';
+  import { clickSelection, moveTarget, shiftAfterInsert } from '$lib/logic/pageselection';
   import { pageUrl } from '$lib/pageUrl';
   import {
     applyEdit,
+    extractTo,
     goToPage,
-    docsState,
     setSelectedPages,
-    showNotice,
     type OpenDoc,
   } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
@@ -103,32 +102,38 @@
     const ok = await applyEdit(doc, { kind: 'delete_pages', pages: targets() });
     if (ok) setSelectedPages(doc, []);
   }
-  function insertBlank(after: boolean) {
+  async function insertBlank(after: boolean) {
     const ref = count > 0 ? Math.max(...doc.selectedPages) : doc.page;
     const at = after ? ref + 1 : Math.min(...targets());
+    const selected = [...doc.selectedPages];
     // Même format que la page de référence.
-    applyEdit(doc, { kind: 'insert_blank_page', at, size: doc.summary.pages[ref] });
+    const ok = await applyEdit(doc, {
+      kind: 'insert_blank_page',
+      at,
+      size: doc.summary.pages[ref],
+    });
+    // La sélection suit les pages qu'elle visait (elles ont reculé d'un cran).
+    if (ok) setSelectedPages(doc, shiftAfterInsert(selected, at, 1));
   }
   async function insertFromFile() {
     const paths = await pickPdfFiles();
     let at = (count > 0 ? Math.max(...doc.selectedPages) : doc.page) + 1;
+    let selected = [...doc.selectedPages];
     for (const path of paths) {
       const before = doc.summary.page_count;
       const ok = await applyEdit(doc, { kind: 'insert_pages_from_file', path, pages: null, at });
       if (!ok) break;
-      at += doc.summary.page_count - before;
+      const inserted = doc.summary.page_count - before;
+      selected = shiftAfterInsert(selected, at, inserted);
+      at += inserted;
     }
+    setSelectedPages(doc, selected);
   }
   async function extract() {
     const pages = targets();
     const path = await pickSavePath();
     if (!path) return;
-    try {
-      await extractPages(doc.summary.id, pages, path);
-      showNotice(t.extracted(pages.length));
-    } catch (e) {
-      docsState.error = t.editError(e instanceof Error ? e.message : String(e));
-    }
+    await extractTo(doc, pages, path);
   }
 
   // ---- Glisser-déposer HTML5 ----

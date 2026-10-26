@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { clickSelection, moveTarget, reorder } from './pageselection';
+import { clickSelection, moveTarget, reorder, shiftAfterInsert } from './pageselection';
 
 describe('clickSelection', () => {
   it('plain click selects only the clicked page and sets the anchor', () => {
@@ -56,5 +56,13 @@ describe('reorder / moveTarget', () => {
     expect(moveTarget(5, [1, 2], 1)).toBeNull();
     expect(moveTarget(5, [1, 2], 3)).toBeNull();
     expect(moveTarget(5, [], 3)).toBeNull();
+  });
+});
+
+describe('shiftAfterInsert', () => {
+  it('shifts the selected indices at or after the insertion point', () => {
+    expect(shiftAfterInsert([1, 3], 1, 1)).toEqual([2, 4]);
+    expect(shiftAfterInsert([0, 4], 2, 3)).toEqual([0, 7]);
+    expect(shiftAfterInsert([], 0, 1)).toEqual([]);
   });
 });

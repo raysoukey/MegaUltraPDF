@@ -28,6 +28,8 @@
   // Prévisualisation : recalculée à chaque changement de mode ou de valeur.
   $effect(() => {
     const m = mode();
+    // Lu ici pour que l'aperçu soit recalculé si le document change sous le dialogue.
+    void doc.summary.page_count;
     let cancelled = false;
     splitPlan(doc.summary.id, m)
       .then((p) => {

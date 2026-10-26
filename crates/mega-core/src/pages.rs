@@ -8,6 +8,7 @@
 //! ce soit : une erreur laisse le document tel qu'il était.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use pdfium_render::prelude::{PdfDocument, PdfPageIndex, PdfPagePaperSize, PdfPoints};
 
@@ -15,6 +16,7 @@ use crate::document::{Document, PageSize};
 use crate::engine::{self, PdfiumGuard};
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::Rotation;
+use crate::pagespec::PageSpec;
 
 impl Document {
     /// Rotation **enregistrée** dans le fichier pour la page `index` (distincte de la
@@ -105,7 +107,7 @@ impl Document {
                 count: remaining as u16,
             });
         }
-        let snapshot = engine::load_bytes(&guard, self.inner().save_to_bytes()?, None)?;
+        let snapshot = engine::load_bytes(&guard, self.inner().save_to_bytes()?, self.password())?;
         for i in moved.iter().rev() {
             self.inner().pages().get(*i)?.delete()?;
         }
@@ -195,4 +197,90 @@ pub fn split(doc: &Document, parts: &[Vec<u16>]) -> CoreResult<Vec<Vec<u8>>> {
         ));
     }
     parts.iter().map(|p| doc.extract_pages(p)).collect()
+}
+
+/// Façon de scinder un document (miroir TypeScript : `SplitMode`, et options du CLI).
+///
+/// La règle vit ici, dans le cœur : le CLI et l'application appellent la même fonction
+/// [`plan_split`] au lieu de réanalyser « 1,2-3 » chacun de leur côté.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SplitMode {
+    /// Plages explicites (« 1-2,3-5 »), une partie par plage.
+    Ranges {
+        /// La spécification saisie par l'utilisateur.
+        spec: String,
+    },
+    /// Une partie toutes les `n` pages (`n ≥ 1`).
+    Every {
+        /// Taille d'une partie.
+        n: u16,
+    },
+    /// Une partie par signet de premier niveau.
+    Bookmarks,
+}
+
+/// Les parties (index 0-based) qu'une scission produirait, sans rien écrire.
+pub fn plan_split(doc: &Document, mode: &SplitMode) -> CoreResult<Vec<Vec<u16>>> {
+    let count = doc.page_count();
+    match mode {
+        SplitMode::Ranges { spec } => PageSpec::ranges(spec, count),
+        SplitMode::Every { n } => {
+            if *n == 0 {
+                return Err(CoreError::InvalidOperation(
+                    "la taille d'une partie doit être d'au moins une page".to_string(),
+                ));
+            }
+            Ok(PageSpec::every(*n, count))
+        }
+        SplitMode::Bookmarks => {
+            let starts: Vec<u16> = doc.outline()?.iter().filter_map(|n| n.page).collect();
+            if starts.is_empty() {
+                return Err(CoreError::InvalidOperation(
+                    "ce document n'a pas de signets".to_string(),
+                ));
+            }
+            Ok(PageSpec::split_at(&starts, count))
+        }
+    }
+}
+
+/// Écrit les parties dans `out_dir` sous les noms `<base_name>-N.pdf` et retourne les chemins.
+///
+/// Rien n'est écrit si un fichier de sortie existe déjà (sauf `overwrite`) ou si `base_name`
+/// n'est pas un simple nom de fichier : l'utilisateur ne perd jamais un fichier sans l'avoir
+/// demandé. Chaque fichier est écrit de façon atomique.
+pub fn split_to_dir(
+    doc: &Document,
+    parts: &[Vec<u16>],
+    out_dir: &Path,
+    base_name: &str,
+    overwrite: bool,
+) -> CoreResult<Vec<PathBuf>> {
+    let base = base_name.trim();
+    if base.is_empty() || base.contains(['/', '\\', '\0']) || base.contains("..") {
+        return Err(CoreError::InvalidOperation(format!(
+            "préfixe de fichier invalide : « {base_name} »"
+        )));
+    }
+    if parts.is_empty() {
+        return Err(CoreError::InvalidOperation(
+            "aucune partie à produire".to_string(),
+        ));
+    }
+    let paths: Vec<PathBuf> = (1..=parts.len())
+        .map(|i| out_dir.join(format!("{base}-{i}.pdf")))
+        .collect();
+    if let Some(existing) = paths.iter().find(|p| !overwrite && p.exists()) {
+        return Err(CoreError::InvalidOperation(format!(
+            "« {} » existe déjà",
+            existing.display()
+        )));
+    }
+    let files = split(doc, parts)?;
+    std::fs::create_dir_all(out_dir)?;
+    for (path, bytes) in paths.iter().zip(&files) {
+        crate::edit::write_atomically(path, bytes)?;
+    }
+    Ok(paths)
 }

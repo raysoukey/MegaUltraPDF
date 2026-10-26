@@ -167,6 +167,12 @@ enum Request {
         base_name: String,
         reply: SyncSender<CoreResult<Vec<PathBuf>>>,
     },
+    /// Prévisualise une scission (parties calculées, rien d'écrit).
+    SplitPlan {
+        id: DocId,
+        mode: crate::pages::SplitMode,
+        reply: SyncSender<CoreResult<Vec<Vec<u16>>>>,
+    },
 }
 
 impl Request {
@@ -412,6 +418,15 @@ impl ServiceHandle {
             reply,
         })
     }
+
+    /// Les parties qu'une scission produirait, selon `mode` (rien n'est écrit).
+    pub fn split_plan(
+        &self,
+        id: DocId,
+        mode: crate::pages::SplitMode,
+    ) -> CoreResult<Vec<Vec<u16>>> {
+        self.call(|reply| Request::SplitPlan { id, mode, reply })
+    }
 }
 
 /// L'état privé du thread acteur.
@@ -576,17 +591,14 @@ impl Actor {
                 reply,
             } => {
                 let result = self.entry(id).and_then(|e| {
-                    let files = crate::pages::split(&e.doc, &parts)?;
-                    files
-                        .iter()
-                        .enumerate()
-                        .map(|(i, bytes)| {
-                            let path = out_dir.join(format!("{base_name}-{}.pdf", i + 1));
-                            crate::edit::write_atomically(&path, bytes)?;
-                            Ok(path)
-                        })
-                        .collect()
+                    crate::pages::split_to_dir(&e.doc, &parts, &out_dir, &base_name, false)
                 });
+                let _ = reply.send(result);
+            }
+            Request::SplitPlan { id, mode, reply } => {
+                let result = self
+                    .entry(id)
+                    .and_then(|e| crate::pages::plan_split(&e.doc, &mode));
                 let _ = reply.send(result);
             }
         }
@@ -656,7 +668,12 @@ impl Actor {
             .collect::<CoreResult<Vec<_>>>()?;
         let refs: Vec<&Document> = docs.iter().collect();
         let bytes = crate::pages::merge(&refs)?;
-        self.open(Document::from_bytes(bytes, None))
+        let summary = self.open(Document::from_bytes(bytes, None))?;
+        // Le résultat n'existe pas sur disque : « modifié » jusqu'à « Enregistrer sous ».
+        if let Some(entry) = self.docs.get_mut(&summary.id) {
+            entry.doc.mark_never_saved();
+        }
+        Ok(summary)
     }
 }
 

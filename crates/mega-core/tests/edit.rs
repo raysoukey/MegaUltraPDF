@@ -207,3 +207,114 @@ fn edit_state_summarises_history() {
     assert_eq!(state.undo_label.as_deref(), Some("Supprimer 1 page"));
     assert_eq!(state.redo_label, None);
 }
+
+// ---- Passe de correction après relecture (Lot 2) ----
+
+fn fixture(name: &str) -> String {
+    format!("{}/../../fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// C1 : les instantanés d'un PDF chiffré restent chiffrés ; annuler, rétablir et déplacer
+/// doivent recharger avec le mot de passe d'ouverture.
+#[test]
+fn encrypted_document_supports_undo_redo_and_move() {
+    let mut doc = Document::open(fixture("encrypted.pdf"), Some("secret")).unwrap();
+    assert_eq!(doc.page_count(), 3);
+    doc.apply(&delete(0)).unwrap();
+    assert_eq!(doc.page_count(), 2);
+    doc.undo().unwrap();
+    assert_eq!(doc.page_count(), 3);
+    assert!(doc.can_redo());
+    doc.redo().unwrap();
+    assert_eq!(doc.page_count(), 2);
+    doc.undo().unwrap();
+    doc.apply(&EditCommand::MovePages {
+        pages: vec![0],
+        to: 2,
+    })
+    .unwrap();
+    assert_eq!(doc.page_count(), 3);
+    assert!(doc.can_undo());
+}
+
+/// C1 bis : si le rechargement échoue, l'étape n'est pas perdue.
+struct Halfway;
+
+impl mega_core::Command for Halfway {
+    fn label(&self) -> String {
+        "à mi-chemin".to_string()
+    }
+    fn apply(&self, doc: &mut Document) -> mega_core::CoreResult<()> {
+        // Modifie réellement le document, puis échoue : le contrat exige qu'il soit restauré.
+        doc.rotate_pages(&[0], 1)?;
+        Err(CoreError::InvalidOperation("panne simulée".to_string()))
+    }
+}
+
+/// I1 : une commande qui échoue après avoir modifié le document est entièrement annulée.
+#[test]
+fn failed_command_midway_restores_document() {
+    let mut doc = three();
+    assert!(doc.apply(&Halfway).is_err());
+    assert_eq!(doc.page_rotation(0).unwrap(), mega_core::Rotation::None);
+    assert!(!doc.can_undo());
+    assert!(!doc.is_modified());
+}
+
+/// M7 : échec **après** l'écriture du temporaire (la cible est un dossier) : original intact,
+/// aucun fichier temporaire orphelin.
+#[test]
+fn save_as_to_directory_path_leaves_original_intact_and_no_temp_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("original.pdf");
+    std::fs::write(&original, sample_pdf(2, "intact")).unwrap();
+    let before = std::fs::read(&original).unwrap();
+    let mut doc = Document::open(&original, None).unwrap();
+    doc.apply(&delete(0)).unwrap();
+    let target_dir = dir.path().join("cible.pdf");
+    std::fs::create_dir(&target_dir).unwrap();
+    assert!(doc.save_as(&target_dir).is_err());
+    assert_eq!(std::fs::read(&original).unwrap(), before);
+    assert!(target_dir.is_dir(), "le dossier n'a pas été remplacé");
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "fichiers temporaires orphelins : {leftovers:?}"
+    );
+    assert!(doc.is_modified());
+}
+
+/// I2 : enregistrer conserve le mode du fichier (POSIX).
+#[cfg(unix)]
+#[test]
+fn save_preserves_file_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("partage.pdf");
+    std::fs::write(&path, sample_pdf(2, "perm")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let mut doc = Document::open(&path, None).unwrap();
+    doc.apply(&delete(0)).unwrap();
+    doc.save().unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o644);
+}
+
+/// I5 : un document qui n'a jamais été enregistré (fusion) reste « modifié » même après
+/// une édition annulée.
+#[test]
+fn never_saved_document_stays_modified_through_undo() {
+    let mut doc = three();
+    doc.mark_never_saved();
+    assert!(doc.is_modified());
+    doc.apply(&delete(0)).unwrap();
+    doc.undo().unwrap();
+    assert!(doc.is_modified());
+    let dir = tempfile::tempdir().unwrap();
+    doc.save_as(dir.path().join("fusion.pdf")).unwrap();
+    assert!(!doc.is_modified());
+}

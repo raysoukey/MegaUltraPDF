@@ -133,7 +133,7 @@
     if (typing && !e.ctrlKey && !e.key.startsWith('F') && e.key !== 'Escape') return;
     if (typing && (action === 'undo' || action === 'redo')) return;
     // Un dialogue modal garde le clavier pour lui (sauf Échap).
-    if (docsState.closePrompt && action !== 'escape') return;
+    if ((docsState.closePrompt || mergeOpen || splitOpen) && action !== 'escape') return;
     e.preventDefault();
     switch (action) {
       case 'open':

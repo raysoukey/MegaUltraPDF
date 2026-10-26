@@ -142,3 +142,85 @@ fn split_by_parts() {
     assert_eq!(labels(&second), vec!["Page3"]);
     assert!(mega_core::pages::split(&doc, &[]).is_err());
 }
+
+// ---- Passe de correction après relecture (Lot 2) ----
+
+use mega_core::pages::{SplitMode, plan_split, split_to_dir};
+
+/// I6 : la règle de scission vit dans le cœur (CLI et application l'appellent).
+#[test]
+fn plan_split_by_ranges_every_and_bookmarks() {
+    let doc = Document::from_bytes(sample_pdf(5, "plan"), None).unwrap();
+    assert_eq!(
+        plan_split(
+            &doc,
+            &SplitMode::Ranges {
+                spec: "1-2,4-".into()
+            }
+        )
+        .unwrap(),
+        vec![vec![0, 1], vec![3, 4]]
+    );
+    assert_eq!(
+        plan_split(&doc, &SplitMode::Every { n: 2 }).unwrap(),
+        vec![vec![0, 1], vec![2, 3], vec![4]]
+    );
+    // Signets de premier niveau en pages 1 et 3 → [1-2] et [3].
+    let outlined = Document::from_bytes(outlined_pdf(), None).unwrap();
+    assert_eq!(
+        plan_split(&outlined, &SplitMode::Bookmarks).unwrap(),
+        vec![vec![0, 1], vec![2]]
+    );
+}
+
+#[test]
+fn plan_split_rejects_bad_input() {
+    let doc = Document::from_bytes(sample_pdf(5, "plan"), None).unwrap();
+    assert!(matches!(
+        plan_split(&doc, &SplitMode::Ranges { spec: "9".into() }),
+        Err(CoreError::InvalidPageSpec(_))
+    ));
+    assert!(matches!(
+        plan_split(&doc, &SplitMode::Every { n: 0 }),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    assert!(matches!(
+        plan_split(&doc, &SplitMode::Bookmarks),
+        Err(CoreError::InvalidOperation(_))
+    ));
+}
+
+/// I3 : scinder n'écrase rien sans `overwrite`, et refuse un préfixe qui sort du dossier.
+#[test]
+fn split_to_dir_refuses_existing_outputs_unless_forced() {
+    let doc = three();
+    let dir = tempfile::tempdir().unwrap();
+    let parts = vec![vec![0u16], vec![1, 2]];
+    let files = split_to_dir(&doc, &parts, dir.path(), "part", false).unwrap();
+    assert_eq!(files.len(), 2);
+    assert!(dir.path().join("part-2.pdf").exists());
+    // Deuxième passage : refus avant toute écriture, les fichiers existants sont intacts.
+    std::fs::write(dir.path().join("part-1.pdf"), b"modifie").unwrap();
+    let err = split_to_dir(&doc, &parts, dir.path(), "part", false).unwrap_err();
+    assert!(matches!(err, CoreError::InvalidOperation(ref m) if m.contains("existe déjà")));
+    assert_eq!(
+        std::fs::read(dir.path().join("part-1.pdf")).unwrap(),
+        b"modifie"
+    );
+    // Forcé : réécrit.
+    split_to_dir(&doc, &parts, dir.path(), "part", true).unwrap();
+    let rewritten = std::fs::read(dir.path().join("part-1.pdf")).unwrap();
+    assert_eq!(
+        Document::from_bytes(rewritten, None).unwrap().page_count(),
+        1
+    );
+    for bad in ["../x", "a/b", "a\\b", ""] {
+        assert!(
+            matches!(
+                split_to_dir(&doc, &parts, dir.path(), bad, true),
+                Err(CoreError::InvalidOperation(_))
+            ),
+            "préfixe refusé : {bad:?}"
+        );
+    }
+}

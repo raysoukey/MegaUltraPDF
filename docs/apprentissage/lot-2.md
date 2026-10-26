@@ -54,7 +54,14 @@ en une ligne. Comparez avec un `Vec` suivi de `sort` + `dedup` : même résultat
 (`conflicts_with_all`) ; `merge` exige au moins un fichier (`#[arg(required = true)]` sur un
 `Vec`). `clap` génère les messages d'erreur et l'aide à partir des commentaires `///`.
 
-### 7. Côté TypeScript (pour mémoire)
+### 7. Une commande qui échoue à mi-chemin
+
+`Document::apply` prend l'instantané **avant** la commande ; si `apply` renvoie `Err`, on
+recharge cet instantané avant de propager l'erreur. Le test `failed_command_midway_restores_document`
+définit une commande de test (`struct Halfway`) qui pivote une page puis échoue : c'est aussi
+un exemple de **trait implémenté dans un test**, hors du crate.
+
+### 8. Côté TypeScript (pour mémoire)
 
 Les règles métier restent en Rust : la prévisualisation d'une scission appelle la commande
 `split_plan` plutôt que de réanalyser « 1,2-3 » en JS. Le frontend garde seulement la
@@ -74,8 +81,12 @@ un document fusionné s'ouvre sans chemin, donc « modifié » d'emblée.
   vignettes et la géométrie l'utilisent tel quel, il ne faut pas réappliquer la rotation.
 - **`pdfium-render` n'a pas `FPDF_MovePages`** : déplacer = copier depuis un instantané puis
   supprimer ; les signets qui visaient ces pages peuvent être perdus (documenté).
-- **Documents chiffrés** : les instantanés sont rechargés sans mot de passe (PDFium
-  sauvegarde déchiffré) ; à revoir avec le chiffrement du Lot 6.
+- **Documents chiffrés** : PDFium réenregistre **chiffré** ; la première version rechargeait
+  les instantanés sans mot de passe et perdait l'étape d'annulation (trouvé par la relecture,
+  reproduit avec `mega rotate fixtures/encrypted.pdf --password secret` puis `mega info`).
+  `Document` garde maintenant son mot de passe, et `undo` ne retire l'étape qu'après un
+  rechargement réussi. Leçon : vérifier une hypothèse sur une bibliothèque par un test,
+  pas par un commentaire.
 - **Glisser-déposer HTML5 sous WebView2** : le scénario CDP simule des `DragEvent` avec un
   `DataTransfer` maison plutôt que de vrais mouvements de souris (le glisser natif bloque la
   boucle d'événements de l'automatisation).

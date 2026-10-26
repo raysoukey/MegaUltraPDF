@@ -234,76 +234,16 @@ pub async fn split_document(
     .await
 }
 
-/// Façon de découper un document (miroir TypeScript : `SplitMode`).
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum SplitMode {
-    /// Plages explicites (« 1-2,3-5 »), une partie par plage.
-    Ranges {
-        /// La spécification saisie par l'utilisateur.
-        spec: String,
-    },
-    /// Une partie toutes les `n` pages.
-    Every {
-        /// Taille d'une partie (≥ 1).
-        n: u16,
-    },
-    /// Une partie par signet de premier niveau.
-    Bookmarks,
-}
-
-/// Les parties (index de pages) d'une scission, calculées en Rust pour que la règle
-/// d'analyse des plages reste unique (`PageSpec`).
-fn plan_split(
-    page_count: u16,
-    outline: &[mega_core::OutlineNode],
-    mode: SplitMode,
-) -> Result<Vec<Vec<u16>>, AppError> {
-    use mega_core::pagespec::PageSpec;
-    match mode {
-        SplitMode::Ranges { spec } => Ok(PageSpec::ranges(&spec, page_count)?),
-        SplitMode::Every { n } => {
-            if n == 0 {
-                return Err(AppError::new(
-                    ErrorKind::InvalidOperation,
-                    "la taille d'une partie doit être d'au moins une page",
-                ));
-            }
-            Ok(PageSpec::every(n, page_count))
-        }
-        SplitMode::Bookmarks => {
-            let starts: Vec<u16> = outline.iter().filter_map(|n| n.page).collect();
-            if starts.is_empty() {
-                return Err(AppError::new(
-                    ErrorKind::InvalidOperation,
-                    "ce document n'a pas de signets",
-                ));
-            }
-            Ok(PageSpec::split_at(&starts, page_count))
-        }
-    }
-}
-
-/// Prévisualise une scission : les pages de chaque partie, sans rien écrire.
+/// Prévisualise une scission : les pages de chaque partie, sans rien écrire. La règle
+/// (plages, toutes les N, signets) vit dans `mega_core::pages::plan_split`.
 #[tauri::command]
 pub async fn split_plan(
     service: State<'_, ServiceHandle>,
     id: DocId,
-    mode: SplitMode,
+    mode: mega_core::pages::SplitMode,
 ) -> Result<Vec<Vec<u16>>, AppError> {
     let handle = service.inner().clone();
-    let needs_outline = matches!(mode, SplitMode::Bookmarks);
-    let (page_count, outline) = blocking(handle, move |h| {
-        let summary = h.summary(id)?;
-        let outline = if needs_outline {
-            h.outline(id)?
-        } else {
-            Vec::new()
-        };
-        Ok((summary.page_count, outline))
-    })
-    .await?;
-    plan_split(page_count, &outline, mode)
+    blocking(handle, move |h| h.split_plan(id, mode)).await
 }
 
 /// Taille d'un fichier en octets (pour le dialogue des propriétés).
@@ -356,62 +296,6 @@ mod tests {
         ];
         assert_eq!(startup_file_from_args(args), Some(fixture("simple.pdf")));
         assert_eq!(startup_file_from_args(Vec::<String>::new()), None);
-    }
-
-    fn node(title: &str, page: Option<u16>) -> mega_core::OutlineNode {
-        mega_core::OutlineNode {
-            title: title.to_string(),
-            page,
-            children: vec![],
-        }
-    }
-
-    #[test]
-    fn plan_split_by_ranges_every_and_bookmarks() {
-        let outline = vec![
-            node("A", Some(0)),
-            node("B", Some(2)),
-            node("sans page", None),
-        ];
-        assert_eq!(
-            plan_split(
-                5,
-                &outline,
-                SplitMode::Ranges {
-                    spec: "1-2,4-".into()
-                }
-            )
-            .unwrap(),
-            vec![vec![0, 1], vec![3, 4]]
-        );
-        assert_eq!(
-            plan_split(5, &outline, SplitMode::Every { n: 2 }).unwrap(),
-            vec![vec![0, 1], vec![2, 3], vec![4]]
-        );
-        assert_eq!(
-            plan_split(5, &outline, SplitMode::Bookmarks).unwrap(),
-            vec![vec![0, 1], vec![2, 3, 4]]
-        );
-    }
-
-    #[test]
-    fn plan_split_rejects_bad_input() {
-        assert_eq!(
-            plan_split(5, &[], SplitMode::Ranges { spec: "9".into() })
-                .unwrap_err()
-                .kind,
-            ErrorKind::InvalidOperation
-        );
-        assert_eq!(
-            plan_split(5, &[], SplitMode::Every { n: 0 })
-                .unwrap_err()
-                .kind,
-            ErrorKind::InvalidOperation
-        );
-        assert_eq!(
-            plan_split(5, &[], SplitMode::Bookmarks).unwrap_err().kind,
-            ErrorKind::InvalidOperation
-        );
     }
 
     #[tokio::test]

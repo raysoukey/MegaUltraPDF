@@ -35,8 +35,8 @@ historique ni aucune écriture sûre.
   temporaire **du même dossier** (`tempfile::Builder::tempfile_in`), force l'écriture sur
   disque (`sync_all`), puis renomme par-dessus la cible (`persist`). Enregistrer, Enregistrer
   sous, extraire, fusionner (CLI) et scinder passent tous par là. Un échec laisse l'ancien
-  fichier intact ; c'est vérifié par le test CLI « une plage invalide n'écrase pas la sortie
-  précédente ».
+  fichier intact ; vérifié par `save_as_to_directory_path_leaves_original_intact_and_no_temp_file`
+  (échec du renommage après écriture du temporaire) et `save_as_failure_leaves_original_intact`.
 - **L'acteur reste le seul à toucher aux documents.** Les requêtes `Apply`, `Undo`, `Redo`,
   `Save`, `ExtractPages`, `MergeFiles`, `SplitDocument` s'ajoutent à l'`enum Request`
   (ADR-0006). Une édition invalide le cache de rendu du document ; un enregistrement ne
@@ -61,8 +61,18 @@ historique ni aucune écriture sûre.
 - Chaque `apply` sérialise le document : sur de très gros fichiers, une édition prend le
   temps d'un enregistrement. À mesurer ; une stratégie d'instantanés différés pourra venir
   plus tard sans changer l'API.
-- Les documents chiffrés rechargent leurs instantanés sans mot de passe (PDFium sauvegarde
-  déchiffré) : annuler fonctionne, mais le Lot 6 (chiffrement) devra revoir ce point.
+- PDFium réenregistre un document chiffré **chiffré** (même mot de passe) : `Document`
+  conserve le mot de passe d'ouverture et le réutilise pour recharger ses instantanés
+  (annuler, rétablir, déplacer). Si un rechargement échoue, l'étape reste dans l'historique.
+  (Révision après relecture : la première version supposait l'inverse et perdait l'étape.)
+- Si une commande échoue après avoir commencé à modifier le document (plusieurs appels
+  PDFium), `Document::apply` recharge l'instantané pris juste avant : le contrat « inchangé
+  en cas d'erreur » tient pour toute commande, pas seulement pour les échecs de validation.
+- Un document issu d'une fusion n'existe pas sur disque : `mark_never_saved` le rend
+  « modifié » jusqu'à « Enregistrer sous », quoi qu'on annule.
+- `write_atomically` conserve les permissions du fichier remplacé (POSIX) et suit les liens
+  symboliques ; `split_to_dir` refuse d'écraser un fichier existant (sauf `--force` au CLI)
+  et un préfixe qui sort du dossier.
 - `move_pages` est implémenté par copie depuis un instantané puis suppression
   (`pdfium-render` n'expose pas `FPDF_MovePages`) : les signets qui visaient les pages
   déplacées peuvent être perdus. Documenté, à revoir avec `lopdf` (ADR-0003).

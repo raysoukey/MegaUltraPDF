@@ -5,6 +5,7 @@
 import {
   applyEdit as apiApplyEdit,
   closeDocument,
+  extractPages,
   isAppError,
   mergeFiles,
   openDocument,
@@ -470,6 +471,19 @@ export function showNotice(message: string): void {
   docsState.notice = message;
   if (noticeTimer) clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => (docsState.notice = null), 1500);
+}
+
+/** Extrait des pages vers un nouveau fichier ; l'erreur éventuelle passe par le bandeau. */
+export async function extractTo(doc: OpenDoc, pages: number[], path: string): Promise<boolean> {
+  docsState.error = null;
+  try {
+    await extractPages(doc.summary.id, pages, path);
+    showNotice(t.extracted(pages.length));
+    return true;
+  } catch (e) {
+    reportError(t.editError, e);
+    return false;
+  }
 }
 
 /** Nom affichable d'un document (pour les dialogues). */

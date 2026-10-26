@@ -65,3 +65,8 @@ export function moveTarget(pageCount: number, pages: number[], slot: number): nu
   const removedBefore = pages.filter((p) => p < slot).length;
   return slot - removedBefore;
 }
+
+/** Sélection après insertion de `n` pages à l'index `at` : les index ≥ `at` reculent de `n`. */
+export function shiftAfterInsert(selected: number[], at: number, n: number): number[] {
+  return selected.map((p) => (p >= at ? p + n : p));
+}

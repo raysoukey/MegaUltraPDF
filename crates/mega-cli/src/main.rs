@@ -44,16 +44,24 @@ fn main() {
             bookmarks,
             out,
             prefix,
+            force,
             password,
         } => {
-            use commands::split::SplitMode;
-            let mode = match (&ranges, every, bookmarks) {
-                (Some(r), _, _) => SplitMode::Ranges(r),
-                (None, Some(n), _) => SplitMode::Every(n),
+            use mega_core::pages::SplitMode;
+            let mode = match (ranges, every, bookmarks) {
+                (Some(spec), _, _) => SplitMode::Ranges { spec },
+                (None, Some(n), _) => SplitMode::Every { n },
                 (None, None, true) => SplitMode::Bookmarks,
-                (None, None, false) => SplitMode::Every(1),
+                (None, None, false) => SplitMode::Every { n: 1 },
             };
-            commands::split::run(&file, mode, &out, prefix.as_deref(), password.as_deref())
+            commands::split::run(
+                &file,
+                mode,
+                &out,
+                prefix.as_deref(),
+                force,
+                password.as_deref(),
+            )
         }
         Command::Rotate {
             file,

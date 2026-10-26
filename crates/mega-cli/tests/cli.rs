@@ -267,3 +267,51 @@ fn extract_pages_and_reject_bad_spec() {
         "la sortie précédente n'est pas écrasée par un échec"
     );
 }
+
+// ---- Passe de correction après relecture (Lot 2) ----
+
+#[test]
+fn split_refuses_to_overwrite_without_force_and_rejects_every_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().to_str().unwrap();
+    mega()
+        .args(["split", &fixture("simple.pdf"), "--every", "2", "-o", out])
+        .assert()
+        .success();
+    std::fs::write(dir.path().join("simple-1.pdf"), b"retouche").unwrap();
+    mega()
+        .args(["split", &fixture("simple.pdf"), "--every", "2", "-o", out])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("existe déjà"));
+    assert_eq!(
+        std::fs::read(dir.path().join("simple-1.pdf")).unwrap(),
+        b"retouche"
+    );
+    mega()
+        .args([
+            "split",
+            &fixture("simple.pdf"),
+            "--every",
+            "2",
+            "-o",
+            out,
+            "--force",
+        ])
+        .assert()
+        .success();
+    assert_eq!(pages_of(&dir.path().join("simple-1.pdf")), "2");
+    mega()
+        .args([
+            "split",
+            &fixture("simple.pdf"),
+            "--every",
+            "0",
+            "-o",
+            out,
+            "--force",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("1"));
+}

@@ -66,8 +66,8 @@ pub enum Command {
         /// Plages explicites, une partie par plage (ex. « 1-2,3-5 »).
         #[arg(long, conflicts_with_all = ["every", "bookmarks"])]
         ranges: Option<String>,
-        /// Une partie toutes les N pages.
-        #[arg(long, conflicts_with = "bookmarks")]
+        /// Une partie toutes les N pages (N ≥ 1).
+        #[arg(long, conflicts_with = "bookmarks", value_parser = clap::value_parser!(u16).range(1..))]
         every: Option<u16>,
         /// Une partie par signet de premier niveau.
         #[arg(long)]
@@ -78,6 +78,9 @@ pub enum Command {
         /// Préfixe des fichiers produits (défaut : nom du fichier source).
         #[arg(long)]
         prefix: Option<String>,
+        /// Écraser les fichiers de sortie existants.
+        #[arg(long)]
+        force: bool,
         /// Mot de passe, pour un PDF chiffré.
         #[arg(long)]
         password: Option<String>,

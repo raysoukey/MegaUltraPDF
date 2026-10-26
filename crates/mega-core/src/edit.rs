@@ -213,7 +213,13 @@ impl Document {
     /// ni le document ni l'historique ne changent.
     pub fn apply(&mut self, command: &dyn Command) -> CoreResult<()> {
         let before = self.to_bytes()?;
-        command.apply(self)?;
+        if let Err(e) = command.apply(self) {
+            // Une commande peut échouer après avoir commencé à modifier le document
+            // (plusieurs appels PDFium) : on revient à l'instantané pris juste avant,
+            // ce qui rend le contrat « inchangé en cas d'erreur » vrai pour toute commande.
+            self.reload_from_bytes(before)?;
+            return Err(e);
+        }
         if !self.history.redo.is_empty() {
             self.history.redo.clear();
             // L'état enregistré appartenait peut-être à la branche abandonnée.
@@ -234,14 +240,25 @@ impl Document {
         let Some(snapshot) = self.history.undo.pop_back() else {
             return Err(CoreError::InvalidOperation("rien à annuler".to_string()));
         };
-        let current = self.to_bytes()?;
-        self.reload_from_bytes(snapshot.bytes)?;
-        self.history.redo.push(Snapshot {
-            label: snapshot.label,
-            bytes: current,
-        });
+        // Si le rechargement échoue, l'étape est remise en place : rien n'est perdu.
+        let (label, bytes) = match self.swap_in(&snapshot) {
+            Ok(current) => (snapshot.label, current),
+            Err(e) => {
+                self.history.undo.push_back(snapshot);
+                return Err(e);
+            }
+        };
+        self.history.redo.push(Snapshot { label, bytes });
         self.history.position -= 1;
         Ok(())
+    }
+
+    /// Remplace le document par l'instantané et retourne les octets de l'état courant
+    /// (pour l'autre pile). En cas d'erreur le document n'a pas changé.
+    fn swap_in(&mut self, snapshot: &Snapshot) -> CoreResult<Vec<u8>> {
+        let current = self.to_bytes()?;
+        self.reload_from_bytes(snapshot.bytes.clone())?;
+        Ok(current)
     }
 
     /// Rétablit la dernière édition annulée.
@@ -249,14 +266,22 @@ impl Document {
         let Some(snapshot) = self.history.redo.pop() else {
             return Err(CoreError::InvalidOperation("rien à rétablir".to_string()));
         };
-        let current = self.to_bytes()?;
-        self.reload_from_bytes(snapshot.bytes)?;
-        self.history.push_undo(Snapshot {
-            label: snapshot.label,
-            bytes: current,
-        });
+        let (label, bytes) = match self.swap_in(&snapshot) {
+            Ok(current) => (snapshot.label, current),
+            Err(e) => {
+                self.history.redo.push(snapshot);
+                return Err(e);
+            }
+        };
+        self.history.push_undo(Snapshot { label, bytes });
         self.history.position += 1;
         Ok(())
+    }
+
+    /// Déclare que ce document n'a jamais été enregistré (résultat d'une fusion) : il est
+    /// « modifié » tant qu'un « Enregistrer sous » n'a pas eu lieu, quoi qu'on annule.
+    pub fn mark_never_saved(&mut self) {
+        self.history.saved_position = None;
     }
 
     /// Vrai si une étape peut être annulée.
@@ -324,7 +349,7 @@ impl Document {
     /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.
     fn reload_from_bytes(&mut self, bytes: Vec<u8>) -> CoreResult<()> {
         let guard = engine::guard();
-        let inner = engine::load_bytes(&guard, bytes, None)?;
+        let inner = engine::load_bytes(&guard, bytes, self.password())?;
         self.replace_inner(inner);
         Ok(())
     }
@@ -333,17 +358,33 @@ impl Document {
 /// Écrit `bytes` dans `path` de façon atomique : fichier temporaire du même dossier, puis
 /// renommage par-dessus la cible. En cas d'échec, la cible n'est pas touchée.
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> CoreResult<()> {
-    let dir = path
+    // Un lien symbolique est suivi : on remplace le fichier visé, pas le lien.
+    let is_link = std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    let target = if is_link {
+        std::fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let dir = target
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    let mut temp = tempfile::Builder::new()
-        .prefix(".megaultrapdf-")
-        .suffix(".tmp")
-        .tempfile_in(&dir)?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".megaultrapdf-").suffix(".tmp");
+    // Sous POSIX, le temporaire naît en 0600 ; le fichier remplacé garderait ce mode.
+    // On reprend les permissions de la cible existante (fichier partagé, exécutable…).
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(&target) {
+        builder.permissions(meta.permissions());
+    }
+    let mut temp = builder.tempfile_in(&dir)?;
     temp.write_all(bytes)?;
     temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|e| CoreError::Io(e.error))?;
+    // `persist` échoue si la cible est un dossier : le temporaire est alors supprimé
+    // (il part avec l'erreur) et la cible n'est pas touchée.
+    temp.persist(&target).map_err(|e| CoreError::Io(e.error))?;
     Ok(())
 }

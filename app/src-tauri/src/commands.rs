@@ -69,3 +69,41 @@ pub fn close_document(registry: State<'_, SharedRegistry>, id: DocId) -> Result<
         ))
     }
 }
+
+/// Fichier passé en argument de ligne de commande au lancement, s'il y en a un.
+///
+/// Permet `mega-app fichier.pdf` (et, en développement, `pnpm tauri dev -- -- fichier.pdf`).
+/// Le frontend l'appelle au démarrage et ouvre le document s'il existe.
+#[tauri::command]
+pub fn startup_file() -> Option<String> {
+    startup_file_from_args(std::env::args().skip(1))
+}
+
+/// Premier argument qui ressemble à un fichier PDF existant.
+pub fn startup_file_from_args(args: impl IntoIterator<Item = String>) -> Option<String> {
+    args.into_iter().find(|a| {
+        !a.starts_with('-')
+            && a.to_ascii_lowercase().ends_with(".pdf")
+            && std::path::Path::new(a).is_file()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> String {
+        format!("{}/../../fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    #[test]
+    fn startup_file_picks_first_existing_pdf_argument() {
+        let args = vec![
+            "--flag".to_string(),
+            "inexistant.pdf".to_string(),
+            fixture("simple.pdf"),
+        ];
+        assert_eq!(startup_file_from_args(args), Some(fixture("simple.pdf")));
+        assert_eq!(startup_file_from_args(Vec::<String>::new()), None);
+    }
+}

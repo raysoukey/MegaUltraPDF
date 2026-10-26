@@ -23,7 +23,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::open_document,
-            commands::close_document
+            commands::close_document,
+            commands::startup_file
         ]);
     protocol::register(builder)
         .run(tauri::generate_context!())

@@ -8,7 +8,9 @@ export const fr = {
   noDocument: 'Aucun document ouvert.',
   untitled: '(sans titre)',
   pages: (n: number) => `${n} page${n > 1 ? 's' : ''}`,
-  errorPrefix: 'Erreur : ',
+  pageOf: (n: number, total: number) => `Page ${n} / ${total}`,
+  openError: (message: string) => `Impossible d'ouvrir le document : ${message}`,
+  passwordRequired: 'Ce document est protégé par un mot de passe.',
 } as const;
 
 export const t = fr;

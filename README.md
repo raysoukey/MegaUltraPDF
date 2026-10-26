@@ -14,7 +14,7 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 |---|---|---|
 | 0 | Fondations : cœur Rust, CLI `info`/`render`, application qui affiche la page 1, outillage | ✅ |
 | 1 | Lecteur complet (onglets, zoom, rotation, vignettes, signets, liens, sélection, recherche, propriétés, thème, raccourcis) | ✅ |
-| 2 | Pages et documents (fusion, scission, rotation, annuler/rétablir) | ⬜ |
+| 2 | Pages et documents (pivoter, supprimer, réordonner, extraire, insérer, fusionner, scinder, enregistrer, annuler/rétablir) | ✅ |
 | 3 → 7 | Annotations, formulaires, édition de contenu, export/sécurité, finition | ⬜ |
 
 ## Prérequis (développement)
@@ -50,12 +50,20 @@ pnpm --dir app tauri dev -- -- fixtures/simple.pdf   # lance l'application sur u
 cargo run -p mega-cli -- info fixtures/simple.pdf
 cargo run -p mega-cli -- render fixtures/simple.pdf --page 1 --scale 2 --out page1.png
 cargo run -p mega-cli -- info fixtures/encrypted.pdf --password secret
+cargo run -p mega-cli -- merge a.pdf b.pdf -o fusion.pdf
+cargo run -p mega-cli -- split rapport.pdf --every 10 -o parties/      # ou --ranges "1-3,4-" / --bookmarks
+cargo run -p mega-cli -- rotate rapport.pdf --pages 1,3-4 --degrees 90 -o tourne.pdf
+cargo run -p mega-cli -- extract rapport.pdf --pages 2-3 -o extrait.pdf
 ```
+
+Toutes les écritures sont atomiques (fichier temporaire puis renommage) : un échec ne laisse
+jamais un fichier à moitié écrit.
 
 ## Vérifier l'interface sans souris
 
 ```powershell
 scripts/ui-check.ps1 -Pdf fixtures/simple.pdf -Scenario scripts/scenarios/lecteur-simple.json
+scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/edition-pages.json   # modifie le fichier !
 ```
 
 Lance l'application avec le port de débogage WebView2, déroule un scénario (clics, touches,

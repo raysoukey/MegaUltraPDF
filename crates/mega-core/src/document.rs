@@ -31,6 +31,11 @@ pub struct Document {
     /// qui doit libérer le `PdfDocument` en tenant le jeton PDFium (voir [`engine::guard`]).
     inner: Option<PdfDocument<'static>>,
     path: Option<PathBuf>,
+    /// Mot de passe d'ouverture, nécessaire pour recharger les instantanés d'un PDF chiffré
+    /// (PDFium réenregistre un document chiffré **chiffré**, avec le même mot de passe).
+    password: Option<String>,
+    /// Historique annuler / rétablir (module `edit`).
+    pub(crate) history: crate::edit::History,
 }
 
 impl std::fmt::Debug for Document {
@@ -82,6 +87,8 @@ impl Document {
         Ok(Document {
             inner: Some(inner),
             path: None,
+            password: password.map(str::to_string),
+            history: crate::edit::History::new(crate::edit::HistoryLimits::default()),
         })
     }
 
@@ -146,6 +153,30 @@ impl Document {
             return Err(CoreError::PageOutOfRange { index, count });
         }
         Ok(PdfPageIndex::from(index))
+    }
+
+    /// Remplace le document PDFium sous-jacent (annuler / rétablir) ; l'ancien est libéré
+    /// sous le jeton que l'appelant tient.
+    pub(crate) fn replace_inner(&mut self, inner: PdfDocument<'static>) {
+        self.inner = Some(inner);
+    }
+
+    /// Mot de passe d'ouverture (pour recharger des octets issus de ce document).
+    pub(crate) fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+
+    /// Change le chemin associé (après « Enregistrer sous »).
+    pub(crate) fn set_path(&mut self, path: Option<PathBuf>) {
+        self.path = path;
+    }
+
+    /// Accès mutable au document PDFium sous-jacent, réservé aux autres modules du crate.
+    #[allow(clippy::expect_used)]
+    pub(crate) fn inner_mut(&mut self) -> &mut PdfDocument<'static> {
+        self.inner
+            .as_mut()
+            .expect("le document PDFium n'est libéré que dans Drop")
     }
 
     /// Accès au document PDFium sous-jacent, réservé aux autres modules du crate.

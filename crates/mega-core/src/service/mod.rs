@@ -25,6 +25,7 @@ pub use cache::DocId;
 pub use queue::Priority;
 
 use crate::document::{Document, PageSize};
+use crate::edit::{EditCommand, EditState};
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::Rotation;
 use crate::links::PageLink;
@@ -126,6 +127,51 @@ enum Request {
     Properties {
         id: DocId,
         reply: SyncSender<CoreResult<DocumentProperties>>,
+    },
+    Apply {
+        id: DocId,
+        command: EditCommand,
+        reply: SyncSender<CoreResult<(DocumentSummary, EditState)>>,
+    },
+    Undo {
+        id: DocId,
+        reply: SyncSender<CoreResult<(DocumentSummary, EditState)>>,
+    },
+    Redo {
+        id: DocId,
+        reply: SyncSender<CoreResult<(DocumentSummary, EditState)>>,
+    },
+    EditState {
+        id: DocId,
+        reply: SyncSender<CoreResult<EditState>>,
+    },
+    Save {
+        id: DocId,
+        path: Option<PathBuf>,
+        reply: SyncSender<CoreResult<(DocumentSummary, EditState)>>,
+    },
+    ExtractPages {
+        id: DocId,
+        pages: Vec<u16>,
+        path: PathBuf,
+        reply: SyncSender<CoreResult<()>>,
+    },
+    MergeFiles {
+        paths: Vec<PathBuf>,
+        reply: SyncSender<CoreResult<DocumentSummary>>,
+    },
+    SplitDocument {
+        id: DocId,
+        parts: Vec<Vec<u16>>,
+        out_dir: PathBuf,
+        base_name: String,
+        reply: SyncSender<CoreResult<Vec<PathBuf>>>,
+    },
+    /// Prévisualise une scission (parties calculées, rien d'écrit).
+    SplitPlan {
+        id: DocId,
+        mode: crate::pages::SplitMode,
+        reply: SyncSender<CoreResult<Vec<Vec<u16>>>>,
     },
 }
 
@@ -290,6 +336,97 @@ impl ServiceHandle {
     pub fn properties(&self, id: DocId) -> CoreResult<DocumentProperties> {
         self.call(|reply| Request::Properties { id, reply })
     }
+
+    /// Applique une édition ; retourne le document mis à jour et l'état de l'historique.
+    pub fn apply(
+        &self,
+        id: DocId,
+        command: EditCommand,
+    ) -> CoreResult<(DocumentSummary, EditState)> {
+        self.call(|reply| Request::Apply { id, command, reply })
+    }
+
+    /// Annule la dernière édition.
+    pub fn undo(&self, id: DocId) -> CoreResult<(DocumentSummary, EditState)> {
+        self.call(|reply| Request::Undo { id, reply })
+    }
+
+    /// Rétablit la dernière édition annulée.
+    pub fn redo(&self, id: DocId) -> CoreResult<(DocumentSummary, EditState)> {
+        self.call(|reply| Request::Redo { id, reply })
+    }
+
+    /// État de l'historique (modifié, annuler/rétablir possibles, libellés).
+    pub fn edit_state(&self, id: DocId) -> CoreResult<EditState> {
+        self.call(|reply| Request::EditState { id, reply })
+    }
+
+    /// Enregistre à son chemin d'origine.
+    pub fn save(&self, id: DocId) -> CoreResult<(DocumentSummary, EditState)> {
+        self.call(|reply| Request::Save {
+            id,
+            path: None,
+            reply,
+        })
+    }
+
+    /// Enregistre sous un nouveau chemin (qui devient le chemin du document).
+    pub fn save_as(
+        &self,
+        id: DocId,
+        path: impl Into<PathBuf>,
+    ) -> CoreResult<(DocumentSummary, EditState)> {
+        let path = Some(path.into());
+        self.call(|reply| Request::Save { id, path, reply })
+    }
+
+    /// Écrit les pages `pages` dans un nouveau fichier `path` (le document n'est pas modifié).
+    pub fn extract_pages(
+        &self,
+        id: DocId,
+        pages: Vec<u16>,
+        path: impl Into<PathBuf>,
+    ) -> CoreResult<()> {
+        let path = path.into();
+        self.call(|reply| Request::ExtractPages {
+            id,
+            pages,
+            path,
+            reply,
+        })
+    }
+
+    /// Fusionne des fichiers et ouvre le résultat comme nouveau document (sans chemin).
+    pub fn merge_files(&self, paths: Vec<PathBuf>) -> CoreResult<DocumentSummary> {
+        self.call(|reply| Request::MergeFiles { paths, reply })
+    }
+
+    /// Scinde le document en fichiers `<base_name>-N.pdf` dans `out_dir` ; retourne leurs chemins.
+    pub fn split_document(
+        &self,
+        id: DocId,
+        parts: Vec<Vec<u16>>,
+        out_dir: impl Into<PathBuf>,
+        base_name: &str,
+    ) -> CoreResult<Vec<PathBuf>> {
+        let (out_dir, base_name) = (out_dir.into(), base_name.to_string());
+        self.call(|reply| Request::SplitDocument {
+            id,
+            parts,
+            out_dir,
+            base_name,
+            reply,
+        })
+    }
+
+    /// Les parties qu'une scission produirait, selon `mode` (rien n'est écrit).
+    pub fn split_plan(
+        &self,
+        id: DocId,
+        mode: crate::pages::SplitMode,
+    ) -> CoreResult<Vec<Vec<u16>>> {
+        self.call(|reply| Request::SplitPlan { id, mode, reply })
+    }
 }
 
 /// L'état privé du thread acteur.
@@ -405,6 +542,65 @@ impl Actor {
             Request::Properties { id, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.properties()));
             }
+            Request::Apply { id, command, reply } => {
+                let _ = reply.send(self.edit(id, |doc| doc.apply(&command)));
+            }
+            Request::Undo { id, reply } => {
+                let _ = reply.send(self.edit(id, |doc| doc.undo()));
+            }
+            Request::Redo { id, reply } => {
+                let _ = reply.send(self.edit(id, |doc| doc.redo()));
+            }
+            Request::EditState { id, reply } => {
+                let _ = reply.send(self.entry(id).map(|e| e.doc.edit_state()));
+            }
+            Request::Save { id, path, reply } => {
+                // Enregistrer ne change ni les pages ni le cache : pas d'invalidation.
+                let result = match self.docs.get_mut(&id) {
+                    Some(entry) => {
+                        let saved = match path {
+                            Some(p) => entry.doc.save_as(p),
+                            None => entry.doc.save(),
+                        };
+                        saved.and_then(|_| Ok((summary_of(id, entry)?, entry.doc.edit_state())))
+                    }
+                    None => Err(CoreError::NotFound { id }),
+                };
+                let _ = reply.send(result);
+            }
+            Request::ExtractPages {
+                id,
+                pages,
+                path,
+                reply,
+            } => {
+                let result = self
+                    .entry(id)
+                    .and_then(|e| e.doc.extract_pages(&pages))
+                    .and_then(|bytes| crate::edit::write_atomically(&path, &bytes));
+                let _ = reply.send(result);
+            }
+            Request::MergeFiles { paths, reply } => {
+                let _ = reply.send(self.merge_files(&paths));
+            }
+            Request::SplitDocument {
+                id,
+                parts,
+                out_dir,
+                base_name,
+                reply,
+            } => {
+                let result = self.entry(id).and_then(|e| {
+                    crate::pages::split_to_dir(&e.doc, &parts, &out_dir, &base_name, false)
+                });
+                let _ = reply.send(result);
+            }
+            Request::SplitPlan { id, mode, reply } => {
+                let result = self
+                    .entry(id)
+                    .and_then(|e| crate::pages::plan_split(&e.doc, &mode));
+                let _ = reply.send(result);
+            }
         }
     }
 
@@ -446,6 +642,38 @@ impl Actor {
         );
         self.cache.insert(key, Arc::clone(&png));
         Ok(png)
+    }
+}
+
+impl Actor {
+    /// Applique une modification (`f`) au document `id`, invalide ses rendus en cache et
+    /// retourne le résumé et l'état d'édition à jour.
+    fn edit(
+        &mut self,
+        id: DocId,
+        f: impl FnOnce(&mut Document) -> CoreResult<()>,
+    ) -> CoreResult<(DocumentSummary, EditState)> {
+        let entry = self.docs.get_mut(&id).ok_or(CoreError::NotFound { id })?;
+        f(&mut entry.doc)?;
+        self.cache.invalidate_doc(id);
+        let entry = &self.docs[&id];
+        Ok((summary_of(id, entry)?, entry.doc.edit_state()))
+    }
+
+    /// Ouvre chaque fichier, fusionne, et enregistre le résultat comme nouveau document.
+    fn merge_files(&mut self, paths: &[PathBuf]) -> CoreResult<DocumentSummary> {
+        let docs = paths
+            .iter()
+            .map(|p| Document::open(p, None))
+            .collect::<CoreResult<Vec<_>>>()?;
+        let refs: Vec<&Document> = docs.iter().collect();
+        let bytes = crate::pages::merge(&refs)?;
+        let summary = self.open(Document::from_bytes(bytes, None))?;
+        // Le résultat n'existe pas sur disque : « modifié » jusqu'à « Enregistrer sous ».
+        if let Some(entry) = self.docs.get_mut(&summary.id) {
+            entry.doc.mark_never_saved();
+        }
+        Ok(summary)
     }
 }
 

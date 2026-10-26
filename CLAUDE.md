@@ -34,6 +34,11 @@ l'utilisateur apprend en le lisant.
 - Aucun appel réseau à l'exécution. Seul `cargo xtask fetch-pdfium` télécharge (en dev).
 - Pas de nouvelle dépendance sans raison écrite dans le message de commit.
 - Données venant d'un PDF = données non fiables (voir `display_safe` dans `mega-cli`).
+- **Toute écriture de fichier passe par `mega_core::edit::write_atomically`** (temporaire dans
+  le même dossier, `sync_all`, renommage) : jamais de `fs::write` direct sur un PDF de
+  l'utilisateur. Toute édition est une variante de `EditCommand` appliquée via
+  `Document::apply` (historique, « modifié ») ; jamais d'appel direct aux opérations de pages
+  depuis le backend Tauri (ADR-0007).
 - Gestion des erreurs : ADR-0005 (une enum typée par bibliothèque, conversion aux frontières,
   décision aux extrémités, cause conservée sans répétition). `unwrap`/`expect`/`panic!` sont
   **refusés par lint** hors tests ; un `expect` justifié porte `#[allow(clippy::expect_used)]`
@@ -91,3 +96,6 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
 - `pdfium-render` 0.9 : `PdfPageIndex` est `i32`, pas de setter de métadonnées
   (voir `mega-core/src/testing.rs` pour le squelette PDF écrit à la main).
 - Les métadonnées d'un PDF sont du texte PDFDocEncoding ou UTF-16BE+BOM, jamais de l'UTF-8 brut.
+- PDFium rapporte la taille d'une page **après** `/Rotate` : ne pas réappliquer la rotation
+  enregistrée côté interface (seule la rotation d'affichage `doc.rotation` est appliquée).
+- `pdfium-render` 0.9 n'expose pas `FPDF_MovePages` : `move_pages` copie puis supprime.

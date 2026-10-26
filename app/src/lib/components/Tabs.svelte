@@ -1,13 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import { activate, closeDoc, docsState } from '$lib/state/documents.svelte';
+  import { tabLabel } from '$lib/logic/labels';
+  import { activate, docsState, requestClose } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
-
-  function labelOf(path: string | null, title: string | null): string {
-    if (title) return title;
-    if (path) return path.split(/[\\/]/).pop() ?? path;
-    return t.untitled;
-  }
 </script>
 
 {#if docsState.docs.length > 0}
@@ -22,17 +17,21 @@
           title={doc.summary.path ?? ''}
           onclick={() => activate(doc.summary.id)}
           onauxclick={(e) => {
-            if (e.button === 1) closeDoc(doc.summary.id);
+            if (e.button === 1) requestClose(doc.summary.id);
           }}
         >
-          {labelOf(doc.summary.path, doc.summary.title)}
+          {tabLabel({
+            path: doc.summary.path,
+            title: doc.summary.title,
+            modified: doc.edit.modified,
+          })}
         </button>
         <button
           type="button"
           class="close"
           aria-label={t.closeTab}
           title={t.closeTab}
-          onclick={() => closeDoc(doc.summary.id)}>×</button
+          onclick={() => requestClose(doc.summary.id)}>×</button
         >
       </div>
     {/each}

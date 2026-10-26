@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use mega_core::service::{PdfService, Priority, RenderRequest, ServiceHandle};
 use mega_core::testing::sample_pdf;
-use mega_core::{CoreError, Rotation, SearchOptions};
+use mega_core::{CoreError, Document, Rotation, SearchOptions};
 
 fn request(doc: u32, page: u16, generation: u64, priority: Priority) -> RenderRequest {
     RenderRequest {
@@ -214,4 +214,134 @@ fn dropped_handles_stop_the_service() {
         clone.summary(id).is_ok(),
         "le service vit tant qu'un handle existe"
     );
+}
+
+// ---- Lot 2 : éditions par l'acteur ----
+
+#[test]
+fn apply_invalidates_render_cache_and_reports_state() {
+    use mega_core::EditCommand;
+    let handle = PdfService::spawn();
+    let id = open(&handle, 3);
+    let before = handle
+        .render_png(request(id, 0, 0, Priority::Visible))
+        .unwrap();
+    let (summary, state) = handle
+        .apply(
+            id,
+            EditCommand::RotatePages {
+                pages: vec![0],
+                quarter_turns: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(summary.page_count, 3);
+    assert!(state.modified && state.can_undo && !state.can_redo);
+    assert_eq!(state.undo_label.as_deref(), Some("Pivoter 1 page"));
+    let after = handle
+        .render_png(request(id, 0, 0, Priority::Visible))
+        .unwrap();
+    assert!(
+        !Arc::ptr_eq(&before, &after),
+        "l'image en cache était périmée"
+    );
+    assert_eq!(handle.edit_state(id).unwrap(), state);
+}
+
+#[test]
+fn undo_redo_through_service() {
+    use mega_core::EditCommand;
+    let handle = PdfService::spawn();
+    let id = open(&handle, 3);
+    handle
+        .apply(id, EditCommand::DeletePages { pages: vec![1] })
+        .unwrap();
+    let (summary, state) = handle.undo(id).unwrap();
+    assert_eq!(summary.page_count, 3);
+    assert!(state.can_redo && !state.modified);
+    let (summary, _) = handle.redo(id).unwrap();
+    assert_eq!(summary.page_count, 2);
+    assert!(matches!(handle.undo(99), Err(CoreError::NotFound { .. })));
+}
+
+#[test]
+fn save_as_through_service_updates_path() {
+    use mega_core::EditCommand;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sortie.pdf");
+    let handle = PdfService::spawn();
+    let id = open(&handle, 2);
+    handle
+        .apply(id, EditCommand::DeletePages { pages: vec![0] })
+        .unwrap();
+    let (summary, state) = handle.save_as(id, &path).unwrap();
+    assert_eq!(summary.path.as_deref(), Some(path.to_str().unwrap()));
+    assert!(!state.modified);
+    assert_eq!(Document::open(&path, None).unwrap().page_count(), 1);
+    // `save` sans chemin : InvalidOperation ; avec chemin : OK.
+    let id2 = open(&handle, 1);
+    assert!(matches!(
+        handle.save(id2),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    assert!(handle.save(id).is_ok());
+}
+
+#[test]
+fn extract_merge_split_through_service() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.pdf");
+    let b = dir.path().join("b.pdf");
+    std::fs::write(&a, sample_pdf(3, "a")).unwrap();
+    std::fs::write(&b, mega_core::testing::outlined_pdf()).unwrap();
+    let handle = PdfService::spawn();
+    let id = handle.open_path(&a, None).unwrap().id;
+
+    let out = dir.path().join("extrait.pdf");
+    handle.extract_pages(id, vec![0, 2], &out).unwrap();
+    assert_eq!(Document::open(&out, None).unwrap().page_count(), 2);
+
+    let merged = handle.merge_files(vec![a.clone(), b.clone()]).unwrap();
+    assert_eq!(merged.page_count, 6);
+    assert!(
+        merged.path.is_none(),
+        "la fusion est un nouveau document non enregistré"
+    );
+
+    let files = handle
+        .split_document(id, vec![vec![0, 1], vec![2]], dir.path(), "partie")
+        .unwrap();
+    assert_eq!(files.len(), 2);
+    assert!(files[0].ends_with("partie-1.pdf") && files[1].ends_with("partie-2.pdf"));
+    assert_eq!(Document::open(&files[1], None).unwrap().page_count(), 1);
+}
+
+// ---- Passe de correction après relecture (Lot 2) ----
+
+/// I5 : un document fusionné n'existe pas sur disque : « modifié » tant qu'il n'est pas enregistré,
+/// même après une édition annulée.
+#[test]
+fn merged_document_stays_modified_through_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.pdf");
+    let b = dir.path().join("b.pdf");
+    std::fs::write(&a, sample_pdf(2, "a")).unwrap();
+    std::fs::write(&b, sample_pdf(1, "b")).unwrap();
+    let handle = PdfService::spawn();
+    let summary = handle.merge_files(vec![a, b]).unwrap();
+    assert_eq!(summary.page_count, 3);
+    assert!(handle.edit_state(summary.id).unwrap().modified);
+    let (_, state) = handle
+        .apply(
+            summary.id,
+            mega_core::EditCommand::DeletePages { pages: vec![0] },
+        )
+        .unwrap();
+    assert!(state.modified);
+    let (_, state) = handle.undo(summary.id).unwrap();
+    assert!(state.modified, "jamais enregistré : toujours modifié");
+    let (_, state) = handle
+        .save_as(summary.id, dir.path().join("fusion.pdf"))
+        .unwrap();
+    assert!(!state.modified);
 }

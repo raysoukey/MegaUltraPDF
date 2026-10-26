@@ -2,11 +2,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { pickPdfFiles, startupFile } from '$lib/api';
+  import CloseConfirmDialog from '$lib/components/CloseConfirmDialog.svelte';
+  import MergeDialog from '$lib/components/MergeDialog.svelte';
   import PasswordDialog from '$lib/components/PasswordDialog.svelte';
   import PropertiesDialog from '$lib/components/PropertiesDialog.svelte';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ShortcutsHelp from '$lib/components/ShortcutsHelp.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
+  import SplitDialog from '$lib/components/SplitDialog.svelte';
   import Tabs from '$lib/components/Tabs.svelte';
   import Toolbar from '$lib/components/Toolbar.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
@@ -16,16 +19,25 @@
   import {
     activeDoc,
     cancelPassword,
-    closeDoc,
+    displayName,
+    docById,
     docsState,
     goToPage,
     openPath,
     openPaths,
+    redo,
     rememberAllPositions,
+    requestClose,
+    requestCloseAll,
+    resolveClosePrompt,
     rotateDoc,
+    save,
+    saveAs,
     setScale,
     setSelection,
+    showNotice,
     stepSearch,
+    undo,
   } from '$lib/state/documents.svelte';
   import { flushSettings, loadSettings, settings } from '$lib/state/settings.svelte';
   import { t } from '$lib/strings';
@@ -36,7 +48,8 @@
   let searchOpen = $state(false);
   let propertiesOpen = $state(false);
   let helpOpen = $state(false);
-  let toast = $state<string | null>(null);
+  let mergeOpen = $state(false);
+  let splitOpen = $state(false);
 
   $effect(() => {
     applyTheme(settings.theme);
@@ -61,7 +74,13 @@
         // À la fermeture de la fenêtre : mémoriser les positions de lecture et écrire les
         // préférences tout de suite (la sauvegarde différée n'aurait pas le temps).
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        unlistenClose = await getCurrentWindow().onCloseRequested(async () => {
+        unlistenClose = await getCurrentWindow().onCloseRequested(async (event) => {
+          // Des modifications en attente : on retient la fermeture, on confirme document
+          // par document, puis on redemande la fermeture (plus rien à confirmer).
+          if (!requestCloseAll(() => void getCurrentWindow().close())) {
+            event.preventDefault();
+            return;
+          }
           rememberAllPositions();
           await flushSettings();
         });
@@ -87,15 +106,10 @@
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      showToast(t.copied);
+      showNotice(t.copied);
     } catch {
       // presse-papiers indisponible : rien à faire
     }
-  }
-
-  function showToast(message: string) {
-    toast = message;
-    setTimeout(() => (toast = null), 1500);
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -114,15 +128,37 @@
       alt: e.altKey,
     });
     if (!action) return;
-    // Dans un champ de saisie, seuls les raccourcis avec Ctrl, les touches F et Échap passent.
+    // Dans un champ de saisie, seuls les raccourcis avec Ctrl, les touches F et Échap passent ;
+    // annuler/rétablir y restent ceux du champ.
     if (typing && !e.ctrlKey && !e.key.startsWith('F') && e.key !== 'Escape') return;
+    if (typing && (action === 'undo' || action === 'redo')) return;
+    // Un dialogue modal garde le clavier pour lui (sauf Échap).
+    if ((docsState.closePrompt || mergeOpen || splitOpen) && action !== 'escape') return;
     e.preventDefault();
     switch (action) {
       case 'open':
         onOpen();
         break;
       case 'close':
-        if (doc) closeDoc(doc.summary.id);
+        if (doc) requestClose(doc.summary.id);
+        break;
+      case 'undo':
+        if (doc) undo(doc);
+        break;
+      case 'redo':
+        if (doc) redo(doc);
+        break;
+      case 'save':
+        if (doc) save(doc);
+        break;
+      case 'saveAs':
+        if (doc) saveAs(doc);
+        break;
+      case 'merge':
+        mergeOpen = true;
+        break;
+      case 'split':
+        if (doc) splitOpen = true;
         break;
       case 'find':
         if (doc) searchOpen = true;
@@ -170,7 +206,10 @@
         if (doc) propertiesOpen = true;
         break;
       case 'escape':
-        if (helpOpen) helpOpen = false;
+        if (docsState.closePrompt) resolveClosePrompt('cancel');
+        else if (mergeOpen) mergeOpen = false;
+        else if (splitOpen) splitOpen = false;
+        else if (helpOpen) helpOpen = false;
         else if (propertiesOpen) propertiesOpen = false;
         else if (docsState.passwordPrompt) cancelPassword();
         else if (searchOpen) searchOpen = false;
@@ -192,6 +231,8 @@
     ontogglesearch={() => (searchOpen = !searchOpen)}
     onproperties={() => (propertiesOpen = true)}
     onhelp={() => (helpOpen = true)}
+    onmerge={() => (mergeOpen = true)}
+    onsplit={() => doc && (splitOpen = true)}
   />
   <Tabs />
   {#if doc && searchOpen}
@@ -231,8 +272,21 @@
   {#if helpOpen}
     <ShortcutsHelp onclose={() => (helpOpen = false)} />
   {/if}
-  {#if toast}
-    <div class="toast" role="status">{toast}</div>
+  {#if mergeOpen}
+    <MergeDialog onclose={() => (mergeOpen = false)} />
+  {/if}
+  {#if doc && splitOpen}
+    <SplitDialog {doc} onclose={() => (splitOpen = false)} />
+  {/if}
+  {#if docsState.closePrompt}
+    {@const closing = docById(docsState.closePrompt.id)}
+    <CloseConfirmDialog
+      name={closing ? displayName(closing) : t.untitled}
+      onchoice={(choice) => resolveClosePrompt(choice)}
+    />
+  {/if}
+  {#if docsState.notice}
+    <div class="toast" role="status">{docsState.notice}</div>
   {/if}
 </main>
 

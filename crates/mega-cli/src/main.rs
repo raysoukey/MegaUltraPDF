@@ -36,6 +36,46 @@ fn main() {
             out,
             password,
         } => commands::render::run(&file, page, scale, &out, password.as_deref()),
+        Command::Merge { files, out } => commands::merge::run(&files, &out),
+        Command::Split {
+            file,
+            ranges,
+            every,
+            bookmarks,
+            out,
+            prefix,
+            force,
+            password,
+        } => {
+            use mega_core::pages::SplitMode;
+            let mode = match (ranges, every, bookmarks) {
+                (Some(spec), _, _) => SplitMode::Ranges { spec },
+                (None, Some(n), _) => SplitMode::Every { n },
+                (None, None, true) => SplitMode::Bookmarks,
+                (None, None, false) => SplitMode::Every { n: 1 },
+            };
+            commands::split::run(
+                &file,
+                mode,
+                &out,
+                prefix.as_deref(),
+                force,
+                password.as_deref(),
+            )
+        }
+        Command::Rotate {
+            file,
+            pages,
+            degrees,
+            out,
+            password,
+        } => commands::rotate::run(&file, &pages, degrees, &out, password.as_deref()),
+        Command::Extract {
+            file,
+            pages,
+            out,
+            password,
+        } => commands::extract::run(&file, &pages, &out, password.as_deref()),
     };
     // \[Apprentissage\] `{e:#}` affiche la chaîne complète des causes d'une erreur
     // `anyhow` (« écriture de x : accès refusé »), là où `{e}` n'afficherait que la

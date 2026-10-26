@@ -3,21 +3,32 @@
 // document passe par le backend ; ici on ne garde que ce qu'il faut pour l'afficher.
 
 import {
+  applyEdit as apiApplyEdit,
   closeDocument,
+  extractPages,
   isAppError,
+  mergeFiles,
   openDocument,
+  pickSavePath,
+  redoEdit,
+  saveDocument,
+  undoEdit,
   outline as fetchOutline,
   pageLinks,
   searchDocument,
   setGeneration,
   textLayer,
   type DocumentSummary,
+  type EditCommand,
+  type EditResult,
+  type EditState,
   type OutlineNode,
   type PageLink,
   type Rotation,
   type SearchHit,
   type TextBox,
 } from '$lib/api';
+import { fileName } from '$lib/logic/labels';
 import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
 import { t } from '$lib/strings';
@@ -52,6 +63,10 @@ export interface OpenDoc {
   links: Record<number, PageLink[]>;
   selection: TextSelection | null;
   search: { query: string; hits: SearchHit[]; current: number } | null;
+  /** Historique d'édition (miroir de l'état du backend). */
+  edit: EditState;
+  /** Pages sélectionnées dans les vignettes (index 0). */
+  selectedPages: number[];
 }
 
 export interface PasswordPrompt {
@@ -59,19 +74,41 @@ export interface PasswordPrompt {
   error: string | null;
 }
 
+/** Demande de confirmation avant de fermer un document modifié. */
+export interface ClosePrompt {
+  id: number;
+  /** Autres documents modifiés à confirmer ensuite (fermeture de la fenêtre). */
+  queue: number[];
+  /** À appeler quand toute la file est traitée (ex. fermer la fenêtre). */
+  onDone: (() => void) | null;
+}
+
 interface DocsState {
   docs: OpenDoc[];
   activeId: number | null;
   passwordPrompt: PasswordPrompt | null;
+  closePrompt: ClosePrompt | null;
   error: string | null;
+  /** Message bref, non bloquant (ex. « Document enregistré. »). */
+  notice: string | null;
   busy: boolean;
 }
+
+const UNTOUCHED: EditState = {
+  modified: false,
+  can_undo: false,
+  can_redo: false,
+  undo_label: null,
+  redo_label: null,
+};
 
 export const docsState = $state<DocsState>({
   docs: [],
   activeId: null,
   passwordPrompt: null,
+  closePrompt: null,
   error: null,
+  notice: null,
   busy: false,
 });
 
@@ -115,6 +152,8 @@ export async function openPath(path: string, password?: string): Promise<boolean
       links: {},
       selection: null,
       search: null,
+      edit: { ...UNTOUCHED },
+      selectedPages: [],
     });
     docsState.activeId = summary.id;
     docsState.passwordPrompt = null;
@@ -147,6 +186,55 @@ export async function openPaths(paths: string[]): Promise<void> {
 
 export function cancelPassword(): void {
   docsState.passwordPrompt = null;
+}
+
+/** Ferme l'onglet, après confirmation si le document a des modifications en attente. */
+export async function requestClose(id: number): Promise<void> {
+  const doc = docById(id);
+  if (!doc) return;
+  if (!doc.edit.modified) {
+    await closeDoc(id);
+    return;
+  }
+  docsState.closePrompt = { id, queue: [], onDone: null };
+}
+
+/**
+ * Fermeture de la fenêtre : vrai si rien n'est à confirmer (on peut fermer tout de suite).
+ * Sinon, enchaîne une confirmation par document modifié puis appelle `onDone`.
+ */
+export function requestCloseAll(onDone: () => void): boolean {
+  const modified = docsState.docs.filter((d) => d.edit.modified).map((d) => d.summary.id);
+  if (modified.length === 0) return true;
+  docsState.closePrompt = { id: modified[0], queue: modified.slice(1), onDone };
+  return false;
+}
+
+/** Réponse au dialogue de fermeture. */
+export async function resolveClosePrompt(choice: 'save' | 'discard' | 'cancel'): Promise<void> {
+  const prompt = docsState.closePrompt;
+  if (!prompt) return;
+  if (choice === 'cancel') {
+    docsState.closePrompt = null;
+    return;
+  }
+  const doc = docById(prompt.id);
+  if (doc && choice === 'save') {
+    const ok = await save(doc);
+    if (!ok) {
+      // Enregistrement annulé ou en échec : on garde l'onglet et on arrête la file.
+      docsState.closePrompt = null;
+      return;
+    }
+  }
+  await closeDoc(prompt.id);
+  const [next, ...rest] = prompt.queue;
+  if (next !== undefined) {
+    docsState.closePrompt = { id: next, queue: rest, onDone: prompt.onDone };
+  } else {
+    docsState.closePrompt = null;
+    prompt.onDone?.();
+  }
 }
 
 export async function closeDoc(id: number): Promise<void> {
@@ -293,4 +381,153 @@ export function consumeScrollRequest(doc: OpenDoc): void {
 export function clearSearch(doc: OpenDoc): void {
   searchSequence++;
   doc.search = null;
+}
+
+// ---- Édition (Lot 2) ----
+
+/**
+ * Après toute édition : le résumé et l'état d'historique viennent du backend ; tout ce qui
+ * dépend de la numérotation des pages (texte, liens, signets, recherche, sélection) est
+ * oublié et sera rechargé ; une nouvelle génération force le rechargement des images.
+ */
+function afterEdit(doc: OpenDoc, result: EditResult): void {
+  doc.summary = result.summary;
+  doc.edit = result.state;
+  doc.textLayers = {};
+  doc.links = {};
+  doc.outline = null;
+  doc.selection = null;
+  doc.search = null;
+  doc.selectedPages = doc.selectedPages.filter((p) => p < result.summary.page_count);
+  doc.page = Math.min(doc.page, Math.max(0, result.summary.page_count - 1));
+  nextGeneration(doc);
+}
+
+function reportError(message: (m: string) => string, e: unknown): void {
+  docsState.error = message(isAppError(e) ? e.message : String(e));
+}
+
+export async function applyEdit(doc: OpenDoc, command: EditCommand): Promise<boolean> {
+  docsState.error = null;
+  try {
+    afterEdit(doc, await apiApplyEdit(doc.summary.id, command));
+    return true;
+  } catch (e) {
+    reportError(t.editError, e);
+    return false;
+  }
+}
+
+export async function undo(doc: OpenDoc): Promise<void> {
+  if (!doc.edit.can_undo) return;
+  try {
+    afterEdit(doc, await undoEdit(doc.summary.id));
+  } catch (e) {
+    reportError(t.editError, e);
+  }
+}
+
+export async function redo(doc: OpenDoc): Promise<void> {
+  if (!doc.edit.can_redo) return;
+  try {
+    afterEdit(doc, await redoEdit(doc.summary.id));
+  } catch (e) {
+    reportError(t.editError, e);
+  }
+}
+
+/** Enregistre à son chemin ; un document sans chemin passe par « Enregistrer sous ». */
+export async function save(doc: OpenDoc): Promise<boolean> {
+  if (!doc.summary.path) return saveAs(doc);
+  return writeTo(doc, undefined);
+}
+
+/** Choisit un chemin puis enregistre ; faux si l'utilisateur annule. */
+export async function saveAs(doc: OpenDoc): Promise<boolean> {
+  const path = await pickSavePath(doc.summary.path ?? undefined);
+  if (!path) return false;
+  return writeTo(doc, path);
+}
+
+async function writeTo(doc: OpenDoc, path: string | undefined): Promise<boolean> {
+  docsState.error = null;
+  try {
+    const result = await saveDocument(doc.summary.id, path);
+    // Enregistrer ne change ni les pages ni les images : seuls résumé et état bougent.
+    doc.summary = result.summary;
+    doc.edit = result.state;
+    if (result.summary.path) rememberRecent(result.summary.path);
+    showNotice(t.saved);
+    return true;
+  } catch (e) {
+    reportError(t.saveError, e);
+    return false;
+  }
+}
+
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function showNotice(message: string): void {
+  docsState.notice = message;
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => (docsState.notice = null), 1500);
+}
+
+/** Extrait des pages vers un nouveau fichier ; l'erreur éventuelle passe par le bandeau. */
+export async function extractTo(doc: OpenDoc, pages: number[], path: string): Promise<boolean> {
+  docsState.error = null;
+  try {
+    await extractPages(doc.summary.id, pages, path);
+    showNotice(t.extracted(pages.length));
+    return true;
+  } catch (e) {
+    reportError(t.editError, e);
+    return false;
+  }
+}
+
+/** Nom affichable d'un document (pour les dialogues). */
+export function displayName(doc: OpenDoc): string {
+  return doc.summary.title || (doc.summary.path ? fileName(doc.summary.path) : t.untitled);
+}
+
+/** Fusionne des fichiers et ouvre le résultat (sans chemin : à enregistrer) dans un onglet. */
+export async function mergeAndOpen(paths: string[]): Promise<boolean> {
+  docsState.error = null;
+  docsState.busy = true;
+  try {
+    const summary = await mergeFiles(paths);
+    docsState.docs.push({
+      summary,
+      scale: clampScale(settings.scale),
+      zoomMode: settings.zoomMode,
+      rotation: 'none',
+      page: 0,
+      generation: summary.generation,
+      scrollRequest: 0,
+      outline: null,
+      textLayers: {},
+      links: {},
+      selection: null,
+      search: null,
+      // Un document fusionné n'existe pas encore sur disque : il est « modifié » d'emblée.
+      edit: { ...UNTOUCHED, modified: true },
+      selectedPages: [],
+    });
+    docsState.activeId = summary.id;
+    return true;
+  } catch (e) {
+    reportError(t.mergeError, e);
+    return false;
+  } finally {
+    docsState.busy = false;
+  }
+}
+
+export function setSelectedPages(doc: OpenDoc, pages: number[]): void {
+  doc.selectedPages = pages;
+}
+
+export function clearError(): void {
+  docsState.error = null;
 }

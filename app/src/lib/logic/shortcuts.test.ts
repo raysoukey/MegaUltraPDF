@@ -32,6 +32,16 @@ describe('actionFor', () => {
     expect(actionFor(key('Escape'))).toBe('escape');
     expect(actionFor(key('i', { ctrl: true }))).toBe('properties');
   });
+  it('maps the editing shortcuts (Lot 2)', () => {
+    expect(actionFor(key('z', { ctrl: true }))).toBe('undo');
+    expect(actionFor(key('y', { ctrl: true }))).toBe('redo');
+    expect(actionFor(key('z', { ctrl: true, shift: true }))).toBe('redo');
+    expect(actionFor(key('s', { ctrl: true }))).toBe('save');
+    expect(actionFor(key('s', { ctrl: true, shift: true }))).toBe('saveAs');
+    expect(actionFor(key('z'))).toBeNull();
+    expect(actionFor(key('m', { ctrl: true }))).toBe('merge');
+    expect(actionFor(key('d', { ctrl: true, shift: true }))).toBe('split');
+  });
   it('ignores unknown or wrongly modified keys', () => {
     expect(actionFor(key('o'))).toBeNull();
     expect(actionFor(key('r', { ctrl: true }))).toBeNull();

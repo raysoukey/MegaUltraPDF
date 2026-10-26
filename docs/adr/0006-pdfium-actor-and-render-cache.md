@@ -20,10 +20,14 @@ vignettes, recherche) a besoin d'un rendu **asynchrone, ordonné et annulable**.
   L'acteur aspire toutes les requêtes déjà arrivées avant de traiter la plus prioritaire :
   une page visible envoyée après dix vignettes passe devant elles. Les opérations qui ne
   sont pas des rendus (ouvrir, fermer, chercher…) sont traitées comme `Visible`.
-- **Générations** : chaque document porte un compteur ; le frontend le fait avancer
-  (`bump_generation`) à chaque changement de zoom ou de rotation. Un rendu dont la génération
-  est périmée est refusé sans travail (`CoreError::Cancelled`, HTTP 409 sur `mega://`), et le
-  cache du document est vidé.
+- **Générations** : chaque document porte un compteur **possédé par le frontend**, qui
+  l'incrémente de façon synchrone à chaque changement de zoom ou de rotation et en informe
+  l'acteur (`set_generation`, qui ne recule jamais). Un rendu dont la génération est plus
+  ancienne que celle connue est refusé sans travail (`CoreError::Cancelled`, HTTP 409 sur
+  `mega://`) ; un rendu plus récent fait avancer le compteur de l'acteur. Le cache n'est pas
+  vidé : sa clé contient déjà l'échelle et la rotation, et revenir à un zoom précédent
+  réutilise les images. (Révision après relecture : une génération attribuée par l'acteur
+  créait une course entre deux zooms rapprochés.)
 - **Cache LRU de PNG** (`PngCache`, 256 Mo par défaut), clé `(document, page, échelle × 100,
   rotation)`, images partagées en `Arc<Vec<u8>>` entre le cache et les réponses.
 - **Handle bloquant** (`ServiceHandle`, clonable) ; le backend Tauri l'appelle depuis

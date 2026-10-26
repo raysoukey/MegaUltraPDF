@@ -3,13 +3,13 @@
 // document passe par le backend ; ici on ne garde que ce qu'il faut pour l'afficher.
 
 import {
-  bumpGeneration,
   closeDocument,
   isAppError,
   openDocument,
   outline as fetchOutline,
   pageLinks,
   searchDocument,
+  setGeneration,
   textLayer,
   type DocumentSummary,
   type OutlineNode,
@@ -18,12 +18,14 @@ import {
   type SearchHit,
   type TextBox,
 } from '$lib/api';
+import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
 import { t } from '$lib/strings';
 import {
   forgetRecent,
   rememberPosition,
   rememberRecent,
+  saveSettings,
   settings,
   type ZoomMode,
 } from './settings.svelte';
@@ -171,21 +173,54 @@ export function activate(id: number): void {
 }
 
 /** Change l'échelle (et le mode) ; une nouvelle génération invalide les rendus en cours. */
-export async function setScale(doc: OpenDoc, scale: number, zoomMode: ZoomMode): Promise<void> {
+/**
+ * Nouvelle génération, décidée ici de façon **synchrone** : les rendus demandés ensuite
+ * portent déjà le bon numéro, et deux changements rapprochés ne peuvent pas se doubler.
+ * Le backend est simplement informé (il ne recule jamais, voir `set_generation`).
+ */
+function nextGeneration(doc: OpenDoc): void {
+  doc.generation += 1;
+  void setGeneration(doc.summary.id, doc.generation).catch(() => undefined);
+}
+
+export function setScale(doc: OpenDoc, scale: number, zoomMode: ZoomMode): void {
   const next = clampScale(scale);
   const changed = Math.abs(next - doc.scale) > 1e-6;
   doc.zoomMode = zoomMode;
-  if (!changed) return;
-  doc.scale = next;
-  settings.scale = next;
   settings.zoomMode = zoomMode;
-  doc.generation = await bumpGeneration(doc.summary.id).catch(() => doc.generation + 1);
+  if (changed) {
+    nextGeneration(doc);
+    doc.scale = next;
+    settings.scale = next;
+  }
+  saveSettings();
 }
 
-export async function rotateDoc(doc: OpenDoc): Promise<void> {
+export function rotateDoc(doc: OpenDoc): void {
   const order: Rotation[] = ['none', 'cw90', 'cw180', 'cw270'];
+  nextGeneration(doc);
   doc.rotation = order[(order.indexOf(doc.rotation) + 1) % 4];
-  doc.generation = await bumpGeneration(doc.summary.id).catch(() => doc.generation + 1);
+}
+
+/** Mémorise la position de lecture de tous les onglets (fermeture de la fenêtre). */
+export function rememberAllPositions(): void {
+  for (const doc of docsState.docs) {
+    if (doc.summary.path) {
+      rememberPosition(doc.summary.path, {
+        page: doc.page,
+        scale: doc.scale,
+        zoomMode: doc.zoomMode,
+      });
+    }
+  }
+}
+
+/** Borne des caches par page (couche de texte, liens) : pages les plus proches gardées. */
+const PAGE_CACHE_KEEP = 24;
+
+function pruneRecord<T>(record: Record<number, T>, current: number): void {
+  const cached = Object.keys(record).map(Number);
+  for (const page of pagesToEvict(cached, current, PAGE_CACHE_KEEP)) delete record[page];
 }
 
 export function goToPage(doc: OpenDoc, page: number): void {
@@ -204,6 +239,7 @@ export async function ensureTextLayer(doc: OpenDoc, page: number): Promise<TextB
   if (cached) return cached;
   const boxes = await textLayer(doc.summary.id, page).catch(() => []);
   doc.textLayers[page] = boxes;
+  pruneRecord(doc.textLayers, doc.page);
   return boxes;
 }
 
@@ -212,15 +248,21 @@ export async function ensureLinks(doc: OpenDoc, page: number): Promise<PageLink[
   if (cached) return cached;
   const links = await pageLinks(doc.summary.id, page).catch(() => []);
   doc.links[page] = links;
+  pruneRecord(doc.links, doc.page);
   return links;
 }
+
+let searchSequence = 0;
 
 export async function runSearch(doc: OpenDoc, query: string, matchCase: boolean): Promise<void> {
   if (query.trim() === '') {
     doc.search = null;
     return;
   }
+  // Deux recherches en vol peuvent répondre dans le désordre : seule la dernière compte.
+  const ticket = ++searchSequence;
   const hits = await searchDocument(doc.summary.id, query, matchCase).catch(() => []);
+  if (ticket !== searchSequence) return;
   doc.search = { query, hits, current: hits.length > 0 ? 0 : -1 };
   if (hits.length > 0) goToPage(doc, hits[0].page);
 }
@@ -249,5 +291,6 @@ export function consumeScrollRequest(doc: OpenDoc): void {
 }
 
 export function clearSearch(doc: OpenDoc): void {
+  searchSequence++;
   doc.search = null;
 }

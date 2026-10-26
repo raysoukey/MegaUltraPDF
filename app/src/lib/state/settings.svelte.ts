@@ -83,6 +83,21 @@ export function saveSettings(): void {
   }, 300);
 }
 
+/** Sauvegarde immédiate (fermeture de la fenêtre) : n'attend pas le délai. */
+export async function flushSettings(): Promise<void> {
+  if (!store) return;
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  try {
+    await store.set(KEY, $state.snapshot(settings));
+    await store.save();
+  } catch {
+    // rien à faire de plus à la fermeture
+  }
+}
+
 export function rememberRecent(path: string): void {
   settings.recent = pushRecent(settings.recent, path);
   saveSettings();

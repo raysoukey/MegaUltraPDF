@@ -277,3 +277,16 @@ fn render_rotated_swaps_dimensions() {
         (upright.height_px, upright.width_px)
     );
 }
+
+#[test]
+fn outline_terminates_on_cycle_and_depth() {
+    // Un PDF hostile : /Next qui boucle sur lui-même, et un enfant qui est son propre enfant.
+    let doc = Document::from_bytes(mega_core::testing::cyclic_outline_pdf(), None).unwrap();
+    let outline = doc.outline().unwrap();
+    assert!(!outline.is_empty());
+    assert!(outline.len() <= mega_core::outline::MAX_OUTLINE_NODES);
+    fn depth(n: &mega_core::OutlineNode) -> usize {
+        1 + n.children.iter().map(depth).max().unwrap_or(0)
+    }
+    assert!(outline.iter().map(depth).max().unwrap_or(0) <= mega_core::outline::MAX_OUTLINE_DEPTH);
+}

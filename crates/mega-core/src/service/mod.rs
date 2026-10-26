@@ -94,8 +94,9 @@ enum Request {
         id: DocId,
         reply: SyncSender<CoreResult<DocumentSummary>>,
     },
-    BumpGeneration {
+    SetGeneration {
         id: DocId,
+        generation: u64,
         reply: SyncSender<CoreResult<u64>>,
     },
     Render {
@@ -186,6 +187,9 @@ pub struct ServiceHandle {
 impl ServiceHandle {
     /// Envoie une requête construite par `make` (qui reçoit le canal de réponse) et attend.
     fn call<T>(&self, make: impl FnOnce(SyncSender<CoreResult<T>>) -> Request) -> CoreResult<T> {
+        // [Apprentissage] `sync_channel(1)` : un canal borné à une place créé pour cette
+        // seule requête. L'émetteur part dans le message, le récepteur reste ici : c'est
+        // un « oneshot » avec les outils de la bibliothèque standard.
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         self.tx
             .send(make(reply_tx))
@@ -231,10 +235,19 @@ impl ServiceHandle {
         self.call(|reply| Request::Summary { id, reply })
     }
 
-    /// Passe à la génération suivante (zoom ou rotation changés) ; les rendus en attente de
-    /// l'ancienne génération seront annulés et le cache du document vidé.
-    pub fn bump_generation(&self, id: DocId) -> CoreResult<u64> {
-        self.call(|reply| Request::BumpGeneration { id, reply })
+    /// Déclare la génération courante du document, décidée par le frontend (incrémentée à
+    /// chaque changement de zoom ou de rotation). Les rendus demandés avec une génération
+    /// plus ancienne seront annulés. Le compteur ne recule jamais ; retourne sa valeur.
+    ///
+    /// Le cache n'est **pas** vidé : sa clé contient déjà l'échelle et la rotation, et le
+    /// test de génération précède la consultation du cache. Revenir à un zoom précédent
+    /// réutilise donc les images déjà rendues.
+    pub fn set_generation(&self, id: DocId, generation: u64) -> CoreResult<u64> {
+        self.call(|reply| Request::SetGeneration {
+            id,
+            generation,
+            reply,
+        })
     }
 
     /// Rend une page en PNG (depuis le cache si possible).
@@ -352,11 +365,14 @@ impl Actor {
             Request::Summary { id, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| summary_of(id, e)));
             }
-            Request::BumpGeneration { id, reply } => {
+            Request::SetGeneration {
+                id,
+                generation,
+                reply,
+            } => {
                 let result = match self.docs.get_mut(&id) {
                     Some(entry) => {
-                        entry.generation += 1;
-                        self.cache.invalidate_doc(id);
+                        entry.generation = entry.generation.max(generation);
                         Ok(entry.generation)
                     }
                     None => Err(CoreError::NotFound { id }),
@@ -409,11 +425,15 @@ impl Actor {
     fn render(&mut self, req: RenderRequest) -> CoreResult<Arc<Vec<u8>>> {
         let entry = self
             .docs
-            .get(&req.doc)
+            .get_mut(&req.doc)
             .ok_or(CoreError::NotFound { id: req.doc })?;
-        if req.generation != entry.generation {
+        // Le frontend est l'autorité sur la génération : plus ancienne → annulée ;
+        // plus récente que ce que l'acteur connaît → on se met à jour.
+        if req.generation < entry.generation {
             return Err(CoreError::Cancelled);
         }
+        entry.generation = req.generation;
+        let entry = &*entry;
         let key = PageKey::new(req.doc, req.page, req.scale, req.rotation);
         if let Some(png) = self.cache.get(&key) {
             return Ok(png);

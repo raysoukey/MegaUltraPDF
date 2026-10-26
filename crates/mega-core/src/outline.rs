@@ -8,6 +8,16 @@ use crate::document::Document;
 use crate::engine;
 use crate::error::CoreResult;
 
+/// Nombre maximal de signets lus. Au-delà, la lecture s'arrête silencieusement.
+///
+/// Un PDF malformé ou hostile peut contenir une chaîne `/Next` qui boucle sur elle-même ;
+/// PDFium ne le détecte pas. Sans borne, l'acteur PDFium tournerait sans fin et toute
+/// l'application serait figée. Le fichier est une donnée non fiable.
+pub const MAX_OUTLINE_NODES: usize = 10_000;
+
+/// Profondeur maximale de l'arbre de signets (protège la pile de la récursion).
+pub const MAX_OUTLINE_DEPTH: usize = 64;
+
 /// Un signet et ses enfants.
 ///
 /// \[Apprentissage\] Une structure **récursive** : `children` contient des `OutlineNode`.
@@ -23,28 +33,61 @@ pub struct OutlineNode {
     pub children: Vec<OutlineNode>,
 }
 
-impl Document {
-    /// L'arbre des signets ; vide si le document n'en a pas.
-    pub fn outline(&self) -> CoreResult<Vec<OutlineNode>> {
-        let _guard = engine::guard();
-        // `root()` est le premier signet de premier niveau ; on suit la chaîne `next_sibling`
-        // à la main : c'est une liste chaînée, exactement comme dans le fichier PDF (`/Next`).
-        let mut nodes = Vec::new();
-        let mut current = self.inner().bookmarks().root();
-        while let Some(b) = current {
-            nodes.push(node(&b));
-            current = b.next_sibling();
+/// Budget partagé par toute la lecture d'un arbre : nombre de nœuds restants.
+struct Budget {
+    remaining: usize,
+}
+
+impl Budget {
+    /// Consomme un nœud ; `false` quand le budget est épuisé.
+    fn take(&mut self) -> bool {
+        if self.remaining == 0 {
+            return false;
         }
-        Ok(nodes)
+        self.remaining -= 1;
+        true
     }
 }
 
-/// Convertit récursivement un signet PDFium en `OutlineNode`.
-fn node(b: &PdfBookmark<'_>) -> OutlineNode {
+impl Document {
+    /// L'arbre des signets ; vide si le document n'en a pas. La lecture est bornée
+    /// ([`MAX_OUTLINE_NODES`], [`MAX_OUTLINE_DEPTH`]) : un arbre cyclique ou démesuré est
+    /// tronqué, jamais parcouru indéfiniment.
+    pub fn outline(&self) -> CoreResult<Vec<OutlineNode>> {
+        let _guard = engine::guard();
+        let mut budget = Budget {
+            remaining: MAX_OUTLINE_NODES,
+        };
+        Ok(siblings(self.inner().bookmarks().root(), 0, &mut budget))
+    }
+}
+
+/// Suit la chaîne `next_sibling` à partir de `first` (une liste chaînée, comme `/Next`
+/// dans le fichier), en convertissant chaque signet et ses enfants.
+fn siblings(first: Option<PdfBookmark<'_>>, depth: usize, budget: &mut Budget) -> Vec<OutlineNode> {
+    let mut nodes = Vec::new();
+    let mut current = first;
+    while let Some(b) = current {
+        if !budget.take() {
+            break;
+        }
+        nodes.push(node(&b, depth, budget));
+        current = b.next_sibling();
+    }
+    nodes
+}
+
+/// Convertit un signet ; ses enfants ne sont lus que sous la profondeur maximale.
+fn node(b: &PdfBookmark<'_>, depth: usize, budget: &mut Budget) -> OutlineNode {
+    let children = if depth + 1 < MAX_OUTLINE_DEPTH {
+        siblings(b.first_child(), depth + 1, budget)
+    } else {
+        Vec::new()
+    };
     OutlineNode {
         title: b.title().unwrap_or_default(),
         page: target_page(b),
-        children: b.iter_direct_children().map(|c| node(&c)).collect(),
+        children,
     }
 }
 

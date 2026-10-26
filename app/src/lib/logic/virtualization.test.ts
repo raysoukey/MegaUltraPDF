@@ -43,3 +43,23 @@ describe('pageAtScroll', () => {
     expect(pageAtScroll(layout, 99999, 600)).toBe(2);
   });
 });
+
+describe('pageAtScroll at the end of the document', () => {
+  it('reports the last page when the viewport reaches the bottom even if the page is short', () => {
+    // Trois pages de 300 px, fenêtre de 600 px : la dernière page ne peut jamais atteindre le
+    // haut de la fenêtre ; une fois en butée (scrollTop = total − 600), c'est bien la page 3.
+    const short = pageLayout(
+      [
+        { width_pt: 100, height_pt: 300 },
+        { width_pt: 100, height_pt: 300 },
+        { width_pt: 100, height_pt: 300 },
+      ],
+      1,
+      'none',
+      0,
+    );
+    const total = 900;
+    expect(pageAtScroll(short, total - 600, 600)).toBe(2);
+    expect(pageAtScroll(short, 0, 600)).toBe(0);
+  });
+});

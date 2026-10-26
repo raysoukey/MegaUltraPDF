@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn respond_cancelled_is_409() {
         let (s, id) = service_with_one_doc();
-        s.bump_generation(id).unwrap();
+        s.set_generation(id, 1).unwrap();
         assert_eq!(
             respond(&s, &format!("page/{id}/0"), Some("gen=0")).status(),
             StatusCode::CONFLICT

@@ -116,6 +116,25 @@ pub fn outlined_pdf() -> Vec<u8> {
     )
 }
 
+/// Un PDF **hostile** : signet dont `/Next` pointe sur lui-même, et signet dont le premier
+/// enfant est lui-même. Sert à vérifier que la lecture des signets est bornée.
+pub fn cyclic_outline_pdf() -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 2 >>".to_string(),
+        // /Next sur lui-même : la chaîne des frères ne se termine jamais.
+        "<< /Title (Boucle) /Parent 4 0 R /Next 5 0 R /First 6 0 R /Last 6 0 R /Count 1 \
+         /Dest [3 0 R /Fit] >>"
+            .to_string(),
+        // /First sur lui-même : la descente ne se termine jamais.
+        "<< /Title (Abîme) /Parent 5 0 R /First 6 0 R /Last 6 0 R /Count 1 /Dest [3 0 R /Fit] >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,
 /// avec une table `xref` aux positions exactes.
 fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {

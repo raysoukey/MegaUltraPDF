@@ -66,25 +66,41 @@ fn render_png_is_cached() {
 }
 
 #[test]
-fn bump_generation_invalidates_cache() {
+fn set_generation_cancels_older_requests_but_keeps_cache() {
     let handle = PdfService::spawn();
     let id = open(&handle, 1);
     let first = handle
         .render_png(request(id, 0, 0, Priority::Visible))
         .unwrap();
-    let generation = handle.bump_generation(id).unwrap();
-    assert_eq!(generation, 1);
+    handle.set_generation(id, 3).unwrap();
+    assert_eq!(handle.summary(id).unwrap().generation, 3);
+    // Génération périmée : refusée sans travail.
+    assert!(matches!(
+        handle.render_png(request(id, 0, 2, Priority::Visible)),
+        Err(CoreError::Cancelled)
+    ));
+    // Même échelle, génération courante : l'image vient toujours du cache (pas de rerendu).
     let again = handle
-        .render_png(request(id, 0, 1, Priority::Visible))
+        .render_png(request(id, 0, 3, Priority::Visible))
         .unwrap();
-    assert!(!Arc::ptr_eq(&first, &again));
+    assert!(Arc::ptr_eq(&first, &again));
+    // Une génération plus récente que celle connue de l'acteur fait avancer le compteur
+    // (le frontend est l'autorité) et n'est jamais refusée.
+    assert!(
+        handle
+            .render_png(request(id, 0, 5, Priority::Visible))
+            .is_ok()
+    );
+    assert_eq!(handle.summary(id).unwrap().generation, 5);
+    // `set_generation` ne recule jamais.
+    assert_eq!(handle.set_generation(id, 1).unwrap(), 5);
 }
 
 #[test]
 fn stale_generation_is_cancelled() {
     let handle = PdfService::spawn();
     let id = open(&handle, 1);
-    handle.bump_generation(id).unwrap();
+    handle.set_generation(id, 1).unwrap();
     assert!(matches!(
         handle.render_png(request(id, 0, 0, Priority::Visible)),
         Err(CoreError::Cancelled)

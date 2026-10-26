@@ -50,9 +50,14 @@
     img.onerror = () => {
       if (!cancelled) loading = false; // 409 (génération périmée) ou autre : on garde l'ancienne
     };
-    img.src = url;
+    // Petit délai avant de demander l'image : pendant un défilement rapide, les pages
+    // simplement traversées sont démontées avant l'échéance et ne coûtent aucun rendu.
+    const timer = setTimeout(() => {
+      if (!cancelled) img.src = url;
+    }, 80);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   });
 

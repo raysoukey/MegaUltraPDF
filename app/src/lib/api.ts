@@ -96,9 +96,13 @@ export async function closeDocument(id: number): Promise<void> {
   await invoke('close_document', { id });
 }
 
-/** Nouvelle génération du document (à appeler quand zoom ou rotation changent). */
-export async function bumpGeneration(id: number): Promise<number> {
-  return invoke<number>('bump_generation', { id });
+/**
+ * Déclare au backend la génération courante du document (incrémentée côté frontend à
+ * chaque changement de zoom ou de rotation). Le backend ne recule jamais ; il annule les
+ * rendus demandés avec une génération plus ancienne.
+ */
+export async function setGeneration(id: number, generation: number): Promise<number> {
+  return invoke<number>('set_generation', { id, generation });
 }
 
 export async function textLayer(id: number, page: number): Promise<TextBox[]> {

@@ -21,12 +21,13 @@
     goToPage,
     openPath,
     openPaths,
+    rememberAllPositions,
     rotateDoc,
     setScale,
     setSelection,
     stepSearch,
   } from '$lib/state/documents.svelte';
-  import { loadSettings, settings } from '$lib/state/settings.svelte';
+  import { flushSettings, loadSettings, settings } from '$lib/state/settings.svelte';
   import { t } from '$lib/strings';
   import { applyTheme } from '$lib/theme';
 
@@ -43,6 +44,7 @@
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenClose: (() => void) | undefined;
     (async () => {
       await loadSettings();
       const path = await startupFile().catch(() => null);
@@ -55,8 +57,22 @@
       } catch {
         // hors Tauri : pas de glisser-déposer natif
       }
+      try {
+        // À la fermeture de la fenêtre : mémoriser les positions de lecture et écrire les
+        // préférences tout de suite (la sauvegarde différée n'aurait pas le temps).
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        unlistenClose = await getCurrentWindow().onCloseRequested(async () => {
+          rememberAllPositions();
+          await flushSettings();
+        });
+      } catch {
+        // hors Tauri
+      }
     })();
-    return () => unlisten?.();
+    return () => {
+      unlisten?.();
+      unlistenClose?.();
+    };
   });
 
   async function onOpen() {
@@ -87,7 +103,7 @@
     const typing =
       target &&
       (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
-    if (e.ctrlKey && e.key.toLowerCase() === 'c' && !typing) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !typing) {
       copySelection();
       return;
     }

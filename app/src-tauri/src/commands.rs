@@ -44,14 +44,16 @@ pub async fn close_document(service: State<'_, ServiceHandle>, id: DocId) -> Res
     blocking(handle, move |h| h.close(id)).await
 }
 
-/// Passe le document à la génération suivante (zoom/rotation changés) et la retourne.
+/// Déclare la génération courante du document (décidée par le frontend) ; retourne la
+/// valeur retenue par l'acteur (qui ne recule jamais).
 #[tauri::command]
-pub async fn bump_generation(
+pub async fn set_generation(
     service: State<'_, ServiceHandle>,
     id: DocId,
+    generation: u64,
 ) -> Result<u64, AppError> {
     let handle = service.inner().clone();
-    blocking(handle, move |h| h.bump_generation(id)).await
+    blocking(handle, move |h| h.set_generation(id, generation)).await
 }
 
 /// Caractères positionnés d'une page (calque de texte).

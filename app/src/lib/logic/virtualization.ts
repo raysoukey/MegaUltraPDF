@@ -68,6 +68,10 @@ export function pageAtScroll(
   viewportHeight: number,
 ): number {
   if (layout.length === 0) return 0;
+  // En butée basse, la dernière page est la page courante même si elle ne peut pas
+  // atteindre le tiers supérieur (document court, faible zoom).
+  const last = layout[layout.length - 1];
+  if (scrollTop + viewportHeight >= last.top + last.height - 1) return layout.length - 1;
   const probe = scrollTop + viewportHeight / 3;
   for (let i = 0; i < layout.length; i++) {
     const slot = layout[i];

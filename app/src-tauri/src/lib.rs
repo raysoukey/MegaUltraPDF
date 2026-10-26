@@ -42,7 +42,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::open_document,
             commands::close_document,
-            commands::bump_generation,
+            commands::set_generation,
             commands::text_layer,
             commands::search_document,
             commands::outline,

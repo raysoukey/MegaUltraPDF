@@ -38,10 +38,13 @@ L'échelle `f32` n'est pas `Hash` : on la quantifie en `u32` (`scale_x100`).
 
 ### 4. Générations : annuler sans tuer
 
-Un compteur par document (`Entry.generation`). Le frontend l'incrémente au changement de
-zoom/rotation ; un rendu qui arrive avec une génération périmée reçoit `CoreError::Cancelled`
-immédiatement. Pas de thread à interrompre, pas de drapeau partagé : la requête porte
-elle-même la preuve qu'elle est encore utile.
+Un compteur par document. Le **frontend** l'incrémente de façon synchrone au changement de
+zoom/rotation (`nextGeneration` dans `documents.svelte.ts`) et prévient l'acteur
+(`set_generation`, qui ne recule jamais) ; un rendu qui arrive avec une génération plus
+ancienne reçoit `CoreError::Cancelled` immédiatement. Pas de thread à interrompre, pas de
+drapeau partagé : la requête porte elle-même la preuve qu'elle est encore utile. La première
+version laissait l'acteur attribuer le numéro : deux zooms rapprochés pouvaient se doubler et
+bloquer toutes les images en 409 — trouvé par la relecture indépendante.
 
 ### 5. `async` côté Tauri, blocage côté acteur : `spawn_blocking`
 
@@ -80,6 +83,9 @@ choix d'interface (sélection maison, recherche par l'acteur, vignettes via `meg
   premier niveau ; suivre `next_sibling` à la main a résolu le problème (test `outline_tree_has_child`).
 - **Mutations de props en Svelte** : avertissement `ownership_invalid_mutation` quand
   `TextLayer` modifiait `doc.selection` ; passer par une fonction du module d'état.
+- **Signets cycliques** : un `/Next` qui boucle figeait l'acteur pour toujours (trouvé par la
+  relecture) ; la lecture des signets est maintenant bornée en nombre et en profondeur
+  (`outline.rs`, fixture `cyclic_outline_pdf`). Un PDF est une donnée non fiable, même ses signets.
 - **Assertions trop tôt** dans les scénarios CDP : un `$effect` s'exécute après la micro-tâche ;
   attendre avant de lire le DOM.
 - **Commande groupée refusée** : le classifieur de sécurité a refusé un `git rm` mêlé à des

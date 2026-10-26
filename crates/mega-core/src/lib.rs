@@ -11,6 +11,11 @@
 //! - [`engine`] : localisation et initialisation (une seule fois) de PDFium.
 //! - [`document`] : [`Document`], un PDF ouvert, et ses métadonnées.
 //! - [`render`] : rendu d'une page en pixels ([`RenderedPage`]).
+//! - [`geometry`] : [`Rect`] (points PDF) et [`Rotation`].
+//! - [`text`] : couche de texte ([`TextBox`]) et recherche ([`SearchHit`]).
+//! - [`outline`] : signets ([`OutlineNode`]) ; [`links`] : liens de page ([`PageLink`]).
+//! - [`properties`] : métadonnées et version ([`DocumentProperties`]).
+//! - [`service`] : l'acteur PDFium (thread unique, file priorisée, cache, générations).
 //! - `testing` : génération de PDF d'exemple (feature `testing`).
 
 #![forbid(unsafe_code)]

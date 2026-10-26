@@ -14,11 +14,19 @@
   $effect(() => {
     input?.focus();
     input?.select();
+    // À la fermeture de la barre, une recherche différée ne doit plus partir.
+    return () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
   });
 
   function schedule() {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => runSearch(doc, query, matchCase), 250);
+    timer = setTimeout(() => {
+      timer = null;
+      runSearch(doc, query, matchCase);
+    }, 250);
   }
 
   function onKey(e: KeyboardEvent) {

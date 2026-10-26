@@ -26,7 +26,7 @@ pub enum Priority {
 /// \[Apprentissage\] `BinaryHeap` sort toujours le **plus grand** élément. On veut la plus
 /// haute priorité, et à priorité égale la requête la plus ancienne (plus petit numéro de
 /// séquence) : `Reverse(seq)` inverse la comparaison du numéro pour que le plus petit soit
-/// « le plus grand ». `Ord` est dérivé champ par champ, dans l'ordre : priorité d'abord.
+/// « le plus grand ». L'`impl Ord` ci-dessous compare la priorité, puis la séquence.
 #[derive(Debug, PartialEq, Eq)]
 struct Entry<T> {
     priority: Priority,

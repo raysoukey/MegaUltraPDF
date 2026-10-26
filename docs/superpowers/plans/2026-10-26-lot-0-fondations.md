@@ -33,7 +33,7 @@
 
 ---
 
-### Tâche 1 : Outillage de la machine
+### Task 1 — Tâche 1 : Outillage de la machine
 
 **Files:**
 - Create: `README.md` (section « Prérequis » seulement ; le reste vient en Tâche 10)
@@ -80,7 +80,7 @@ Créer `README.md` avec le titre `# MegaUltraPDF`, une phrase de présentation (
 
 ---
 
-### Tâche 2 : Squelette du workspace
+### Task 2 — Tâche 2 : Squelette du workspace
 
 **Files:**
 - Create: `Cargo.toml`, `rust-toolchain.toml`, `.gitattributes`, `.gitignore` (modifier : déjà `.remember/`), `LICENSE`, `crates/mega-core/Cargo.toml`, `crates/mega-core/src/lib.rs`, `crates/mega-cli/Cargo.toml`, `crates/mega-cli/src/main.rs`, `xtask/Cargo.toml`, `xtask/src/main.rs`, `.cargo/config.toml`
@@ -120,7 +120,7 @@ git commit -m "chore: bootstrap cargo workspace (mega-core, mega-cli, xtask)"
 
 ---
 
-### Tâche 3 : `cargo xtask fetch-pdfium`
+### Task 3 — Tâche 3 : `cargo xtask fetch-pdfium`
 
 **Files:**
 - Create: `xtask/src/pdfium.rs`, `xtask/pdfium.lock.toml`
@@ -187,7 +187,7 @@ git commit -m "feat(xtask): add fetch-pdfium with pinned version and sha256 chec
 
 ---
 
-### Tâche 4 : `mega-core` — moteur, document, rendu
+### Task 4 — Tâche 4 : `mega-core` — moteur, document, rendu
 
 **Files:**
 - Create: `crates/mega-core/src/error.rs`, `crates/mega-core/src/engine.rs`, `crates/mega-core/src/document.rs`, `crates/mega-core/src/render.rs`, `crates/mega-core/src/testing.rs`, `crates/mega-core/tests/document.rs`
@@ -295,7 +295,7 @@ git commit -m "feat(core): open documents, read metadata and render pages with P
 
 ---
 
-### Tâche 5 : `mega-cli` — `info` et `render`
+### Task 5 — Tâche 5 : `mega-cli` — `info` et `render`
 
 **Files:**
 - Create: `crates/mega-cli/src/cli.rs`, `crates/mega-cli/src/commands/info.rs`, `crates/mega-cli/src/commands/render.rs`, `crates/mega-cli/src/commands/mod.rs`, `crates/mega-cli/tests/cli.rs`
@@ -365,7 +365,7 @@ git commit -m "feat(cli): add info and render commands"
 
 ---
 
-### Tâche 6 : Échafaudage Tauri 2 + Svelte
+### Task 6 — Tâche 6 : Échafaudage Tauri 2 + Svelte
 
 **Files:**
 - Create: `app/` (généré), puis modifier `app/src-tauri/Cargo.toml`, `app/src-tauri/tauri.conf.json`, `app/src-tauri/capabilities/default.json`, `app/package.json`, `app/src/lib/strings.ts`, `app/src/App.svelte`
@@ -404,7 +404,7 @@ git commit -m "feat(app): scaffold Tauri 2 + Svelte 5 desktop shell"
 
 ---
 
-### Tâche 7 : Backend Tauri — registre de documents et protocole `mega://`
+### Task 7 — Tâche 7 : Backend Tauri — registre de documents et protocole `mega://`
 
 **Files:**
 - Create: `app/src-tauri/src/registry.rs`, `app/src-tauri/src/commands.rs`, `app/src-tauri/src/protocol.rs`, `app/src-tauri/src/error.rs`
@@ -472,7 +472,7 @@ git commit -m "feat(app): document registry, open/close commands and mega:// pag
 
 ---
 
-### Tâche 8 : Frontend — ouvrir un PDF et afficher la page 1
+### Task 8 — Tâche 8 : Frontend — ouvrir un PDF et afficher la page 1
 
 **Files:**
 - Create: `app/src/lib/api.ts`, `app/src/lib/pageUrl.ts`, `app/src/lib/pageUrl.test.ts`, `app/src/lib/components/PageImage.svelte`
@@ -523,7 +523,7 @@ git commit -m "feat(app): open a PDF from a dialog and display its first page"
 
 ---
 
-### Tâche 9 : Environnement Claude Code
+### Task 9 — Tâche 9 : Environnement Claude Code
 
 **Files:**
 - Create: `CLAUDE.md`, `.claude/settings.json`, `.claude/hooks/format-on-edit.ps1`, `.claude/hooks/verify-on-stop.ps1`, `.claude/skills/lot/SKILL.md`, `.claude/skills/explique/SKILL.md`, `.claude/skills/concept/SKILL.md`, `.claude/skills/note-apprentissage/SKILL.md`, `.claude/skills/verif/SKILL.md`, `.claude/skills/pdf-spec/SKILL.md`, `.claude/agents/rust-reviewer.md`, `.claude/agents/pdf-expert.md`, `.claude/agents/ui-reviewer.md`, `.vscode/extensions.json`, `.vscode/settings.json`
@@ -580,7 +580,7 @@ git commit -m "chore: add Claude Code environment (rules, hooks, skills, agents)
 
 ---
 
-### Tâche 10 : Documentation, CI et dépôt GitHub
+### Task 10 — Tâche 10 : Documentation, CI et dépôt GitHub
 
 **Files:**
 - Create: `docs/ROADMAP.md`, `docs/apprentissage/README.md`, `docs/apprentissage/lot-0.md`, `docs/adr/0001-pdfium-engine.md`, `docs/adr/0002-tauri-svelte-ui.md`, `docs/adr/0003-dual-engine-lopdf.md`, `docs/adr/0004-global-pdfium-oncelock.md`, `CONTRIBUTING.md`, `.github/workflows/ci.yml`

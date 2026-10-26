@@ -74,6 +74,22 @@ export const fr = {
   copy: 'Copier',
   copied: 'Texte copié.',
   loading: 'Chargement…',
+  // Édition (Lot 2)
+  modifiedMarker: '•',
+  editGroup: 'Édition',
+  undo: 'Annuler',
+  redo: 'Rétablir',
+  undoLabel: (label: string) => `Annuler : ${label}`,
+  redoLabel: (label: string) => `Rétablir : ${label}`,
+  save: 'Enregistrer',
+  saveAs: 'Enregistrer sous…',
+  saved: 'Document enregistré.',
+  editError: (message: string) => `Modification impossible : ${message}`,
+  saveError: (message: string) => `Enregistrement impossible : ${message}`,
+  closeModifiedTitle: 'Modifications non enregistrées',
+  closeModifiedQuestion: (name: string) =>
+    `Voulez-vous enregistrer les modifications de « ${name} » avant de fermer ?`,
+  dontSave: 'Ne pas enregistrer',
   actions: {
     open: 'Ouvrir un fichier',
     close: "Fermer l'onglet",
@@ -93,6 +109,10 @@ export const fr = {
     help: 'Aide des raccourcis',
     escape: 'Fermer le dialogue / la recherche',
     properties: 'Propriétés du document',
+    undo: 'Annuler la dernière modification',
+    redo: 'Rétablir',
+    save: 'Enregistrer',
+    saveAs: 'Enregistrer sous',
   },
 } as const;
 

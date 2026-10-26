@@ -22,7 +22,11 @@ export type Action =
   | 'prevPage'
   | 'help'
   | 'escape'
-  | 'properties';
+  | 'properties'
+  | 'undo'
+  | 'redo'
+  | 'save'
+  | 'saveAs';
 
 /** Forme minimale d'un événement clavier, indépendante du DOM (testable). */
 export interface KeyLike {
@@ -52,6 +56,11 @@ const BINDINGS: Binding[] = [
   { key: '1', ctrl: true, action: 'fitWidth' },
   { key: '2', ctrl: true, action: 'fitPage' },
   { key: 'i', ctrl: true, action: 'properties' },
+  { key: 'z', ctrl: true, action: 'undo' },
+  { key: 'y', ctrl: true, action: 'redo' },
+  { key: 'z', ctrl: true, shift: true, action: 'redo' },
+  { key: 's', ctrl: true, action: 'save' },
+  { key: 's', ctrl: true, shift: true, action: 'saveAs' },
   { key: 'r', action: 'rotate' },
   { key: 'Home', action: 'firstPage' },
   { key: 'End', action: 'lastPage' },

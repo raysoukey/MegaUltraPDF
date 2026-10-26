@@ -1,7 +1,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { nextZoom } from '$lib/logic/zoom';
-  import { goToPage, rotateDoc, setScale, type OpenDoc } from '$lib/state/documents.svelte';
+  import {
+    goToPage,
+    redo,
+    rotateDoc,
+    save,
+    saveAs,
+    setScale,
+    undo,
+    type OpenDoc,
+  } from '$lib/state/documents.svelte';
   import { clearRecent, saveSettings, settings, type Theme } from '$lib/state/settings.svelte';
   import { t } from '$lib/strings';
 
@@ -175,6 +184,34 @@
     >
   </div>
 
+  <div class="group" aria-label={t.editGroup}>
+    <button
+      type="button"
+      disabled={!doc || !doc.edit.can_undo}
+      title="{doc?.edit.undo_label ? t.undoLabel(doc.edit.undo_label) : t.undo} (Ctrl+Z)"
+      onclick={() => doc && undo(doc)}>↶</button
+    >
+    <button
+      type="button"
+      disabled={!doc || !doc.edit.can_redo}
+      title="{doc?.edit.redo_label ? t.redoLabel(doc.edit.redo_label) : t.redo} (Ctrl+Y)"
+      onclick={() => doc && redo(doc)}>↷</button
+    >
+    <button
+      type="button"
+      disabled={!doc}
+      class:attention={doc?.edit.modified}
+      title="{t.save} (Ctrl+S)"
+      onclick={() => doc && save(doc)}>💾</button
+    >
+    <button
+      type="button"
+      disabled={!doc}
+      title="{t.saveAs} (Ctrl+Maj+S)"
+      onclick={() => doc && saveAs(doc)}>{t.saveAs}</button
+    >
+  </div>
+
   <div class="group right">
     <button type="button" disabled={!doc} title="{t.search} (Ctrl+F)" onclick={ontogglesearch}
       >🔍</button
@@ -212,6 +249,10 @@
   }
   .right {
     margin-left: auto;
+  }
+  .attention {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
   .muted {
     color: var(--muted);

@@ -140,3 +140,12 @@ fn concurrent_first_use_is_safe() {
         h.join().expect("un thread a échoué");
     }
 }
+
+#[test]
+fn open_encrypted_with_wrong_password_is_wrong_password() {
+    let bytes = std::fs::read(fixture("encrypted.pdf")).unwrap();
+    assert!(matches!(
+        Document::from_bytes(bytes, Some("faux")),
+        Err(CoreError::WrongPassword)
+    ));
+}

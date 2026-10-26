@@ -66,7 +66,13 @@ impl Document {
     /// Charge un PDF depuis des octets déjà en mémoire.
     pub fn from_bytes(bytes: Vec<u8>, password: Option<&str>) -> CoreResult<Document> {
         let guard = engine::guard();
-        let inner = engine::load_bytes(&guard, bytes, password)?;
+        let inner = match engine::load_bytes(&guard, bytes, password) {
+            // PDFium ne distingue pas « pas de mot de passe » de « mauvais mot de passe ».
+            Err(CoreError::PasswordRequired) if password.is_some() => {
+                return Err(CoreError::WrongPassword);
+            }
+            other => other?,
+        };
         Ok(Document {
             inner: Some(inner),
             path: None,

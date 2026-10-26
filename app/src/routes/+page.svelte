@@ -31,7 +31,9 @@
     } catch (e) {
       // Toute décision vient du backend ; ici on ne fait qu'afficher.
       if (isAppError(e)) {
-        error = e.kind === 'password_required' ? t.passwordRequired : t.openError(e.message);
+        if (e.kind === 'password_required') error = t.passwordRequired;
+        else if (e.kind === 'wrong_password') error = t.wrongPassword;
+        else error = t.openError(e.message);
       } else {
         error = t.openError(String(e));
       }

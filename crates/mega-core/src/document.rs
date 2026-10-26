@@ -31,6 +31,8 @@ pub struct Document {
     /// qui doit libérer le `PdfDocument` en tenant le jeton PDFium (voir [`engine::guard`]).
     inner: Option<PdfDocument<'static>>,
     path: Option<PathBuf>,
+    /// Historique annuler / rétablir (module `edit`).
+    pub(crate) history: crate::edit::History,
 }
 
 impl std::fmt::Debug for Document {
@@ -82,6 +84,7 @@ impl Document {
         Ok(Document {
             inner: Some(inner),
             path: None,
+            history: crate::edit::History::new(crate::edit::HistoryLimits::default()),
         })
     }
 
@@ -146,6 +149,17 @@ impl Document {
             return Err(CoreError::PageOutOfRange { index, count });
         }
         Ok(PdfPageIndex::from(index))
+    }
+
+    /// Remplace le document PDFium sous-jacent (annuler / rétablir) ; l'ancien est libéré
+    /// sous le jeton que l'appelant tient.
+    pub(crate) fn replace_inner(&mut self, inner: PdfDocument<'static>) {
+        self.inner = Some(inner);
+    }
+
+    /// Change le chemin associé (après « Enregistrer sous »).
+    pub(crate) fn set_path(&mut self, path: Option<PathBuf>) {
+        self.path = path;
     }
 
     /// Accès mutable au document PDFium sous-jacent, réservé aux autres modules du crate.

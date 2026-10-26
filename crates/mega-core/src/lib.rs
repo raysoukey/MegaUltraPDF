@@ -15,6 +15,7 @@
 //! - [`text`] : couche de texte ([`TextBox`]) et recherche ([`SearchHit`]).
 //! - [`outline`] : signets ([`OutlineNode`]) ; [`links`] : liens de page ([`PageLink`]).
 //! - [`properties`] : métadonnées et version ([`DocumentProperties`]).
+//! - [`edit`] : commandes d'édition, historique annuler/rétablir, enregistrement atomique.
 //! - [`pages`] : rotation, suppression, insertion, déplacement, extraction, fusion, scission.
 //! - [`pagespec`] : analyse des plages de pages saisies (« 1-3,5 »).
 //! - [`service`] : l'acteur PDFium (thread unique, file priorisée, cache, générations).
@@ -35,6 +36,7 @@
 )]
 
 pub mod document;
+pub mod edit;
 pub mod engine;
 pub mod error;
 pub mod geometry;
@@ -50,6 +52,7 @@ pub mod testing;
 pub mod text;
 
 pub use document::{Document, PageSize};
+pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};
 pub use geometry::{Rect, Rotation};
 pub use links::{LinkTarget, PageLink};

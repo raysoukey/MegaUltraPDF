@@ -95,8 +95,9 @@ pub(crate) type PdfiumGuard = MutexGuard<'static, ()>;
 /// concurrentes plus soutenues allaient jusqu'au plantage (SIGSEGV en CI Linux/macOS).
 /// Ce `Mutex` sérialise donc nos opérations entières. Il ne protège aucune donnée Rust,
 /// seulement l'ordre des appels natifs : s'il est « empoisonné » par la panique d'un
-/// thread, on le reprend tel quel (`into_inner`). Le patron acteur du Lot 1 (un seul
-/// thread PDFium) remplacera ce verrou.
+/// thread, on le reprend tel quel (`into_inner`). Depuis le Lot 1, un seul thread (l'acteur
+/// de `service`) appelle ces fonctions : le verrou n'est plus contendu, il est conservé
+/// comme ceinture de sécurité (décision 2 de la spec du Lot 1).
 ///
 /// Règle : ne jamais appeler `guard()` en tenant déjà un jeton (le `Mutex` de la
 /// bibliothèque standard n'est pas réentrant : ce serait un interblocage). Les

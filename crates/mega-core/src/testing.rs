@@ -67,6 +67,74 @@ pub fn many_pages_pdf(n: u32) -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Un PDF de 3 pages A4 écrit à la main avec des **signets** (« Chapitre 1 » → p.1, contenant
+/// « Section 1.1 » → p.2 ; « Chapitre 2 » → p.3) et, en page 1, deux **liens** : un interne
+/// vers la page 3 et un externe vers `https://example.org`.
+///
+/// Objets : 1 Catalog, 2 Pages, 3-5 Page, 6 Font, 7 Outlines, 8-10 items, 11 contenu p1,
+/// 12-13 annotations Link, 14-15 contenus p2-p3.
+pub fn outlined_pdf() -> Vec<u8> {
+    let page = |contents: u32, annots: &str| {
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+             /Resources << /Font << /F1 6 0 R >> >> /Contents {contents} 0 R{annots} >>"
+        )
+    };
+    let stream = |text: &str| {
+        let body = format!("BT /F1 24 Tf 72 760 Td ({text}) Tj ET");
+        format!("<< /Length {} >>\nstream\n{body}\nendstream", body.len())
+    };
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 7 0 R /PageMode /UseOutlines >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>".to_string(),
+        page(11, " /Annots [12 0 R 13 0 R]"),
+        page(14, ""),
+        page(15, ""),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        "<< /Type /Outlines /First 8 0 R /Last 10 0 R /Count 3 >>".to_string(),
+        "<< /Title (Chapitre 1) /Parent 7 0 R /Next 10 0 R /First 9 0 R /Last 9 0 R /Count 1 \
+         /Dest [3 0 R /Fit] >>"
+            .to_string(),
+        "<< /Title (Section 1.1) /Parent 8 0 R /Dest [4 0 R /Fit] >>".to_string(),
+        "<< /Title (Chapitre 2) /Parent 7 0 R /Prev 8 0 R /Dest [5 0 R /Fit] >>".to_string(),
+        stream("Page 1"),
+        "<< /Type /Annot /Subtype /Link /Rect [72 700 200 720] /Border [0 0 0] \
+         /Dest [5 0 R /Fit] >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Link /Rect [72 650 200 670] /Border [0 0 0] \
+         /A << /S /URI /URI (https://example.org) >> >>"
+            .to_string(),
+        stream("Page 2"),
+        stream("Page 3"),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Document avec signets")
+        ),
+    )
+}
+
+/// Un PDF **hostile** : signet dont `/Next` pointe sur lui-même, et signet dont le premier
+/// enfant est lui-même. Sert à vérifier que la lecture des signets est bornée.
+pub fn cyclic_outline_pdf() -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 2 >>".to_string(),
+        // /Next sur lui-même : la chaîne des frères ne se termine jamais.
+        "<< /Title (Boucle) /Parent 4 0 R /Next 5 0 R /First 6 0 R /Last 6 0 R /Count 1 \
+         /Dest [3 0 R /Fit] >>"
+            .to_string(),
+        // /First sur lui-même : la descente ne se termine jamais.
+        "<< /Title (Abîme) /Parent 5 0 R /First 6 0 R /Last 6 0 R /Count 1 /Dest [3 0 R /Fit] >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,
 /// avec une table `xref` aux positions exactes.
 fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {

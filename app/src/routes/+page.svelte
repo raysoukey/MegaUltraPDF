@@ -1,139 +1,279 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { pickPdfFiles, startupFile } from '$lib/api';
+  import PasswordDialog from '$lib/components/PasswordDialog.svelte';
+  import PropertiesDialog from '$lib/components/PropertiesDialog.svelte';
+  import SearchBar from '$lib/components/SearchBar.svelte';
+  import ShortcutsHelp from '$lib/components/ShortcutsHelp.svelte';
+  import Sidebar from '$lib/components/Sidebar.svelte';
+  import Tabs from '$lib/components/Tabs.svelte';
+  import Toolbar from '$lib/components/Toolbar.svelte';
+  import Viewer from '$lib/components/Viewer.svelte';
+  import { selectedText } from '$lib/logic/selection';
+  import { actionFor } from '$lib/logic/shortcuts';
+  import { nextZoom } from '$lib/logic/zoom';
   import {
-    closeDocument,
-    isAppError,
-    openDocument,
-    pickPdfFile,
-    startupFile,
-    type DocumentInfo,
-  } from '$lib/api';
-  import PageImage from '$lib/components/PageImage.svelte';
+    activeDoc,
+    cancelPassword,
+    closeDoc,
+    docsState,
+    goToPage,
+    openPath,
+    openPaths,
+    rememberAllPositions,
+    rotateDoc,
+    setScale,
+    setSelection,
+    stepSearch,
+  } from '$lib/state/documents.svelte';
+  import { flushSettings, loadSettings, settings } from '$lib/state/settings.svelte';
   import { t } from '$lib/strings';
+  import { applyTheme } from '$lib/theme';
 
-  // État de la vue (runes Svelte 5) : le document courant et l'erreur à afficher.
-  let doc = $state<DocumentInfo | null>(null);
-  let error = $state<string | null>(null);
-  let busy = $state(false);
+  const doc = $derived(activeDoc());
+  let viewer: Viewer | undefined = $state();
+  let searchOpen = $state(false);
+  let propertiesOpen = $state(false);
+  let helpOpen = $state(false);
+  let toast = $state<string | null>(null);
 
-  const SCALE = 1.5;
+  $effect(() => {
+    applyTheme(settings.theme);
+  });
 
-  async function openPath(path: string) {
-    error = null;
-    busy = true;
-    try {
-      const previous = doc;
-      doc = await openDocument(path);
-      // Un seul document à la fois pour l'instant (les onglets arrivent au Lot 1) :
-      // on libère l'ancien côté Rust. Un échec de fermeture n'empêche pas l'ouverture.
-      if (previous) await closeDocument(previous.id).catch(() => undefined);
-    } catch (e) {
-      // Toute décision vient du backend ; ici on ne fait qu'afficher.
-      if (isAppError(e)) {
-        if (e.kind === 'password_required') error = t.passwordRequired;
-        else if (e.kind === 'wrong_password') error = t.wrongPassword;
-        else error = t.openError(e.message);
-      } else {
-        error = t.openError(String(e));
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+    let unlistenClose: (() => void) | undefined;
+    (async () => {
+      await loadSettings();
+      const path = await startupFile().catch(() => null);
+      if (path) await openPath(path);
+      try {
+        const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+        unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+          if (event.payload.type === 'drop') openPaths(event.payload.paths);
+        });
+      } catch {
+        // hors Tauri : pas de glisser-déposer natif
       }
-    } finally {
-      busy = false;
+      try {
+        // À la fermeture de la fenêtre : mémoriser les positions de lecture et écrire les
+        // préférences tout de suite (la sauvegarde différée n'aurait pas le temps).
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        unlistenClose = await getCurrentWindow().onCloseRequested(async () => {
+          rememberAllPositions();
+          await flushSettings();
+        });
+      } catch {
+        // hors Tauri
+      }
+    })();
+    return () => {
+      unlisten?.();
+      unlistenClose?.();
+    };
+  });
+
+  async function onOpen() {
+    const paths = await pickPdfFiles();
+    await openPaths(paths);
+  }
+
+  async function copySelection() {
+    if (!doc?.selection) return;
+    const boxes = doc.textLayers[doc.selection.page] ?? [];
+    const text = selectedText(boxes, doc.selection.from, doc.selection.to);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(t.copied);
+    } catch {
+      // presse-papiers indisponible : rien à faire
     }
   }
 
-  async function onOpen() {
-    const path = await pickPdfFile();
-    if (path) await openPath(path);
+  function showToast(message: string) {
+    toast = message;
+    setTimeout(() => (toast = null), 1500);
   }
 
-  // Au démarrage : ouvre le fichier passé en argument de ligne de commande, s'il y en a un.
-  onMount(async () => {
-    const path = await startupFile();
-    if (path) await openPath(path);
-  });
+  function onKeydown(e: KeyboardEvent) {
+    const target = e.target as HTMLElement | null;
+    const typing =
+      target &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !typing) {
+      copySelection();
+      return;
+    }
+    const action = actionFor({
+      key: e.key,
+      ctrl: e.ctrlKey || e.metaKey,
+      shift: e.shiftKey,
+      alt: e.altKey,
+    });
+    if (!action) return;
+    // Dans un champ de saisie, seuls les raccourcis avec Ctrl, les touches F et Échap passent.
+    if (typing && !e.ctrlKey && !e.key.startsWith('F') && e.key !== 'Escape') return;
+    e.preventDefault();
+    switch (action) {
+      case 'open':
+        onOpen();
+        break;
+      case 'close':
+        if (doc) closeDoc(doc.summary.id);
+        break;
+      case 'find':
+        if (doc) searchOpen = true;
+        break;
+      case 'findNext':
+        if (doc) stepSearch(doc, 1);
+        break;
+      case 'findPrev':
+        if (doc) stepSearch(doc, -1);
+        break;
+      case 'zoomIn':
+        if (doc) setScale(doc, nextZoom(doc.scale, 1), 'custom');
+        break;
+      case 'zoomOut':
+        if (doc) setScale(doc, nextZoom(doc.scale, -1), 'custom');
+        break;
+      case 'zoomReset':
+        if (doc) setScale(doc, 1, 'custom');
+        break;
+      case 'fitWidth':
+        viewer?.fitWidth();
+        break;
+      case 'fitPage':
+        viewer?.fitPage();
+        break;
+      case 'rotate':
+        if (doc) rotateDoc(doc);
+        break;
+      case 'firstPage':
+        if (doc) goToPage(doc, 0);
+        break;
+      case 'lastPage':
+        if (doc) goToPage(doc, doc.summary.page_count - 1);
+        break;
+      case 'nextPage':
+        if (doc) goToPage(doc, doc.page + 1);
+        break;
+      case 'prevPage':
+        if (doc) goToPage(doc, doc.page - 1);
+        break;
+      case 'help':
+        helpOpen = !helpOpen;
+        break;
+      case 'properties':
+        if (doc) propertiesOpen = true;
+        break;
+      case 'escape':
+        if (helpOpen) helpOpen = false;
+        else if (propertiesOpen) propertiesOpen = false;
+        else if (docsState.passwordPrompt) cancelPassword();
+        else if (searchOpen) searchOpen = false;
+        else if (doc?.selection) setSelection(doc, null);
+        break;
+    }
+  }
 </script>
 
-<main>
-  <header>
-    <h1>{t.appName}</h1>
-    <button type="button" onclick={onOpen} disabled={busy}>{t.openFile}</button>
-    {#if doc}
-      <span class="title">{doc.title ?? t.untitled}</span>
-      <span class="meta">{t.pages(doc.page_count)}</span>
-    {/if}
-  </header>
+<svelte:window onkeydown={onKeydown} />
 
-  {#if error}
-    <p class="error" role="alert">{error}</p>
+<main>
+  <Toolbar
+    {doc}
+    onopen={onOpen}
+    onopenrecent={(p) => openPath(p)}
+    onfitwidth={() => viewer?.fitWidth()}
+    onfitpage={() => viewer?.fitPage()}
+    ontogglesearch={() => (searchOpen = !searchOpen)}
+    onproperties={() => (propertiesOpen = true)}
+    onhelp={() => (helpOpen = true)}
+  />
+  <Tabs />
+  {#if doc && searchOpen}
+    <SearchBar {doc} onclose={() => (searchOpen = false)} />
+  {/if}
+  {#if docsState.error}
+    <p class="error" role="alert">{docsState.error}</p>
   {/if}
 
-  <section class="viewer">
-    {#if doc && doc.page_count > 0}
-      <PageImage
-        docId={doc.id}
-        index={0}
-        scale={SCALE}
-        size={doc.pages[0]}
-        total={doc.page_count}
-      />
-    {:else if !doc}
-      <p class="empty">{t.noDocument}</p>
+  <section class="body">
+    {#if doc}
+      {#if settings.sidebarOpen}
+        <Sidebar {doc} />
+      {/if}
+      {#key doc.summary.id}
+        <Viewer bind:this={viewer} {doc} />
+      {/key}
+    {:else}
+      <div class="empty">
+        <p>{t.noDocument}</p>
+        <p class="muted">{t.dropHint}</p>
+      </div>
     {/if}
   </section>
+
+  {#if docsState.passwordPrompt}
+    <PasswordDialog
+      path={docsState.passwordPrompt.path}
+      error={docsState.passwordPrompt.error}
+      onsubmit={(pwd) => docsState.passwordPrompt && openPath(docsState.passwordPrompt.path, pwd)}
+      oncancel={cancelPassword}
+    />
+  {/if}
+  {#if doc && propertiesOpen}
+    <PropertiesDialog {doc} onclose={() => (propertiesOpen = false)} />
+  {/if}
+  {#if helpOpen}
+    <ShortcutsHelp onclose={() => (helpOpen = false)} />
+  {/if}
+  {#if toast}
+    <div class="toast" role="status">{toast}</div>
+  {/if}
 </main>
 
 <style>
-  :global(body) {
-    margin: 0;
-    font-family: system-ui, sans-serif;
-    background: #e9e9ec;
-    color: #1d1d1f;
-  }
   main {
     display: flex;
     flex-direction: column;
     height: 100vh;
   }
-  header {
+  .body {
+    flex: 1;
     display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.5rem 1rem;
-    background: #f7f7f8;
-    border-bottom: 1px solid #d0d0d5;
-  }
-  h1 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-  }
-  .title {
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .meta {
-    color: #6e6e73;
+    min-height: 0;
   }
   .error {
     margin: 0;
     padding: 0.5rem 1rem;
-    background: #fde8e8;
-    color: #8a1c1c;
-    border-bottom: 1px solid #f3c2c2;
-  }
-  .viewer {
-    flex: 1;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding: 1.5rem;
-    overflow: auto;
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    border-bottom: 1px solid var(--danger-border);
   }
   .empty {
-    align-self: center;
-    color: #6e6e73;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .toast {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 0.4rem 0.9rem;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
   }
 </style>

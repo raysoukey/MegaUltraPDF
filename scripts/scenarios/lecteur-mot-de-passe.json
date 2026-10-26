@@ -1,0 +1,16 @@
+[
+  { "wait": 1500 },
+  { "assert": "document.querySelector('#pwd-title') !== null", "label": "dialogue mot de passe affiché" },
+  { "shot": "01-dialogue.png" },
+  { "type": "faux" },
+  { "key": "Enter" },
+  { "wait": 1200 },
+  { "assert": "document.body.innerText.includes('Mot de passe incorrect')", "label": "mauvais mot de passe signalé" },
+  { "shot": "02-incorrect.png" },
+  { "eval": "(() => { const i = document.querySelector('input[type=password]'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); i.focus(); return true; })()", "label": "champ vidé" },
+  { "type": "secret" },
+  { "key": "Enter" },
+  { "wait": 1500 },
+  { "assert": "document.querySelector('#pwd-title') === null && document.querySelectorAll('.page img').length >= 1", "label": "document chiffré ouvert" },
+  { "shot": "03-ouvert.png" }
+]

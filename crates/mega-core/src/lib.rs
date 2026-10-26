@@ -11,6 +11,11 @@
 //! - [`engine`] : localisation et initialisation (une seule fois) de PDFium.
 //! - [`document`] : [`Document`], un PDF ouvert, et ses métadonnées.
 //! - [`render`] : rendu d'une page en pixels ([`RenderedPage`]).
+//! - [`geometry`] : [`Rect`] (points PDF) et [`Rotation`].
+//! - [`text`] : couche de texte ([`TextBox`]) et recherche ([`SearchHit`]).
+//! - [`outline`] : signets ([`OutlineNode`]) ; [`links`] : liens de page ([`PageLink`]).
+//! - [`properties`] : métadonnées et version ([`DocumentProperties`]).
+//! - [`service`] : l'acteur PDFium (thread unique, file priorisée, cache, générations).
 //! - `testing` : génération de PDF d'exemple (feature `testing`).
 
 #![forbid(unsafe_code)]
@@ -30,13 +35,24 @@
 pub mod document;
 pub mod engine;
 pub mod error;
+pub mod geometry;
+pub mod links;
+pub mod outline;
+pub mod properties;
 pub mod render;
+pub mod service;
 #[cfg(feature = "testing")]
 pub mod testing;
+pub mod text;
 
 pub use document::{Document, PageSize};
 pub use error::{CoreError, CoreResult};
+pub use geometry::{Rect, Rotation};
+pub use links::{LinkTarget, PageLink};
+pub use outline::OutlineNode;
+pub use properties::DocumentProperties;
 pub use render::RenderedPage;
+pub use text::{SearchHit, SearchOptions, TextBox};
 
 /// Version du crate, lue depuis `Cargo.toml` au moment de la compilation.
 ///

@@ -81,5 +81,8 @@ fn gen_fixtures() -> anyhow::Result<()> {
         mega_core::testing::sample_pdf(3, "MegaUltraPDF — exemple"),
     )?;
     println!("écrit : {}", simple.display());
+    let outlined = dir.join("outlined.pdf");
+    std::fs::write(&outlined, mega_core::testing::outlined_pdf())?;
+    println!("écrit : {}", outlined.display());
     Ok(())
 }

@@ -2,7 +2,8 @@
 //! Backend Tauri de MegaUltraPDF.
 //!
 //! Fine couche entre le frontend (Svelte) et `mega-core` : des commandes `invoke`
-//! et un protocole `mega://` qui sert les pages rendues. Aucune logique PDF ici.
+//! asynchrones et un protocole `mega://` qui sert les pages rendues, tous deux adossés à
+//! l'acteur PDFium ([`mega_core::service`]). Aucune logique PDF ici.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -21,11 +22,8 @@
 mod commands;
 mod error;
 mod protocol;
-mod registry;
 
-use std::sync::Mutex;
-
-use registry::DocumentRegistry;
+use mega_core::service::PdfService;
 
 /// Point d'entrée de l'application (appelé par `main.rs`).
 ///
@@ -36,11 +34,21 @@ use registry::DocumentRegistry;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
-        .manage(Mutex::new(DocumentRegistry::default()))
+        // Un seul acteur PDFium pour toute l'application ; le handle est clonable.
+        .manage(PdfService::spawn())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::open_document,
             commands::close_document,
+            commands::set_generation,
+            commands::text_layer,
+            commands::search_document,
+            commands::outline,
+            commands::page_links,
+            commands::document_properties,
+            commands::file_size,
             commands::startup_file
         ]);
     protocol::register(builder)

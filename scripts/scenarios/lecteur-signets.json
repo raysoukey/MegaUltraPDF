@@ -1,0 +1,18 @@
+[
+  { "wait": 1500 },
+  { "click": "[role=tablist] button[role=tab]:nth-child(2)" },
+  { "wait": 600 },
+  { "assert": "document.querySelectorAll('[role=treeitem]').length === 3", "label": "trois signets (dont un enfant)" },
+  { "shot": "01-signets.png" },
+  { "eval": "(() => { const b = [...document.querySelectorAll('[role=treeitem] .label')].find(x => x.textContent.trim() === 'Section 1.1'); b.click(); return true; })()", "label": "clic sur Section 1.1" },
+  { "wait": 800 },
+  { "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '2'", "label": "signet → page 2" },
+  { "key": "Home" },
+  { "wait": 800 },
+  { "assert": "document.querySelectorAll('.page[data-page=\"0\"] .link').length === 2", "label": "deux liens sur la page 1" },
+  { "shot": "02-liens.png" },
+  { "eval": "(() => { const l = [...document.querySelectorAll('.page[data-page=\"0\"] .link')].find(x => x.title.startsWith('Page 3')); l.click(); return true; })()", "label": "clic sur le lien interne" },
+  { "wait": 800 },
+  { "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '3'", "label": "lien interne → page 3" },
+  { "shot": "03-lien-page-3.png" }
+]

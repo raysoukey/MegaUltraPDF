@@ -106,6 +106,15 @@ sérialisable), 0004 (`Pdfium` global en `OnceLock`, acteur reporté au Lot 1).
 - **Protocole personnalisé sous Windows** : `mega://` devient `http://mega.localhost/…`, et
   `convertFileSrc` percent-encode le chemin (`page%2F1%2F0`) : le backend décode.
 - **PowerShell 5.1 et l'UTF-8** : un `.ps1` sans BOM est lu en ANSI ; les hooks sont en ASCII.
+- **Une course « bénigne » qui ne l'était pas** : la première version de `engine::pdfium()`
+  faisait `get()` puis `set()` sur le `OnceLock`, en acceptant que deux threads chargent
+  PDFium en même temps (« le second résultat est jeté »). Linux et Windows passaient ; la CI
+  macOS arm64 plantait (SIGTRAP, sans message) uniquement quand les tests tournaient en
+  parallèle. Diagnostic : chaque test seul → OK ; `--test-threads=1` → OK ; parallèle → crash.
+  Correction : `get_or_init`, qui exécute l'initialisation exactement une fois et fait
+  attendre les autres threads. Leçon : avec du code natif, « initialiser deux fois » n'est
+  jamais gratuit, et un bug de concurrence peut n'apparaître que sur une plateforme.
+  Test de régression : `concurrent_first_use_is_safe` (8 threads derrière une `Barrier`).
 - **Vérifier l'interface sans cliquer** : WebView2 accepte
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` ; un script Node parle
   alors le protocole DevTools (évaluer du JS, capturer l'écran). Lancer l'app sur un fichier :

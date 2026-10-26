@@ -29,7 +29,12 @@ application Tauri exécute ses commandes sur plusieurs threads.
 
 ## Conséquences
 
-- Deux threads qui initialisent en même temps peuvent charger la DLL deux fois ; la seconde
-  instance est abandonnée (sans effet). Acceptable.
+- L'initialisation est **strictement unique** (`OnceLock::get_or_init`) : les threads
+  concurrents attendent le premier. Une version initiale tolérait un double chargement
+  (« la seconde instance est jetée ») ; la CI macOS arm64 a montré que PDFium plante
+  (SIGTRAP) quand deux threads l'initialisent en même temps. Test de régression :
+  `concurrent_first_use_is_safe`.
+- Un échec de chargement est mémorisé pour la durée du processus : après
+  `cargo xtask fetch-pdfium`, relancer le programme.
 - Tout accès à PDFium est sérialisé : le rendu de plusieurs pages ne sera pas parallèle. Le
   Lot 1 mesurera et, si nécessaire, rendra par lots côté acteur.

@@ -48,22 +48,28 @@ pub fn library_search_paths() -> Vec<PathBuf> {
 
 /// Retourne l'instance PDFium partagée, en la créant au premier appel.
 ///
-/// \[Apprentissage\] `OnceLock<T>` est une case « écrite une seule fois ». `get()` la lit,
-/// `set()` l'écrit si elle est vide. Deux threads qui arrivent en même temps peuvent
-/// tous deux tenter le chargement ; le second `set` échoue et son instance est
-/// simplement abandonnée. C'est acceptable ici : charger la DLL deux fois est rare et
-/// sans conséquence, et cela évite un verrou explicite.
+/// \[Apprentissage\] `OnceLock<T>` est une case « écrite une seule fois ».
+/// `get_or_init(f)` garantit que `f` s'exécute **exactement une fois**, même si
+/// plusieurs threads arrivent en même temps : les autres attendent, puis lisent la
+/// valeur. C'est indispensable ici : une première version de cette fonction laissait
+/// deux threads charger PDFium en parallèle (« le second résultat est jeté, pas
+/// grave ») et le processus plantait sur macOS arm64 — PDFium ne tolère pas deux
+/// initialisations simultanées. Le test `concurrent_first_use_is_safe` garde ce cas.
+///
+/// Le résultat d'un échec de chargement est lui aussi mémorisé : si la bibliothèque
+/// manque, il faut la récupérer (`cargo xtask fetch-pdfium`) puis relancer le programme.
 pub(crate) fn pdfium() -> CoreResult<&'static Pdfium> {
-    static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
-    if let Some(p) = PDFIUM.get() {
-        return Ok(p);
+    static PDFIUM: OnceLock<Result<Pdfium, Vec<PathBuf>>> = OnceLock::new();
+    match PDFIUM.get_or_init(load) {
+        Ok(p) => Ok(p),
+        Err(searched) => Err(CoreError::LibraryNotFound {
+            searched: searched.clone(),
+        }),
     }
-    let fresh = load()?;
-    let _ = PDFIUM.set(fresh);
-    Ok(PDFIUM.get().expect("vient d'être initialisé"))
 }
 
-fn load() -> CoreResult<Pdfium> {
+/// Charge la bibliothèque ; en cas d'échec, retourne la liste des dossiers essayés.
+fn load() -> Result<Pdfium, Vec<PathBuf>> {
     let searched = library_search_paths();
     for dir in &searched {
         let candidate = Pdfium::pdfium_platform_library_name_at_path(dir);
@@ -74,7 +80,7 @@ fn load() -> CoreResult<Pdfium> {
     // Dernier recours : une PDFium installée au niveau du système.
     match Pdfium::bind_to_system_library() {
         Ok(bindings) => Ok(Pdfium::new(bindings)),
-        Err(_) => Err(CoreError::LibraryNotFound { searched }),
+        Err(_) => Err(searched),
     }
 }
 

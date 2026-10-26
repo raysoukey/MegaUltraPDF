@@ -108,3 +108,26 @@ fn render_refuses_absurd_pixel_counts() {
     let a4 = Document::from_bytes(sample_pdf(1, "x"), None).unwrap();
     assert!(a4.render_page(0, 8.0).is_ok());
 }
+
+#[test]
+fn concurrent_first_use_is_safe() {
+    // Régression macOS arm64 (CI du 2026-10-26) : plusieurs threads qui initialisaient
+    // PDFium en même temps au premier appel faisaient planter le processus (SIGTRAP).
+    // L'initialisation doit être strictement unique, les autres threads attendent.
+    use std::sync::{Arc, Barrier};
+    let threads = 8;
+    let barrier = Arc::new(Barrier::new(threads));
+    let handles: Vec<_> = (0..threads)
+        .map(|_| {
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                let doc = Document::from_bytes(sample_pdf(1, "course"), None).unwrap();
+                doc.render_page(0, 1.0).unwrap().width_px
+            })
+        })
+        .collect();
+    for h in handles {
+        assert!(h.join().unwrap() > 0);
+    }
+}

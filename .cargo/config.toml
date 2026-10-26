@@ -1,0 +1,3 @@
+# `cargo xtask <commande>` : tâches de développement (voir xtask/src/main.rs).
+[alias]
+xtask = "run -q -p xtask --"

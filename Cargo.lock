@@ -1926,7 +1926,9 @@ name = "mega-app"
 version = "0.1.0"
 dependencies = [
  "mega-core",
+ "percent-encoding",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

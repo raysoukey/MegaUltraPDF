@@ -6,11 +6,26 @@
 
 #![forbid(unsafe_code)]
 
+mod commands;
+mod error;
+mod protocol;
+mod registry;
+
+use std::sync::Mutex;
+
+use registry::DocumentRegistry;
+
 /// Point d'entrée de l'application (appelé par `main.rs`).
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        .manage(Mutex::new(DocumentRegistry::default()))
         .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            commands::open_document,
+            commands::close_document
+        ]);
+    protocol::register(builder)
         .run(tauri::generate_context!())
         .expect("erreur au lancement de l'application Tauri");
 }

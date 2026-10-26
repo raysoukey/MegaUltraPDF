@@ -92,6 +92,15 @@ pub enum CoreError {
     /// Le thread de l'acteur PDFium s'est arrêté : plus aucune opération possible.
     #[error("Le service PDF est arrêté.")]
     ServiceStopped,
+
+    /// Une spécification de pages (« 1-3,5 ») est mal formée ou hors des pages du document.
+    #[error("Plage de pages invalide : {0}")]
+    InvalidPageSpec(String),
+
+    /// L'opération demandée n'a pas de sens dans l'état actuel du document
+    /// (supprimer toutes les pages, enregistrer un document sans chemin…).
+    #[error("Opération impossible : {0}")]
+    InvalidOperation(String),
 }
 
 /// Raccourci pour `Result<T, CoreError>`, comme `io::Result` dans la bibliothèque standard.

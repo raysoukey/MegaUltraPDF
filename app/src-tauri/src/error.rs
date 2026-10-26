@@ -30,6 +30,8 @@ pub enum ErrorKind {
     InvalidPdf,
     /// Document ou page inconnus.
     NotFound,
+    /// Demande refusée dans l'état actuel (plage de pages invalide, dernière page…).
+    InvalidOperation,
     /// Fichier introuvable ou inaccessible.
     Io,
     /// Défaillance interne (PDFium absente, verrou indisponible…).
@@ -56,6 +58,9 @@ impl From<CoreError> for AppError {
             CoreError::Io(_) => ErrorKind::Io,
             CoreError::RenderTooLarge { .. } => ErrorKind::InvalidPdf,
             CoreError::NotFound { .. } => ErrorKind::NotFound,
+            CoreError::InvalidPageSpec(_) | CoreError::InvalidOperation(_) => {
+                ErrorKind::InvalidOperation
+            }
             CoreError::Cancelled => ErrorKind::Internal,
             CoreError::LibraryNotFound { .. }
             | CoreError::Pdfium(_)

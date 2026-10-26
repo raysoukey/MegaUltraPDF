@@ -34,6 +34,10 @@ l'utilisateur apprend en le lisant.
 - Aucun appel réseau à l'exécution. Seul `cargo xtask fetch-pdfium` télécharge (en dev).
 - Pas de nouvelle dépendance sans raison écrite dans le message de commit.
 - Données venant d'un PDF = données non fiables (voir `display_safe` dans `mega-cli`).
+- Gestion des erreurs : ADR-0005 (une enum typée par bibliothèque, conversion aux frontières,
+  décision aux extrémités, cause conservée sans répétition). `unwrap`/`expect`/`panic!` sont
+  **refusés par lint** hors tests ; un `expect` justifié porte `#[allow(clippy::expect_used)]`
+  et un commentaire expliquant pourquoi il ne peut pas se déclencher.
 
 ## Pédagogie (non négociable)
 

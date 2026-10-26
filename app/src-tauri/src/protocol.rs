@@ -103,6 +103,9 @@ fn handle<R: Runtime>(
 ///
 /// Séparée de `handle` (qui dépend du contexte Tauri) pour être testable directement :
 /// 400 si l'URL est mal formée, 404 si le document ou la page n'existent pas, 200 + PNG sinon.
+// `Response::builder()` n'échoue que si un en-tête est invalide ; les nôtres sont des
+// constantes vérifiées par les tests, d'où l'`expect` toléré (ADR-0005).
+#[allow(clippy::expect_used)]
 pub fn respond(registry: &SharedRegistry, path: &str, query: Option<&str>) -> Response<Vec<u8>> {
     let page = match parse_page_request(path, query) {
         Ok(p) => p,
@@ -132,6 +135,8 @@ pub fn respond(registry: &SharedRegistry, path: &str, query: Option<&str>) -> Re
     }
 }
 
+// Même justification que pour `respond` : en-têtes constants (ADR-0005).
+#[allow(clippy::expect_used)]
 fn text_response(status: StatusCode, message: &str) -> Response<Vec<u8>> {
     Response::builder()
         .status(status)

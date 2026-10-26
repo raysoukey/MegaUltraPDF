@@ -6,6 +6,17 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// Politique d'erreurs (ADR-0005) : pas de panique dans le code de production.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented
+    )
+)]
 
 mod cli;
 mod commands;

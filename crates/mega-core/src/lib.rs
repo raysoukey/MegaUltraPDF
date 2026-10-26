@@ -14,6 +14,18 @@
 //! - `testing` : génération de PDF d'exemple (feature `testing`).
 
 #![forbid(unsafe_code)]
+// Politique d'erreurs (ADR-0005) : pas de panique dans le code de production. Les tests
+// (`cfg(test)`) en sont exemptés ; un `expect` justifié porte un `#[allow]` commenté.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented
+    )
+)]
 
 pub mod document;
 pub mod engine;

@@ -6,6 +6,17 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// Politique d'erreurs (ADR-0005) : pas de panique dans le code de production.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented
+    )
+)]
 
 mod commands;
 mod error;
@@ -17,6 +28,11 @@ use std::sync::Mutex;
 use registry::DocumentRegistry;
 
 /// Point d'entrée de l'application (appelé par `main.rs`).
+///
+/// Si Tauri ne peut pas démarrer (WebView2 absent, configuration invalide), il n'y a rien
+/// d'autre à faire que s'arrêter avec le message : `expect` est ici la bonne extrémité
+/// de la chaîne d'erreurs (ADR-0005).
+#[allow(clippy::expect_used)]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()

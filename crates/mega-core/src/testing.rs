@@ -5,6 +5,9 @@
 //! d'écrire les métadonnées (titre, auteur…). On construit donc à la main un
 //! squelette PDF minimal qui contient le titre, on le charge dans PDFium, on y
 //! ajoute les pages, puis on sauvegarde : PDFium conserve le dictionnaire `/Info`.
+//!
+//! Ce module ne sert qu'aux tests : il a le droit de paniquer (ADR-0005).
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use pdfium_render::prelude::{
     PdfPageObjectsCommon, PdfPagePaperSize, PdfPageTextObject, PdfPoints, PdfiumError,

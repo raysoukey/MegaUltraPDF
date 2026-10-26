@@ -149,6 +149,10 @@ impl Document {
     }
 
     /// Accès au document PDFium sous-jacent, réservé aux autres modules du crate.
+    ///
+    /// Invariant : `inner` n'est `None` que pendant `Drop`, où plus aucune méthode ne peut
+    /// être appelée ; l'`expect` ne peut donc pas se déclencher (ADR-0005).
+    #[allow(clippy::expect_used)]
     pub(crate) fn inner(&self) -> &PdfDocument<'static> {
         self.inner
             .as_ref()

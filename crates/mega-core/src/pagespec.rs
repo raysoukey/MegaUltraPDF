@@ -44,6 +44,25 @@ impl PageSpec {
         all.chunks(n as usize).map(|c| c.to_vec()).collect()
     }
 
+    /// Découpe `0..page_count` en parties commençant aux index `starts` (ex. pages visées par
+    /// les signets de premier niveau). Les pages avant le premier début forment une partie ;
+    /// doublons et index hors bornes sont ignorés.
+    pub fn split_at(starts: &[u16], page_count: u16) -> Vec<Vec<u16>> {
+        let mut bounds: BTreeSet<u16> =
+            starts.iter().copied().filter(|&s| s < page_count).collect();
+        bounds.insert(0);
+        let bounds: Vec<u16> = bounds.into_iter().collect();
+        bounds
+            .iter()
+            .enumerate()
+            .map(|(i, &start)| {
+                let end = bounds.get(i + 1).copied().unwrap_or(page_count);
+                (start..end).collect()
+            })
+            .filter(|part: &Vec<u16>| !part.is_empty())
+            .collect()
+    }
+
     /// Une partie : `"5"`, `"1-3"`, `"8-"` (jusqu'à la fin) ou `"-2"` (depuis le début).
     fn parse_part(part: &str, page_count: u16) -> CoreResult<Vec<u16>> {
         let invalid = |why: &str| CoreError::InvalidPageSpec(format!("« {part} » : {why}"));
@@ -122,5 +141,26 @@ mod tests {
             vec![vec![0, 1], vec![2, 3, 4]]
         );
         assert!(PageSpec::ranges("1-9", 5).is_err());
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    #[test]
+    fn split_at_boundaries() {
+        // Débuts de parties en pages 0 et 2 (ex. signets) sur 5 pages → [0,1] [2,3,4].
+        assert_eq!(
+            PageSpec::split_at(&[0, 2], 5),
+            vec![vec![0, 1], vec![2, 3, 4]]
+        );
+        // Une première partie « avant le premier signet » si celui-ci n'est pas en page 0.
+        assert_eq!(
+            PageSpec::split_at(&[2, 4], 5),
+            vec![vec![0, 1], vec![2, 3], vec![4]]
+        );
+        // Doublons et hors bornes ignorés ; aucun début valide → tout le document.
+        assert_eq!(PageSpec::split_at(&[9, 9], 3), vec![vec![0, 1, 2]]);
     }
 }

@@ -20,6 +20,10 @@ pub fn run(file: &Path, password: Option<&str>) -> anyhow::Result<()> {
     if doc.page_count() > 0 {
         let s = doc.page_size(0)?;
         println!("Page 1 : {:.1} × {:.1} pt", s.width_pt, s.height_pt);
+        let rotation = doc.page_rotation(0)?;
+        if rotation != mega_core::Rotation::None {
+            println!("Rotation page 1 : {}°", rotation.degrees());
+        }
     }
     Ok(())
 }

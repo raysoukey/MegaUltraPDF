@@ -15,6 +15,10 @@ pub fn run(
     password: Option<&str>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(page >= 1, "le numéro de page commence à 1");
+    anyhow::ensure!(
+        scale > 0.0 && scale.is_finite(),
+        "l'échelle doit être un nombre strictement positif"
+    );
     let doc = Document::open(file, password)?;
     let rendered = doc.render_page(page - 1, scale)?;
     std::fs::write(out, rendered.to_png()?)

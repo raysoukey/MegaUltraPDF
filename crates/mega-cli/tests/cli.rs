@@ -81,3 +81,31 @@ fn render_writes_png() {
     assert!(bytes.len() > 100);
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
 }
+
+#[test]
+fn render_rejects_zero_scale() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("p1.png");
+    mega()
+        .args([
+            "render",
+            &fixture("simple.pdf"),
+            "--scale",
+            "0",
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("strictement positif"));
+    assert!(!out.exists());
+}
+
+#[test]
+fn info_encrypted_wrong_password() {
+    mega()
+        .args(["info", &fixture("encrypted.pdf"), "--password", "faux"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("incorrect"));
+}

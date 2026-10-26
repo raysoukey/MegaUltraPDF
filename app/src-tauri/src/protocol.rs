@@ -90,12 +90,20 @@ fn handle<R: Runtime>(
     request: &Request<Vec<u8>>,
 ) -> Response<Vec<u8>> {
     let uri = request.uri();
-    let page = match parse_page_request(uri.path(), uri.query()) {
+    let registry = ctx.app_handle().state::<SharedRegistry>();
+    respond(&registry, uri.path(), uri.query())
+}
+
+/// Construit la réponse HTTP pour `path` + `query`, à partir du registre.
+///
+/// Séparée de `handle` (qui dépend du contexte Tauri) pour être testable directement :
+/// 400 si l'URL est mal formée, 404 si le document ou la page n'existent pas, 200 + PNG sinon.
+pub fn respond(registry: &SharedRegistry, path: &str, query: Option<&str>) -> Response<Vec<u8>> {
+    let page = match parse_page_request(path, query) {
         Ok(p) => p,
         Err(e) => return text_response(StatusCode::BAD_REQUEST, &e.to_string()),
     };
-    let registry = ctx.app_handle().state::<SharedRegistry>();
-    let guard = match lock_registry(&registry) {
+    let guard = match lock_registry(registry) {
         Ok(g) => g,
         Err(e) => return text_response(StatusCode::INTERNAL_SERVER_ERROR, &e.message),
     };
@@ -130,6 +138,48 @@ fn text_response(status: StatusCode, message: &str) -> Response<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::DocumentRegistry;
+    use mega_core::Document;
+
+    fn registry_with_one_doc() -> (SharedRegistry, DocId) {
+        let mut reg = DocumentRegistry::default();
+        let id = reg.insert(
+            Document::from_bytes(mega_core::testing::sample_pdf(1, "proto"), None).unwrap(),
+        );
+        (std::sync::Mutex::new(reg), id)
+    }
+
+    #[test]
+    fn respond_returns_400_on_bad_route() {
+        let (reg, _) = registry_with_one_doc();
+        assert_eq!(
+            respond(&reg, "thumb/1/0", None).status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[test]
+    fn respond_returns_404_on_unknown_document() {
+        let (reg, id) = registry_with_one_doc();
+        let r = respond(&reg, &format!("page/{}/0", id + 1), None);
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn respond_returns_404_on_unknown_page() {
+        let (reg, id) = registry_with_one_doc();
+        let r = respond(&reg, &format!("page/{id}/7"), None);
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn respond_returns_png_for_valid_page() {
+        let (reg, id) = registry_with_one_doc();
+        let r = respond(&reg, &format!("page%2F{id}%2F0"), Some("scale=0.5"));
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(&r.body()[..8], b"\x89PNG\r\n\x1a\n");
+    }
 
     #[test]
     fn parse_ok() {

@@ -80,3 +80,9 @@ fn open_encrypted_without_password_is_password_required() {
         3
     );
 }
+
+#[test]
+fn title_with_non_ascii_characters_roundtrips() {
+    let doc = Document::from_bytes(sample_pdf(1, "Résumé — été"), None).unwrap();
+    assert_eq!(doc.title().as_deref(), Some("Résumé — été"));
+}

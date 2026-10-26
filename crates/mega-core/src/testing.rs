@@ -19,14 +19,13 @@ use crate::engine;
 /// `trailer` qui indique l'objet racine (`/Root`) et les métadonnées (`/Info`). Les
 /// positions doivent être exactes : on les calcule en construisant le fichier.
 pub fn minimal_pdf_with_title(title: &str) -> Vec<u8> {
-    let escaped = title
-        .replace('\\', "\\\\")
-        .replace('(', "\\(")
-        .replace(')', "\\)");
     let objects = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
         "<< /Type /Pages /Kids [] /Count 0 >>".to_string(),
-        format!("<< /Title ({escaped}) /Producer (MegaUltraPDF tests) >>"),
+        format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string(title)
+        ),
     ];
 
     let mut out = String::from("%PDF-1.7\n");
@@ -46,6 +45,20 @@ pub fn minimal_pdf_with_title(title: &str) -> Vec<u8> {
         objects.len() + 1
     ));
     out.into_bytes()
+}
+
+/// Encode une chaîne de texte PDF en hexadécimal UTF-16BE précédé du BOM `FEFF`.
+///
+/// Une chaîne littérale `(…)` sans BOM est lue en *PDFDocEncoding*, un encodage
+/// 8 bits proche de Latin-1 : des octets UTF-8 y donneraient du charabia pour tout
+/// caractère non ASCII. Le BOM UTF-16 lève l'ambiguïté (ISO 32000-1, §7.9.2.2).
+fn pdf_text_string(text: &str) -> String {
+    let mut hex = String::from("<FEFF");
+    for unit in text.encode_utf16() {
+        hex.push_str(&format!("{unit:04X}"));
+    }
+    hex.push('>');
+    hex
 }
 
 /// Un PDF A4 de `pages` pages, titré `title`, chaque page portant « Page N » en Helvetica.

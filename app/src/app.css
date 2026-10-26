@@ -1,0 +1,151 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Variables de thème : clair par défaut, sombre si le système le demande ou si
+   data-theme="dark" est posé sur <html>. */
+
+:root {
+  --bg: #e9e9ec;
+  --panel: #f7f7f8;
+  --panel-border: #d0d0d5;
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.18);
+  --danger-bg: #fde8e8;
+  --danger-text: #8a1c1c;
+  --danger-border: #f3c2c2;
+  --page-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  --selection: rgba(37, 99, 235, 0.3);
+  --highlight: rgba(250, 204, 21, 0.45);
+  --highlight-current: rgba(249, 115, 22, 0.6);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #1c1c1f;
+    --panel: #2a2a2e;
+    --panel-border: #3a3a40;
+    --text: #ececef;
+    --muted: #a0a0a8;
+    --accent: #60a5fa;
+    --accent-soft: rgba(96, 165, 250, 0.22);
+    --danger-bg: #3b1d1d;
+    --danger-text: #fca5a5;
+    --danger-border: #5c2a2a;
+    --page-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #1c1c1f;
+  --panel: #2a2a2e;
+  --panel-border: #3a3a40;
+  --text: #ececef;
+  --muted: #a0a0a8;
+  --accent: #60a5fa;
+  --accent-soft: rgba(96, 165, 250, 0.22);
+  --danger-bg: #3b1d1d;
+  --danger-text: #fca5a5;
+  --danger-border: #5c2a2a;
+  --page-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.3rem 0.55rem;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+input[type='text'],
+input[type='password'],
+input[type='number'],
+select {
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  min-width: 320px;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.dialog h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.dialog .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.dialog .actions .primary {
+  background: var(--accent);
+  color: #fff;
+}

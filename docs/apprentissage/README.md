@@ -14,5 +14,4 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [Ownership et emprunts](concepts/ownership-et-emprunts.md)
 - [`OnceLock` : initialiser une fois, lire partout](concepts/oncelock.md)
 - [`Mutex` et état partagé](concepts/mutex-et-etat-partage.md)
-
-_À venir : `iterateurs-et-fermetures`._
+- [Itérateurs et fermetures](concepts/iterateurs-et-fermetures.md)

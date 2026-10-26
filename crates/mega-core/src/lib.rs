@@ -5,8 +5,26 @@
 //! (`app/src-tauri`) et l'outil en ligne de commande (`mega-cli`) ne font qu'appeler
 //! les types publics définis ici. Cette frontière permet de tester la logique sans
 //! fenêtre et de changer de moteur plus tard sans toucher aux interfaces.
+//!
+//! Organisation des modules :
+//! - [`error`] : le type d'erreur unique du crate, [`CoreError`].
+//! - [`engine`] : localisation et initialisation (une seule fois) de PDFium.
+//! - [`document`] : [`Document`], un PDF ouvert, et ses métadonnées.
+//! - [`render`] : rendu d'une page en pixels ([`RenderedPage`]).
+//! - `testing` : génération de PDF d'exemple (feature `testing`).
 
 #![forbid(unsafe_code)]
+
+pub mod document;
+pub mod engine;
+pub mod error;
+pub mod render;
+#[cfg(feature = "testing")]
+pub mod testing;
+
+pub use document::{Document, PageSize};
+pub use error::{CoreError, CoreResult};
+pub use render::RenderedPage;
 
 /// Version du crate, lue depuis `Cargo.toml` au moment de la compilation.
 ///

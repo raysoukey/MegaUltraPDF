@@ -12,6 +12,7 @@ unsafe_code = "forbid"
 
 [dependencies]
 anyhow.workspace = true
+mega-core = { path = "../crates/mega-core", features = ["testing"] }
 serde.workspace = true
 toml = "0.9"
 ureq = "3"

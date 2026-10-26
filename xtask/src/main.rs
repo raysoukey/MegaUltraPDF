@@ -18,6 +18,7 @@ Usage : cargo xtask <commande>
 
 Commandes :
   fetch-pdfium [--target <triple>]   Télécharge la bibliothèque PDFium épinglée dans vendor/pdfium/
+  gen-fixtures                       Régénère les PDF d'exemple de fixtures/ (sauf encrypted.pdf)
 ";
 
 fn main() -> anyhow::Result<()> {
@@ -26,6 +27,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("fetch-pdfium") => fetch_pdfium(&args[1..]),
+        Some("gen-fixtures") => gen_fixtures(),
         Some(other) => bail!("commande inconnue : {other}\n\n{USAGE}"),
         None => {
             print!("{USAGE}");
@@ -62,5 +64,22 @@ fn fetch_pdfium(args: &[String]) -> anyhow::Result<()> {
         _ => bail!("arguments invalides pour fetch-pdfium\n\n{USAGE}"),
     };
     pdfium::fetch(&workspace_root(), &target)?;
+    Ok(())
+}
+
+/// Écrit `fixtures/simple.pdf` : 3 pages A4 titrées, générées par `mega-core`.
+///
+/// `fixtures/encrypted.pdf` n'est pas régénéré ici : PDFium ne sait pas chiffrer.
+/// Il a été produit une fois avec `qpdf --encrypt --user-password=secret
+/// --owner-password=secret --bits=256 -- simple.pdf encrypted.pdf`.
+fn gen_fixtures() -> anyhow::Result<()> {
+    let dir = workspace_root().join("fixtures");
+    std::fs::create_dir_all(&dir)?;
+    let simple = dir.join("simple.pdf");
+    std::fs::write(
+        &simple,
+        mega_core::testing::sample_pdf(3, "MegaUltraPDF — exemple"),
+    )?;
+    println!("écrit : {}", simple.display());
     Ok(())
 }

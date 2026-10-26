@@ -50,12 +50,18 @@ fn is_display_dangerous(c: char) -> bool {
         || matches!(
             c,
             '\u{00AD}'                 // trait d'union conditionnel
+            | '\u{061C}'               // marque de lettre arabe (contrôle bidi)
+            | '\u{180E}'               // séparateur de voyelles mongol (invisible)
             | '\u{200B}'..='\u{200F}'  // espaces de largeur nulle, marques de direction
             | '\u{2028}' | '\u{2029}'  // séparateurs de ligne et de paragraphe
             | '\u{202A}'..='\u{202E}'  // incrustations et forçages bidirectionnels
             | '\u{2060}'..='\u{206F}'  // gluon de mots, isolats bidirectionnels, invisibles
+            | '\u{FE00}'..='\u{FE0F}'  // sélecteurs de variante
             | '\u{FEFF}'               // BOM / espace insécable de largeur nulle
+            | '\u{FFF9}'..='\u{FFFB}'  // annotations interlinéaires
             | '\u{E000}'..='\u{F8FF}'  // zone à usage privé (glyphes imprévisibles)
+            | '\u{E0000}'..='\u{E01EF}' // étiquettes de langue, sélecteurs de variante étendus
+            | '\u{F0000}'..='\u{10FFFF}' // plans à usage privé 15 et 16
         )
 }
 
@@ -72,5 +78,10 @@ mod tests {
         assert_eq!(display_safe("Résumé — été"), "Résumé — été");
         // Caractères invisibles ou de réordonnancement bidirectionnel (usurpation visuelle).
         assert_eq!(display_safe("a\u{202E}b\u{200B}c"), "a\u{FFFD}b\u{FFFD}c");
+        // Marque de lettre arabe, étiquette de langue, sélecteur de variante, plan privé.
+        assert_eq!(
+            display_safe("x\u{061C}y\u{E0001}z\u{FE0F}w\u{F0000}"),
+            "x\u{FFFD}y\u{FFFD}z\u{FFFD}w\u{FFFD}"
+        );
     }
 }

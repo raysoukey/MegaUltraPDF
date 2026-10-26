@@ -1,0 +1,273 @@
+[
+  {
+    "wait": 1500
+  },
+  {
+    "shot": "01-ouverture.png"
+  },
+  {
+    "assert": "document.querySelectorAll('.page img').length >= 1",
+    "label": "au moins une page rendue"
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 3",
+    "label": "trois vignettes"
+  },
+  {
+    "assert": "document.querySelector('[role=tab][aria-selected=true]').textContent.trim()",
+    "label": "libellé de l'onglet"
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '1'",
+    "label": "page 1 affichée"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "wait": 900
+  },
+  {
+    "eval": "document.querySelector('.zoom').textContent",
+    "label": "zoom après deux crans"
+  },
+  {
+    "shot": "02-zoom.png"
+  },
+  {
+    "click": "button[title^='Ajuster à la page']"
+  },
+  {
+    "wait": 900
+  },
+  {
+    "assert": "document.querySelectorAll('.page').length >= 1 && document.querySelector('.page').getBoundingClientRect().height <= document.querySelector('.viewer').clientHeight",
+    "label": "ajuster à la page : la page tient dans la fenêtre"
+  },
+  {
+    "shot": "03-ajuster-page.png"
+  },
+  {
+    "click": "button[title^='Pivoter']"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "(() => { const r = document.querySelector('.page').getBoundingClientRect(); return r.width > r.height; })()",
+    "label": "rotation : page en paysage"
+  },
+  {
+    "shot": "04-rotation.png"
+  },
+  {
+    "click": "button[title^='Pivoter']"
+  },
+  {
+    "click": "button[title^='Pivoter']"
+  },
+  {
+    "click": "button[title^='Pivoter']"
+  },
+  {
+    "click": "button[title^='Ajuster à la largeur']"
+  },
+  {
+    "wait": 900
+  },
+  {
+    "eval": "(() => { const f = document.querySelector('input[aria-label=\"Numéro de page\"]'); f.value = '3'; f.dispatchEvent(new Event('input', { bubbles: true })); f.form.requestSubmit(); return true; })()",
+    "label": "saisie page 3"
+  },
+  {
+    "wait": 900
+  },
+  {
+    "assert": "document.querySelector('.thumb.current span').textContent === '3'",
+    "label": "vignette 3 courante"
+  },
+  {
+    "shot": "05-page-3.png"
+  },
+  {
+    "key": "Home"
+  },
+  {
+    "wait": 700
+  },
+  {
+    "assert": "document.querySelector('.thumb.current span').textContent === '1'",
+    "label": "Home → page 1"
+  },
+  {
+    "key": "f",
+    "ctrl": true
+  },
+  {
+    "wait": 400
+  },
+  {
+    "type": "Page"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.includes('/ 3')",
+    "label": "recherche : 3 résultats"
+  },
+  {
+    "assert": "document.querySelectorAll('.hit').length >= 1",
+    "label": "surbrillance visible"
+  },
+  {
+    "shot": "06-recherche.png"
+  },
+  {
+    "key": "F3"
+  },
+  {
+    "wait": 700
+  },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.startsWith('2 /')",
+    "label": "F3 → résultat 2"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "key": "Home"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "drag": ".page[data-page='0'] .text-layer",
+    "from": [
+      70,
+      80
+    ],
+    "to": [
+      160,
+      90
+    ]
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "document.querySelectorAll('.sel').length >= 1",
+    "label": "sélection de texte visible"
+  },
+  {
+    "shot": "07-selection.png"
+  },
+  {
+    "key": "c",
+    "ctrl": true
+  },
+  {
+    "wait": 500
+  },
+  {
+    "eval": "navigator.clipboard.readText().catch(e => 'lecture refusée : ' + e.message)",
+    "label": "presse-papiers"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "key": "i",
+    "ctrl": true
+  },
+  {
+    "wait": 900
+  },
+  {
+    "assert": "document.querySelectorAll('[role=dialog] tr').length >= 10",
+    "label": "propriétés : tableau rempli"
+  },
+  {
+    "shot": "08-proprietes.png"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "key": "F1"
+  },
+  {
+    "wait": 400
+  },
+  {
+    "assert": "document.querySelector('#help-title') !== null",
+    "label": "aide des raccourcis ouverte"
+  },
+  {
+    "shot": "09-aide.png"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "eval": "(() => { const s = document.querySelector('select[aria-label=\"Thème\"]'); s.value = 'dark'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "thème sombre demandé"
+  },
+  {
+    "wait": 600
+  },
+  {
+    "assert": "document.documentElement.getAttribute('data-theme') === 'dark'",
+    "label": "attribut data-theme=dark"
+  },
+  {
+    "wait": 500
+  },
+  {
+    "shot": "10-sombre.png"
+  },
+  {
+    "eval": "(() => { const s = document.querySelector('select[aria-label=\"Thème\"]'); s.value = 'system'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "thème système"
+  },
+  {
+    "click": "button[title^='Page unique'], button[title^='Défilement continu']"
+  },
+  {
+    "wait": 900
+  },
+  {
+    "assert": "document.querySelectorAll('.viewer .page').length === 1",
+    "label": "mode page unique : une seule page"
+  },
+  {
+    "shot": "11-page-unique.png"
+  },
+  {
+    "click": "button[title^='Page unique'], button[title^='Défilement continu']"
+  },
+  {
+    "wait": 500
+  },
+  {
+    "key": "w",
+    "ctrl": true
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelectorAll('[role=tab]').length === 0 && document.body.innerText.includes('Aucun document ouvert')",
+    "label": "Ctrl+W ferme l'onglet"
+  },
+  {
+    "shot": "12-ferme.png"
+  }
+]

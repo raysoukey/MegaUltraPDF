@@ -48,9 +48,23 @@ pub enum CoreError {
     ///
     /// `#[from]` génère `impl From<std::io::Error> for CoreError`, ce qui permet
     /// d'écrire `std::fs::read(path)?` directement dans une fonction qui retourne
-    /// `CoreResult`.
-    #[error("Erreur d'accès au fichier : {0}")]
+    /// `CoreResult`. Il marque aussi l'`io::Error` comme **cause** (`source()`) :
+    /// c'est pourquoi le message ne la répète pas (sinon `anyhow` l'afficherait deux fois).
+    /// Pour un message complet, voir [`display_chain`].
+    #[error("Erreur d'accès au fichier")]
     Io(#[from] std::io::Error),
+
+    /// Le rendu demandé dépasserait la taille d'image maximale autorisée.
+    #[error(
+        "Rendu trop grand : {width_px} × {height_px} px (maximum {} Mpx). Réduisez l'échelle.",
+        MAX_RENDER_PIXELS / 1_000_000
+    )]
+    RenderTooLarge {
+        /// Largeur demandée en pixels.
+        width_px: u64,
+        /// Hauteur demandée en pixels.
+        height_px: u64,
+    },
 
     /// Toute autre erreur remontée par PDFium, conservée sous forme de texte.
     #[error("Erreur interne de PDFium : {0}")]
@@ -59,6 +73,28 @@ pub enum CoreError {
 
 /// Raccourci pour `Result<T, CoreError>`, comme `io::Result` dans la bibliothèque standard.
 pub type CoreResult<T> = Result<T, CoreError>;
+
+/// Nombre maximal de pixels qu'un rendu peut produire (50 mégapixels, soit 200 Mo en RGBA).
+///
+/// Une page PDF peut mesurer jusqu'à 14 400 pt de côté ; sans borne, un zoom fort
+/// demanderait des dizaines de gigaoctets à PDFium.
+pub const MAX_RENDER_PIXELS: u64 = 50_000_000;
+
+/// Message complet d'une erreur : son texte, puis celui de chacune de ses causes.
+///
+/// \[Apprentissage\] Le trait `std::error::Error` a une méthode `source()` qui renvoie la
+/// cause sous-jacente, si elle existe. `Display` ne montre que le dernier maillon ; cette
+/// fonction remonte la chaîne, comme le fait `anyhow` avec `{e:#}`.
+pub fn display_chain(err: &dyn std::error::Error) -> String {
+    let mut text = err.to_string();
+    let mut cause = err.source();
+    while let Some(c) = cause {
+        text.push_str(" : ");
+        text.push_str(&c.to_string());
+        cause = c.source();
+    }
+    text
+}
 
 fn format_paths(paths: &[PathBuf]) -> String {
     if paths.is_empty() {

@@ -28,7 +28,10 @@ fn info_reports_missing_file() {
         .args(["info", "introuvable.pdf"])
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("Erreur"));
+        .stderr(predicate::str::contains("Erreur"))
+        .stderr(predicate::function(|s: &str| {
+            s.matches("os error").count() == 1
+        }));
 }
 
 #[test]

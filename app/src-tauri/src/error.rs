@@ -45,9 +45,11 @@ impl From<CoreError> for AppError {
             CoreError::InvalidPdf(_) => ErrorKind::InvalidPdf,
             CoreError::PageOutOfRange { .. } => ErrorKind::NotFound,
             CoreError::Io(_) => ErrorKind::Io,
+            CoreError::RenderTooLarge { .. } => ErrorKind::InvalidPdf,
             CoreError::LibraryNotFound { .. } | CoreError::Pdfium(_) => ErrorKind::Internal,
         };
-        AppError::new(kind, e.to_string())
+        // Message complet, causes incluses (ex. « Erreur d'accès au fichier : Accès refusé »).
+        AppError::new(kind, mega_core::error::display_chain(&e))
     }
 }
 

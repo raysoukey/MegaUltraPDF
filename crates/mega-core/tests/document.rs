@@ -86,3 +86,25 @@ fn title_with_non_ascii_characters_roundtrips() {
     let doc = Document::from_bytes(sample_pdf(1, "Résumé — été"), None).unwrap();
     assert_eq!(doc.title().as_deref(), Some("Résumé — été"));
 }
+
+#[test]
+fn io_error_message_mentions_the_cause_exactly_once() {
+    let err = Document::open("n/existe/pas.pdf", None).unwrap_err();
+    let full = mega_core::error::display_chain(&err);
+    assert!(full.starts_with("Erreur d'accès au fichier"), "{full}");
+    assert_eq!(full.matches("os error").count(), 1, "{full}");
+}
+
+#[test]
+fn render_refuses_absurd_pixel_counts() {
+    // Page de 14 400 × 14 400 pt (maximum du format) : 207 Mpx à l'échelle 1.
+    let doc =
+        Document::from_bytes(mega_core::testing::blank_pdf(14_400.0, 14_400.0), None).unwrap();
+    assert!(matches!(
+        doc.render_page(0, 1.0),
+        Err(CoreError::RenderTooLarge { .. })
+    ));
+    // Une page A4 à l'échelle 8 (≈ 32 Mpx) reste acceptée.
+    let a4 = Document::from_bytes(sample_pdf(1, "x"), None).unwrap();
+    assert!(a4.render_page(0, 8.0).is_ok());
+}

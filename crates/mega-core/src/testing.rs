@@ -61,6 +61,24 @@ fn pdf_text_string(text: &str) -> String {
     hex
 }
 
+/// Un PDF d'une page vierge de `width_pt` × `height_pt` points (pour tester les bornes).
+///
+/// # Panics
+/// Si PDFium n'est pas disponible : ce générateur n'est utilisé que par des tests.
+pub fn blank_pdf(width_pt: f32, height_pt: f32) -> Vec<u8> {
+    let pdfium = engine::pdfium().expect("PDFium doit être disponible pour les tests");
+    let mut doc = pdfium
+        .load_pdf_from_byte_vec(minimal_pdf_with_title("vierge"), None)
+        .expect("squelette PDF valide");
+    doc.pages_mut()
+        .create_page_at_end(PdfPagePaperSize::Custom(
+            PdfPoints::new(width_pt),
+            PdfPoints::new(height_pt),
+        ))
+        .expect("création de page");
+    doc.save_to_bytes().expect("sérialisation")
+}
+
 /// Un PDF A4 de `pages` pages, titré `title`, chaque page portant « Page N » en Helvetica.
 ///
 /// # Panics

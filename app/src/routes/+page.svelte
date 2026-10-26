@@ -1,7 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { isAppError, openDocument, pickPdfFile, startupFile, type DocumentInfo } from '$lib/api';
+  import {
+    closeDocument,
+    isAppError,
+    openDocument,
+    pickPdfFile,
+    startupFile,
+    type DocumentInfo,
+  } from '$lib/api';
   import PageImage from '$lib/components/PageImage.svelte';
   import { t } from '$lib/strings';
 
@@ -16,7 +23,11 @@
     error = null;
     busy = true;
     try {
+      const previous = doc;
       doc = await openDocument(path);
+      // Un seul document à la fois pour l'instant (les onglets arrivent au Lot 1) :
+      // on libère l'ancien côté Rust. Un échec de fermeture n'empêche pas l'ouverture.
+      if (previous) await closeDocument(previous.id).catch(() => undefined);
     } catch (e) {
       // Toute décision vient du backend ; ici on ne fait qu'afficher.
       if (isAppError(e)) {

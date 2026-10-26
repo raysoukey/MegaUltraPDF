@@ -76,7 +76,13 @@ pub fn close_document(registry: State<'_, SharedRegistry>, id: DocId) -> Result<
 /// Le frontend l'appelle au démarrage et ouvre le document s'il existe.
 #[tauri::command]
 pub fn startup_file() -> Option<String> {
-    startup_file_from_args(std::env::args().skip(1))
+    // `args_os` plutôt que `args` : ce dernier panique sur un argument qui n'est pas de
+    // l'Unicode valide ; ici un tel argument est simplement ignoré.
+    startup_file_from_args(
+        std::env::args_os()
+            .skip(1)
+            .filter_map(|a| a.into_string().ok()),
+    )
 }
 
 /// Premier argument qui ressemble à un fichier PDF existant.

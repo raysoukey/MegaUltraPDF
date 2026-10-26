@@ -41,8 +41,19 @@ impl Document {
     /// (595 × 842 pt) donne 1190 × 1684 px.
     pub fn render_page(&self, index: u16, scale: f32) -> CoreResult<RenderedPage> {
         let page = self.inner().pages().get(self.checked_index(index)?)?;
-        let width_px = (page.width().value * scale).round().max(1.0) as Pixels;
-        let height_px = (page.height().value * scale).round().max(1.0) as Pixels;
+        let width = (page.width().value * scale).round().max(1.0);
+        let height = (page.height().value * scale).round().max(1.0);
+        if !width.is_finite()
+            || !height.is_finite()
+            || (width as u64).saturating_mul(height as u64) > crate::error::MAX_RENDER_PIXELS
+        {
+            return Err(CoreError::RenderTooLarge {
+                width_px: width as u64,
+                height_px: height as u64,
+            });
+        }
+        let width_px = width as Pixels;
+        let height_px = height as Pixels;
         let config = PdfRenderConfig::new()
             .set_target_size(width_px, height_px)
             .render_form_data(true);

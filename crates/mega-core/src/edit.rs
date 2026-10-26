@@ -315,18 +315,7 @@ impl Document {
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> CoreResult<()> {
         let path = path.as_ref();
         let bytes = self.to_bytes()?;
-        let dir = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let mut temp = tempfile::Builder::new()
-            .prefix(".megaultrapdf-")
-            .suffix(".tmp")
-            .tempfile_in(&dir)?;
-        temp.write_all(&bytes)?;
-        temp.as_file().sync_all()?;
-        temp.persist(path).map_err(|e| CoreError::Io(e.error))?;
+        write_atomically(path, &bytes)?;
         self.set_path(Some(path.to_path_buf()));
         self.history.saved_position = Some(self.history.position);
         Ok(())
@@ -339,4 +328,22 @@ impl Document {
         self.replace_inner(inner);
         Ok(())
     }
+}
+
+/// Écrit `bytes` dans `path` de façon atomique : fichier temporaire du même dossier, puis
+/// renommage par-dessus la cible. En cas d'échec, la cible n'est pas touchée.
+pub fn write_atomically(path: &Path, bytes: &[u8]) -> CoreResult<()> {
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let mut temp = tempfile::Builder::new()
+        .prefix(".megaultrapdf-")
+        .suffix(".tmp")
+        .tempfile_in(&dir)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map_err(|e| CoreError::Io(e.error))?;
+    Ok(())
 }

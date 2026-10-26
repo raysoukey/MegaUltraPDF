@@ -24,7 +24,12 @@ $buildConfig = @($changed | Where-Object {
   $_ -match '(^|/)build\.rs$|(^|/)Cargo\.toml$|^\.cargo/|^rust-toolchain\.toml$|(^|/)package\.json$|^app/(vite|svelte|vitest)\.config\.|^app/\.npmrc$|^app/pnpm-workspace\.yaml$|^\.claude/'
 })
 if ($buildConfig.Count -gt 0) {
-  Write-Output ("[INFO] Fichiers de configuration modifies (" + ($buildConfig -join ', ') + ") : le hook Stop n'execute rien automatiquement. Relire ces fichiers puis lancer /verif.")
+  # Un simple texte sur stdout n'atteint pas Claude : on bloque une fois avec une raison
+  # (JSON reconnu par Claude Code), puis on laisse passer si le hook est deja actif.
+  if ($active) { exit 0 }
+  $reason = "Fichiers de configuration modifies (" + ($buildConfig -join ', ') + ") : le hook Stop n'execute rien automatiquement. Relire ces fichiers, puis lancer /verif avant de conclure."
+  $json = @{ decision = 'block'; reason = $reason } | ConvertTo-Json -Compress
+  Write-Output $json
   exit 0
 }
 

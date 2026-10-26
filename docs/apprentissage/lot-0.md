@@ -119,10 +119,14 @@ sérialisable), 0004 (`Pdfium` global en `OnceLock`, acteur reporté au Lot 1).
   d'initialisation corrigée, la CI Linux/macOS échouait sur `open_rejects_non_pdf_bytes` :
   « pas un PDF » revenait comme « erreur inconnue ». PDFium garde le code d'erreur du dernier
   chargement dans une variable globale (`FPDF_GetLastError`), lu par `pdfium-render` dans un
-  **second** appel ; un chargement réussi d'un autre thread entre les deux l'efface. Correction :
-  `engine::load_bytes` rend la paire d'appels indivisible avec un `Mutex<()>`. Leçon : lire la
-  source d'une dépendance (`pdfium.rs`, `pdfium_document_handle_to_result`) vaut mieux que
-  deviner ; et « thread-safe appel par appel » n'est pas « thread-safe pour une séquence ».
+  **second** appel ; un chargement réussi d'un autre thread entre les deux l'efface. Un verrou
+  autour des seuls chargements n'a pas suffi : la CI a ensuite montré des SIGSEGV sous usage
+  concurrent soutenu. Correction finale : `engine::guard()`, un `Mutex<()>` de processus tenu
+  pendant **chaque opération complète** d'un `Document`, y compris sa destruction (`Drop`
+  avec `Option::take`). Leçon : lire la source d'une dépendance (`pdfium.rs`,
+  `pdfium_document_handle_to_result`) vaut mieux que deviner ; « thread-safe appel par
+  appel » n'est pas « thread-safe pour une séquence » ; et un `Mutex` standard n'est pas
+  réentrant, d'où les variantes `_unlocked` qui supposent le jeton déjà pris.
 - **Vérifier l'interface sans cliquer** : WebView2 accepte
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` ; un script Node parle
   alors le protocole DevTools (évaluer du JS, capturer l'écran). Lancer l'app sur un fichier :

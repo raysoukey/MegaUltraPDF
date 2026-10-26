@@ -7,7 +7,7 @@
 //! pour être appelée depuis plusieurs threads à la fois.
 
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use pdfium_render::prelude::{PdfDocument, Pdfium};
 
@@ -68,23 +68,40 @@ pub(crate) fn pdfium() -> CoreResult<&'static Pdfium> {
     }
 }
 
-/// Charge un document PDF depuis des octets, de façon atomique vis-à-vis des autres
-/// chargements.
+/// Jeton prouvant que le thread courant détient l'accès exclusif à PDFium.
 ///
-/// \[Apprentissage\] PDFium range le code d'erreur du dernier chargement dans une
-/// **variable globale** (`FPDF_GetLastError`). `pdfium-render` fait deux appels :
-/// charger, puis lire ce code si le chargement a échoué. La feature `thread_safe`
-/// verrouille chaque appel séparément, donc un chargement réussi sur un autre thread
-/// peut s'intercaler et effacer le code (« fichier invalide » devenait « erreur
-/// inconnue », vu en CI Linux/macOS). Ce `Mutex` rend la paire d'appels indivisible.
-/// `unwrap_or_else(|e| e.into_inner())` récupère le verrou même si un thread a paniqué
-/// en le tenant : il ne protège aucune donnée, seulement l'ordre des appels.
+/// Toute opération complète sur un document (chargement, lecture, rendu, destruction)
+/// se fait en tenant ce jeton : voir [`guard`].
+pub(crate) type PdfiumGuard = MutexGuard<'static, ()>;
+
+/// Prend l'accès exclusif à PDFium pour la durée d'une opération complète.
+///
+/// \[Apprentissage\] La feature `thread_safe` de `pdfium-render` verrouille **chaque appel**
+/// à PDFium, pas une **séquence** d'appels. Or PDFium garde de l'état global entre deux
+/// appels : par exemple le code d'erreur du dernier chargement (`FPDF_GetLastError`),
+/// lu dans un second appel — un chargement réussi sur un autre thread pouvait s'intercaler
+/// et transformer « fichier invalide » en « erreur inconnue » ; et des utilisations
+/// concurrentes plus soutenues allaient jusqu'au plantage (SIGSEGV en CI Linux/macOS).
+/// Ce `Mutex` sérialise donc nos opérations entières. Il ne protège aucune donnée Rust,
+/// seulement l'ordre des appels natifs : s'il est « empoisonné » par la panique d'un
+/// thread, on le reprend tel quel (`into_inner`). Le patron acteur du Lot 1 (un seul
+/// thread PDFium) remplacera ce verrou.
+///
+/// Règle : ne jamais appeler `guard()` en tenant déjà un jeton (le `Mutex` de la
+/// bibliothèque standard n'est pas réentrant : ce serait un interblocage). Les
+/// fonctions internes qui supposent le jeton déjà pris le reçoivent en paramètre.
+pub(crate) fn guard() -> PdfiumGuard {
+    static PDFIUM_LOCK: Mutex<()> = Mutex::new(());
+    PDFIUM_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Charge un document depuis des octets. Le jeton garantit que le chargement et la
+/// lecture éventuelle du code d'erreur ne sont pas entrelacés avec un autre thread.
 pub(crate) fn load_bytes(
+    _guard: &PdfiumGuard,
     bytes: Vec<u8>,
     password: Option<&str>,
 ) -> CoreResult<PdfDocument<'static>> {
-    static LOAD_LOCK: Mutex<()> = Mutex::new(());
-    let _guard = LOAD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     Ok(pdfium()?.load_pdf_from_byte_vec(bytes, password)?)
 }
 

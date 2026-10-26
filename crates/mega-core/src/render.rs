@@ -40,7 +40,11 @@ impl Document {
     /// La taille en pixels est `round(points × scale)` : à l'échelle 2, une page A4
     /// (595 × 842 pt) donne 1190 × 1684 px.
     pub fn render_page(&self, index: u16, scale: f32) -> CoreResult<RenderedPage> {
-        let page = self.inner().pages().get(self.checked_index(index)?)?;
+        let _guard = crate::engine::guard();
+        let page = self
+            .inner()
+            .pages()
+            .get(self.checked_index_unlocked(index)?)?;
         let width = (page.width().value * scale).round().max(1.0);
         let height = (page.height().value * scale).round().max(1.0);
         if !width.is_finite()

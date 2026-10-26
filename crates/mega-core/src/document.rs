@@ -27,7 +27,9 @@ pub struct PageSize {
 /// d'avoir une structure qui se référence elle-même. Quand `Document` est détruit
 /// (`Drop`), PDFium libère ses ressources automatiquement.
 pub struct Document {
-    inner: PdfDocument<'static>,
+    /// Toujours `Some` pendant la vie du document ; `None` seulement pendant `Drop`,
+    /// qui doit libérer le `PdfDocument` en tenant le jeton PDFium (voir [`engine::guard`]).
+    inner: Option<PdfDocument<'static>>,
     path: Option<PathBuf>,
 }
 
@@ -37,6 +39,14 @@ impl std::fmt::Debug for Document {
             .field("path", &self.path)
             .field("page_count", &self.page_count())
             .finish()
+    }
+}
+
+impl Drop for Document {
+    /// Libère les ressources PDFium sous le jeton, comme toute autre opération.
+    fn drop(&mut self) {
+        let _guard = engine::guard();
+        self.inner.take();
     }
 }
 
@@ -55,8 +65,12 @@ impl Document {
 
     /// Charge un PDF depuis des octets déjà en mémoire.
     pub fn from_bytes(bytes: Vec<u8>, password: Option<&str>) -> CoreResult<Document> {
-        let inner = engine::load_bytes(bytes, password)?;
-        Ok(Document { inner, path: None })
+        let guard = engine::guard();
+        let inner = engine::load_bytes(&guard, bytes, password)?;
+        Ok(Document {
+            inner: Some(inner),
+            path: None,
+        })
     }
 
     /// Chemin d'origine, s'il a été ouvert depuis un fichier.
@@ -66,7 +80,8 @@ impl Document {
 
     /// Titre déclaré dans les métadonnées, ou `None` s'il est absent ou vide.
     pub fn title(&self) -> Option<String> {
-        self.inner
+        let _guard = engine::guard();
+        self.inner()
             .metadata()
             .get(PdfDocumentMetadataTagType::Title)
             .map(|tag| tag.value().trim().to_string())
@@ -75,12 +90,17 @@ impl Document {
 
     /// Nombre de pages.
     pub fn page_count(&self) -> u16 {
-        u16::try_from(self.inner.pages().len()).unwrap_or(u16::MAX)
+        let _guard = engine::guard();
+        self.count_unlocked()
     }
 
     /// Dimensions de la page `index` (à partir de 0).
     pub fn page_size(&self, index: u16) -> CoreResult<PageSize> {
-        let rect = self.inner.pages().page_size(self.checked_index(index)?)?;
+        let _guard = engine::guard();
+        let rect = self
+            .inner()
+            .pages()
+            .page_size(self.checked_index_unlocked(index)?)?;
         Ok(PageSize {
             width_pt: rect.width().value,
             height_pt: rect.height().value,
@@ -94,12 +114,19 @@ impl Document {
 
     /// Sérialise le document complet en octets PDF.
     pub fn to_bytes(&self) -> CoreResult<Vec<u8>> {
-        Ok(self.inner.save_to_bytes()?)
+        let _guard = engine::guard();
+        Ok(self.inner().save_to_bytes()?)
     }
 
-    /// Vérifie la borne et convertit vers le type d'index attendu par PDFium.
-    pub(crate) fn checked_index(&self, index: u16) -> CoreResult<PdfPageIndex> {
-        let count = self.page_count();
+    /// Nombre de pages, **jeton déjà pris par l'appelant**.
+    pub(crate) fn count_unlocked(&self) -> u16 {
+        u16::try_from(self.inner().pages().len()).unwrap_or(u16::MAX)
+    }
+
+    /// Vérifie la borne et convertit vers le type d'index attendu par PDFium,
+    /// **jeton déjà pris par l'appelant**.
+    pub(crate) fn checked_index_unlocked(&self, index: u16) -> CoreResult<PdfPageIndex> {
+        let count = self.count_unlocked();
         if index >= count {
             return Err(CoreError::PageOutOfRange { index, count });
         }
@@ -108,6 +135,8 @@ impl Document {
 
     /// Accès au document PDFium sous-jacent, réservé aux autres modules du crate.
     pub(crate) fn inner(&self) -> &PdfDocument<'static> {
-        &self.inner
+        self.inner
+            .as_ref()
+            .expect("le document PDFium n'est libéré que dans Drop")
     }
 }

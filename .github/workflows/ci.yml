@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système Tauri (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: PDFium (version épinglée, somme vérifiée)
+        run: cargo xtask fetch-pdfium
+
+      - name: Rust — format
+        run: cargo fmt --all --check
+      - name: Rust — clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust — tests
+        run: cargo test --workspace
+      - name: Rust — rustdoc
+        run: cargo doc -p mega-core --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Frontend — install
+        run: pnpm --dir app install --frozen-lockfile
+      - name: Frontend — types
+        run: pnpm --dir app check
+      - name: Frontend — lint
+        run: pnpm --dir app lint
+      - name: Frontend — format
+        run: pnpm --dir app format:check
+      - name: Frontend — tests
+        run: pnpm --dir app test
+
+      - name: Application — build (sans installeur)
+        run: pnpm --dir app tauri build --debug --no-bundle

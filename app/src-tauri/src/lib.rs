@@ -57,7 +57,8 @@ pub fn run() {
             commands::save_document,
             commands::extract_pages,
             commands::merge_files,
-            commands::split_document
+            commands::split_document,
+            commands::split_plan
         ]);
     protocol::register(builder)
         .run(tauri::generate_context!())

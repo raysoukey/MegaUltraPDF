@@ -6,6 +6,7 @@ import {
   applyEdit as apiApplyEdit,
   closeDocument,
   isAppError,
+  mergeFiles,
   openDocument,
   pickSavePath,
   redoEdit,
@@ -474,6 +475,39 @@ export function showNotice(message: string): void {
 /** Nom affichable d'un document (pour les dialogues). */
 export function displayName(doc: OpenDoc): string {
   return doc.summary.title || (doc.summary.path ? fileName(doc.summary.path) : t.untitled);
+}
+
+/** Fusionne des fichiers et ouvre le résultat (sans chemin : à enregistrer) dans un onglet. */
+export async function mergeAndOpen(paths: string[]): Promise<boolean> {
+  docsState.error = null;
+  docsState.busy = true;
+  try {
+    const summary = await mergeFiles(paths);
+    docsState.docs.push({
+      summary,
+      scale: clampScale(settings.scale),
+      zoomMode: settings.zoomMode,
+      rotation: 'none',
+      page: 0,
+      generation: summary.generation,
+      scrollRequest: 0,
+      outline: null,
+      textLayers: {},
+      links: {},
+      selection: null,
+      search: null,
+      // Un document fusionné n'existe pas encore sur disque : il est « modifié » d'emblée.
+      edit: { ...UNTOUCHED, modified: true },
+      selectedPages: [],
+    });
+    docsState.activeId = summary.id;
+    return true;
+  } catch (e) {
+    reportError(t.mergeError, e);
+    return false;
+  } finally {
+    docsState.busy = false;
+  }
 }
 
 export function setSelectedPages(doc: OpenDoc, pages: number[]): void {

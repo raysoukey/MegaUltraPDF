@@ -3,11 +3,13 @@
   import { onMount } from 'svelte';
   import { pickPdfFiles, startupFile } from '$lib/api';
   import CloseConfirmDialog from '$lib/components/CloseConfirmDialog.svelte';
+  import MergeDialog from '$lib/components/MergeDialog.svelte';
   import PasswordDialog from '$lib/components/PasswordDialog.svelte';
   import PropertiesDialog from '$lib/components/PropertiesDialog.svelte';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ShortcutsHelp from '$lib/components/ShortcutsHelp.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
+  import SplitDialog from '$lib/components/SplitDialog.svelte';
   import Tabs from '$lib/components/Tabs.svelte';
   import Toolbar from '$lib/components/Toolbar.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
@@ -46,6 +48,8 @@
   let searchOpen = $state(false);
   let propertiesOpen = $state(false);
   let helpOpen = $state(false);
+  let mergeOpen = $state(false);
+  let splitOpen = $state(false);
 
   $effect(() => {
     applyTheme(settings.theme);
@@ -150,6 +154,12 @@
       case 'saveAs':
         if (doc) saveAs(doc);
         break;
+      case 'merge':
+        mergeOpen = true;
+        break;
+      case 'split':
+        if (doc) splitOpen = true;
+        break;
       case 'find':
         if (doc) searchOpen = true;
         break;
@@ -197,6 +207,8 @@
         break;
       case 'escape':
         if (docsState.closePrompt) resolveClosePrompt('cancel');
+        else if (mergeOpen) mergeOpen = false;
+        else if (splitOpen) splitOpen = false;
         else if (helpOpen) helpOpen = false;
         else if (propertiesOpen) propertiesOpen = false;
         else if (docsState.passwordPrompt) cancelPassword();
@@ -219,6 +231,8 @@
     ontogglesearch={() => (searchOpen = !searchOpen)}
     onproperties={() => (propertiesOpen = true)}
     onhelp={() => (helpOpen = true)}
+    onmerge={() => (mergeOpen = true)}
+    onsplit={() => doc && (splitOpen = true)}
   />
   <Tabs />
   {#if doc && searchOpen}
@@ -257,6 +271,12 @@
   {/if}
   {#if helpOpen}
     <ShortcutsHelp onclose={() => (helpOpen = false)} />
+  {/if}
+  {#if mergeOpen}
+    <MergeDialog onclose={() => (mergeOpen = false)} />
+  {/if}
+  {#if doc && splitOpen}
+    <SplitDialog {doc} onclose={() => (splitOpen = false)} />
   {/if}
   {#if docsState.closePrompt}
     {@const closing = docById(docsState.closePrompt.id)}

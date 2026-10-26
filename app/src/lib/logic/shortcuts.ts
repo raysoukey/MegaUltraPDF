@@ -26,7 +26,9 @@ export type Action =
   | 'undo'
   | 'redo'
   | 'save'
-  | 'saveAs';
+  | 'saveAs'
+  | 'merge'
+  | 'split';
 
 /** Forme minimale d'un événement clavier, indépendante du DOM (testable). */
 export interface KeyLike {
@@ -61,6 +63,8 @@ const BINDINGS: Binding[] = [
   { key: 'z', ctrl: true, shift: true, action: 'redo' },
   { key: 's', ctrl: true, action: 'save' },
   { key: 's', ctrl: true, shift: true, action: 'saveAs' },
+  { key: 'm', ctrl: true, action: 'merge' },
+  { key: 'd', ctrl: true, shift: true, action: 'split' },
   { key: 'r', action: 'rotate' },
   { key: 'Home', action: 'firstPage' },
   { key: 'End', action: 'lastPage' },

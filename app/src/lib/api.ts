@@ -202,6 +202,15 @@ export async function splitDocument(
   return invoke<string[]>('split_document', { id, parts, outDir, baseName });
 }
 
+/** Façon de scinder (miroir de `SplitMode`, sérialisée avec `kind`). */
+export type SplitMode =
+  { kind: 'ranges'; spec: string } | { kind: 'every'; n: number } | { kind: 'bookmarks' };
+
+/** Les parties qu'une scission produirait (index de pages), sans rien écrire. */
+export async function splitPlan(id: number, mode: SplitMode): Promise<number[][]> {
+  return invoke<number[][]>('split_plan', { id, mode });
+}
+
 /** Dialogue natif « Enregistrer sous » ; `null` si annulé. */
 export async function pickSavePath(defaultPath?: string): Promise<string | null> {
   const { save } = await import('@tauri-apps/plugin-dialog');

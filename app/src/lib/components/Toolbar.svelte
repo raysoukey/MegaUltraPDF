@@ -23,6 +23,8 @@
     ontogglesearch,
     onproperties,
     onhelp,
+    onmerge,
+    onsplit,
   }: {
     doc: OpenDoc | null;
     onopen: () => void;
@@ -32,6 +34,8 @@
     ontogglesearch: () => void;
     onproperties: () => void;
     onhelp: () => void;
+    onmerge: () => void;
+    onsplit: () => void;
   } = $props();
 
   let recentOpen = $state(false);
@@ -209,6 +213,10 @@
       disabled={!doc}
       title="{t.saveAs} (Ctrl+Maj+S)"
       onclick={() => doc && saveAs(doc)}>{t.saveAs}</button
+    >
+    <button type="button" title="{t.mergeTitle} (Ctrl+M)" onclick={onmerge}>{t.merge}…</button>
+    <button type="button" disabled={!doc} title="{t.splitTitle} (Ctrl+Maj+D)" onclick={onsplit}
+      >{t.split}…</button
     >
   </div>
 

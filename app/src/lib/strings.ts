@@ -90,6 +90,45 @@ export const fr = {
   closeModifiedQuestion: (name: string) =>
     `Voulez-vous enregistrer les modifications de « ${name} » avant de fermer ?`,
   dontSave: 'Ne pas enregistrer',
+  // Pages (vignettes)
+  pageActions: 'Actions sur les pages',
+  selectedPages: (n: number) => `${n} page${n > 1 ? 's' : ''} sélectionnée${n > 1 ? 's' : ''}`,
+  currentPageTarget: 'Page courante (Ctrl/Maj+clic pour en choisir plusieurs)',
+  rotateLeft: 'Pivoter à gauche',
+  rotateRight: 'Pivoter à droite',
+  deletePages: 'Supprimer',
+  insertBlankBefore: 'Insérer une page vide avant',
+  insertBlankAfter: 'Insérer une page vide après',
+  insertFromFile: 'Insérer les pages d’un fichier après…',
+  extractPages: 'Extraire vers un nouveau fichier…',
+  extracted: (n: number) => `${n} page${n > 1 ? 's' : ''} extraite${n > 1 ? 's' : ''}.`,
+  // Fusion
+  mergeTitle: 'Fusionner des PDF',
+  mergeHint:
+    'Les fichiers sont assemblés dans l’ordre de la liste ; le résultat s’ouvre dans un nouvel onglet.',
+  mergeEmpty: 'Aucun fichier. Ajoutez-en au moins deux.',
+  addFiles: 'Ajouter des fichiers…',
+  moveUp: 'Monter',
+  moveDown: 'Descendre',
+  remove: 'Retirer',
+  merge: 'Fusionner',
+  mergeError: (message: string) => `Fusion impossible : ${message}`,
+  // Scission
+  splitTitle: 'Scinder le document',
+  splitMode: 'Découpage',
+  splitEvery: 'Toutes les',
+  splitEveryLabel: 'Nombre de pages par partie',
+  splitRanges: 'Plages',
+  splitRangesPlaceholder: 'ex. 1-3,4-6,7-',
+  splitBookmarks: 'Aux signets de premier niveau',
+  splitPreview: (n: number) =>
+    `${n} fichier${n > 1 ? 's' : ''} ser${n > 1 ? 'ont' : 'a'} produit${n > 1 ? 's' : ''}.`,
+  splitPrefix: 'Préfixe des fichiers',
+  splitDefaultPrefix: 'partie',
+  chooseFolder: 'Dossier de sortie…',
+  noFolderChosen: 'Aucun dossier choisi',
+  split: 'Scinder',
+  splitDone: (n: number) => `${n} fichier${n > 1 ? 's' : ''} écrit${n > 1 ? 's' : ''}.`,
   actions: {
     open: 'Ouvrir un fichier',
     close: "Fermer l'onglet",
@@ -113,6 +152,8 @@ export const fr = {
     redo: 'Rétablir',
     save: 'Enregistrer',
     saveAs: 'Enregistrer sous',
+    merge: 'Fusionner des PDF',
+    split: 'Scinder le document',
   },
 } as const;
 

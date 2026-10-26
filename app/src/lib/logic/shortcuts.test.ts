@@ -39,6 +39,8 @@ describe('actionFor', () => {
     expect(actionFor(key('s', { ctrl: true }))).toBe('save');
     expect(actionFor(key('s', { ctrl: true, shift: true }))).toBe('saveAs');
     expect(actionFor(key('z'))).toBeNull();
+    expect(actionFor(key('m', { ctrl: true }))).toBe('merge');
+    expect(actionFor(key('d', { ctrl: true, shift: true }))).toBe('split');
   });
   it('ignores unknown or wrongly modified keys', () => {
     expect(actionFor(key('o'))).toBeNull();

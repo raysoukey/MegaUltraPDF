@@ -13,7 +13,7 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | Lot | Contenu | État |
 |---|---|---|
 | 0 | Fondations : cœur Rust, CLI `info`/`render`, application qui affiche la page 1, outillage | ✅ |
-| 1 | Lecteur complet (zoom, navigation, recherche, sélection, onglets) | ⬜ |
+| 1 | Lecteur complet (onglets, zoom, rotation, vignettes, signets, liens, sélection, recherche, propriétés, thème, raccourcis) | ✅ |
 | 2 | Pages et documents (fusion, scission, rotation, annuler/rétablir) | ⬜ |
 | 3 → 7 | Annotations, formulaires, édition de contenu, export/sécurité, finition | ⬜ |
 
@@ -52,6 +52,15 @@ cargo run -p mega-cli -- render fixtures/simple.pdf --page 1 --scale 2 --out pag
 cargo run -p mega-cli -- info fixtures/encrypted.pdf --password secret
 ```
 
+## Vérifier l'interface sans souris
+
+```powershell
+scripts/ui-check.ps1 -Pdf fixtures/simple.pdf -Scenario scripts/scenarios/lecteur-simple.json
+```
+
+Lance l'application avec le port de débogage WebView2, déroule un scénario (clics, touches,
+glisser, captures d'écran) et affiche ✔/✘ par assertion. Captures dans `target/ui-check/`.
+
 ## Organisation du dépôt
 
 ```
@@ -61,7 +70,8 @@ app/src-tauri/      backend Tauri (commandes, protocole mega://, registre)
 app/src/            frontend SvelteKit (présentation seulement)
 xtask/              tâches de dev (fetch-pdfium, gen-fixtures)
 fixtures/           PDF de test
-docs/               feuille de route, ADR, notes d'apprentissage, specs et plans
+docs/               feuille de route, liste des fonctionnalités, ADR, notes d'apprentissage, specs et plans
+scripts/            vérification de l'interface par scénarios (CDP)
 .claude/            environnement Claude Code (règles, hooks, compétences, agents)
 ```
 

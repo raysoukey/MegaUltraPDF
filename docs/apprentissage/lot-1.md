@@ -19,7 +19,7 @@ messages priorisés, met les rendus en cache et annule ceux qui sont périmés.
 chaque requête emporte un `sync_channel(1)` : un canal à une place qui joue le rôle de
 « réponse unique ». La méthode `ServiceHandle::call` montre tout le mécanisme en six lignes.
 
-- Fiche à venir : `/concept canaux-et-acteur`. Lire aussi `Request` : une variante par message,
+- Fiche : [`canaux-et-acteur`](concepts/canaux-et-acteur.md). Lire aussi `Request` : une variante par message,
   le `match` de `Actor::handle` est exhaustif.
 
 ### 2. `BinaryHeap`, `Ord` et `Reverse`

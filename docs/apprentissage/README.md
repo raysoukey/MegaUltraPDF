@@ -6,6 +6,7 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 ## Notes de lot
 
 - [Lot 0 — Fondations et environnement](lot-0.md)
+- [Lot 1 — Lecteur](lot-1.md)
 
 ## Fiches concept (`/concept <nom>` pour en ajouter une)
 
@@ -15,3 +16,4 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [`OnceLock` : initialiser une fois, lire partout](concepts/oncelock.md)
 - [`Mutex` et état partagé](concepts/mutex-et-etat-partage.md)
 - [Itérateurs et fermetures](concepts/iterateurs-et-fermetures.md)
+- [Canaux et patron acteur](concepts/canaux-et-acteur.md)

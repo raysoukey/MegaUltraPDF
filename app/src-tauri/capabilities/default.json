@@ -1,7 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions de la fenêtre principale : cœur Tauri et dialogue d'ouverture de fichier.",
+  "description": "Permissions de la fenêtre principale : cœur Tauri, dialogues (ouvrir, confirmer), préférences persistantes, ouverture de liens externes.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-confirm",
+    "dialog:allow-message",
+    "store:default",
+    "opener:allow-open-url",
+    "opener:allow-default-urls"
+  ]
 }

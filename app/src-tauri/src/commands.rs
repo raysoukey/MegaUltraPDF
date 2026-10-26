@@ -1,86 +1,125 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Commandes Tauri appelées par le frontend via `invoke`.
 //!
-//! \[Apprentissage\] `#[tauri::command]` transforme une fonction Rust ordinaire en point
-//! d'entrée appelable depuis JavaScript. Les arguments sont désérialisés depuis le JSON
-//! (`path: String`), la valeur de retour sérialisée en JSON. `State<'_, T>` donne accès
-//! à une valeur partagée enregistrée avec `.manage(...)` au démarrage.
+//! \[Apprentissage\] `#[tauri::command]` transforme une fonction Rust en point d'entrée
+//! appelable depuis JavaScript. Les commandes sont `async` : Tauri les exécute sur son
+//! runtime `tokio`, hors du thread de l'interface. Comme le [`ServiceHandle`] **bloque**
+//! en attendant l'acteur PDFium, chaque commande délègue à `spawn_blocking`, un pool de
+//! threads prévu pour les appels bloquants, puis `.await` le résultat. L'état partagé est
+//! le handle lui-même (clonable), enregistré avec `.manage(...)` au démarrage.
 
-use std::sync::Mutex;
-
-use mega_core::{Document, PageSize};
-use serde::Serialize;
+use mega_core::service::{DocId, DocumentSummary, ServiceHandle};
+use mega_core::{DocumentProperties, OutlineNode, PageLink, SearchHit, SearchOptions, TextBox};
 use tauri::State;
 
 use crate::error::{AppError, ErrorKind};
-use crate::registry::{DocId, DocumentRegistry};
 
-/// Ce que le frontend sait d'un document ouvert (reflété par `DocumentInfo` dans `api.ts`).
-#[derive(Debug, Serialize)]
-pub struct DocumentInfo {
-    /// Identifiant à renvoyer dans les commandes suivantes et dans les URL `mega://`.
-    pub id: DocId,
-    /// Chemin du fichier tel qu'ouvert.
-    pub path: String,
-    /// Titre des métadonnées, s'il existe.
-    pub title: Option<String>,
-    /// Nombre de pages.
-    pub page_count: u16,
-    /// Dimensions de chaque page en points, dans l'ordre.
-    pub pages: Vec<PageSize>,
+/// Exécute une opération bloquante du service sur le pool `spawn_blocking` et rapatrie
+/// le résultat dans le monde `async`.
+async fn blocking<T: Send + 'static>(
+    handle: ServiceHandle,
+    op: impl FnOnce(ServiceHandle) -> mega_core::CoreResult<T> + Send + 'static,
+) -> Result<T, AppError> {
+    tauri::async_runtime::spawn_blocking(move || op(handle))
+        .await
+        .map_err(|e| AppError::new(ErrorKind::Internal, format!("tâche interrompue : {e}")))?
+        .map_err(AppError::from)
 }
 
-/// État partagé de l'application : le registre, protégé par un verrou.
-///
-/// Tauri exige `Send + Sync` pour tout état géré ; le `Mutex` le garantit et sérialise
-/// les accès venant des commandes et du protocole `mega://`.
-pub type SharedRegistry = Mutex<DocumentRegistry>;
-
-/// Verrouille le registre ; un verrou « empoisonné » (panique d'un autre thread) est
-/// traité comme une erreur interne plutôt qu'une nouvelle panique.
-pub fn lock_registry(
-    registry: &SharedRegistry,
-) -> Result<std::sync::MutexGuard<'_, DocumentRegistry>, AppError> {
-    registry
-        .lock()
-        .map_err(|_| AppError::new(ErrorKind::Internal, "registre des documents indisponible"))
-}
-
-/// Ouvre le fichier `path` et l'enregistre ; retourne sa description.
+/// Ouvre le fichier `path` dans l'acteur et retourne sa description.
 #[tauri::command]
-pub fn open_document(
-    registry: State<'_, SharedRegistry>,
+pub async fn open_document(
+    service: State<'_, ServiceHandle>,
     path: String,
     password: Option<String>,
-) -> Result<DocumentInfo, AppError> {
-    let doc = Document::open(&path, password.as_deref())?;
-    let info = DocumentInfo {
-        id: 0,
-        path: path.clone(),
-        title: doc.title(),
-        page_count: doc.page_count(),
-        pages: doc.page_sizes()?,
-    };
-    let id = lock_registry(&registry)?.insert(doc);
-    Ok(DocumentInfo { id, ..info })
+) -> Result<DocumentSummary, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.open_path(path, password.as_deref())).await
 }
 
 /// Ferme le document `id`.
 #[tauri::command]
-pub fn close_document(registry: State<'_, SharedRegistry>, id: DocId) -> Result<(), AppError> {
-    close_in(&registry, id)
+pub async fn close_document(service: State<'_, ServiceHandle>, id: DocId) -> Result<(), AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.close(id)).await
 }
 
-/// Logique de `close_document`, séparée de la commande pour être testable sans Tauri.
-pub fn close_in(registry: &SharedRegistry, id: DocId) -> Result<(), AppError> {
-    if lock_registry(registry)?.remove(id) {
-        Ok(())
-    } else {
-        Err(AppError::new(
-            ErrorKind::NotFound,
-            format!("document {id} inconnu"),
-        ))
-    }
+/// Passe le document à la génération suivante (zoom/rotation changés) et la retourne.
+#[tauri::command]
+pub async fn bump_generation(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<u64, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.bump_generation(id)).await
+}
+
+/// Caractères positionnés d'une page (calque de texte).
+#[tauri::command]
+pub async fn text_layer(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    page: u16,
+) -> Result<Vec<TextBox>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.text_boxes(id, page)).await
+}
+
+/// Recherche dans tout le document.
+#[tauri::command]
+pub async fn search_document(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    query: String,
+    match_case: bool,
+    whole_word: bool,
+) -> Result<Vec<SearchHit>, AppError> {
+    let handle = service.inner().clone();
+    let options = SearchOptions {
+        match_case,
+        whole_word,
+    };
+    blocking(handle, move |h| h.search(id, &query, options)).await
+}
+
+/// Signets du document.
+#[tauri::command]
+pub async fn outline(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<Vec<OutlineNode>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.outline(id)).await
+}
+
+/// Liens d'une page.
+#[tauri::command]
+pub async fn page_links(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    page: u16,
+) -> Result<Vec<PageLink>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.links(id, page)).await
+}
+
+/// Propriétés (métadonnées, version) du document.
+#[tauri::command]
+pub async fn document_properties(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<DocumentProperties, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.properties(id)).await
+}
+
+/// Taille d'un fichier en octets (pour le dialogue des propriétés).
+#[tauri::command]
+pub async fn file_size(path: String) -> Result<u64, AppError> {
+    tauri::async_runtime::spawn_blocking(move || std::fs::metadata(&path).map(|m| m.len()))
+        .await
+        .map_err(|e| AppError::new(ErrorKind::Internal, format!("tâche interrompue : {e}")))?
+        .map_err(|e| AppError::new(ErrorKind::Io, format!("Erreur d'accès au fichier : {e}")))
 }
 
 /// Fichier passé en argument de ligne de commande au lancement, s'il y en a un.
@@ -116,13 +155,6 @@ mod tests {
     }
 
     #[test]
-    fn close_document_unknown_id_is_not_found() {
-        let registry: SharedRegistry = Mutex::new(DocumentRegistry::default());
-        let err = close_in(&registry, 42).unwrap_err();
-        assert_eq!(err.kind, ErrorKind::NotFound);
-    }
-
-    #[test]
     fn startup_file_picks_first_existing_pdf_argument() {
         let args = vec![
             "--flag".to_string(),
@@ -131,5 +163,12 @@ mod tests {
         ];
         assert_eq!(startup_file_from_args(args), Some(fixture("simple.pdf")));
         assert_eq!(startup_file_from_args(Vec::<String>::new()), None);
+    }
+
+    #[tokio::test]
+    async fn blocking_maps_core_errors_to_app_errors() {
+        let handle = mega_core::service::PdfService::spawn();
+        let err = blocking(handle, |h| h.close(42)).await.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NotFound);
     }
 }

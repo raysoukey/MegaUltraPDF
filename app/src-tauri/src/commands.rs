@@ -9,7 +9,10 @@
 //! le handle lui-même (clonable), enregistré avec `.manage(...)` au démarrage.
 
 use mega_core::service::{DocId, DocumentSummary, ServiceHandle};
-use mega_core::{DocumentProperties, OutlineNode, PageLink, SearchHit, SearchOptions, TextBox};
+use mega_core::{
+    DocumentProperties, EditCommand, EditState, OutlineNode, PageLink, SearchHit, SearchOptions,
+    TextBox,
+};
 use tauri::State;
 
 use crate::error::{AppError, ErrorKind};
@@ -113,6 +116,122 @@ pub async fn document_properties(
 ) -> Result<DocumentProperties, AppError> {
     let handle = service.inner().clone();
     blocking(handle, move |h| h.properties(id)).await
+}
+
+/// Résultat d'une édition : le document mis à jour et l'état de l'historique.
+#[derive(Debug, serde::Serialize)]
+pub struct EditResult {
+    /// Résumé à jour (nombre et tailles des pages peuvent avoir changé).
+    pub summary: DocumentSummary,
+    /// Annuler / rétablir possibles, modifié, libellés.
+    pub state: EditState,
+}
+
+impl From<(DocumentSummary, EditState)> for EditResult {
+    fn from((summary, state): (DocumentSummary, EditState)) -> Self {
+        EditResult { summary, state }
+    }
+}
+
+/// Applique une commande d'édition (pivoter, supprimer, déplacer, insérer…).
+#[tauri::command]
+pub async fn apply_edit(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    command: EditCommand,
+) -> Result<EditResult, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.apply(id, command).map(EditResult::from)).await
+}
+
+/// Annule la dernière édition.
+#[tauri::command]
+pub async fn undo_edit(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<EditResult, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.undo(id).map(EditResult::from)).await
+}
+
+/// Rétablit la dernière édition annulée.
+#[tauri::command]
+pub async fn redo_edit(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<EditResult, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.redo(id).map(EditResult::from)).await
+}
+
+/// État de l'historique d'un document.
+#[tauri::command]
+pub async fn edit_state(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<EditState, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.edit_state(id)).await
+}
+
+/// Enregistre le document à son chemin, ou dans `path` s'il est fourni (« Enregistrer sous »).
+#[tauri::command]
+pub async fn save_document(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    path: Option<String>,
+) -> Result<EditResult, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| {
+        match path {
+            Some(p) => h.save_as(id, p),
+            None => h.save(id),
+        }
+        .map(EditResult::from)
+    })
+    .await
+}
+
+/// Écrit les pages choisies dans un nouveau fichier.
+#[tauri::command]
+pub async fn extract_pages(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    pages: Vec<u16>,
+    path: String,
+) -> Result<(), AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.extract_pages(id, pages, path)).await
+}
+
+/// Fusionne des fichiers ; le résultat est ouvert comme nouveau document.
+#[tauri::command]
+pub async fn merge_files(
+    service: State<'_, ServiceHandle>,
+    paths: Vec<String>,
+) -> Result<DocumentSummary, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| {
+        h.merge_files(paths.into_iter().map(Into::into).collect())
+    })
+    .await
+}
+
+/// Scinde le document en fichiers `<base_name>-N.pdf` ; retourne les chemins créés.
+#[tauri::command]
+pub async fn split_document(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    parts: Vec<Vec<u16>>,
+    out_dir: String,
+    base_name: String,
+) -> Result<Vec<String>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| {
+        h.split_document(id, parts, out_dir, &base_name)
+            .map(|paths| paths.iter().map(|p| p.display().to_string()).collect())
+    })
+    .await
 }
 
 /// Taille d'un fichier en octets (pour le dialogue des propriétés).

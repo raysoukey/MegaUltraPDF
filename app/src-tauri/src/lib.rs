@@ -49,7 +49,15 @@ pub fn run() {
             commands::page_links,
             commands::document_properties,
             commands::file_size,
-            commands::startup_file
+            commands::startup_file,
+            commands::apply_edit,
+            commands::undo_edit,
+            commands::redo_edit,
+            commands::edit_state,
+            commands::save_document,
+            commands::extract_pages,
+            commands::merge_files,
+            commands::split_document
         ]);
     protocol::register(builder)
         .run(tauri::generate_context!())

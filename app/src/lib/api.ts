@@ -77,9 +77,39 @@ export interface DocumentProperties {
   page_count: number;
 }
 
+/** Une commande d'édition (miroir de `mega_core::EditCommand`, sérialisée avec `kind`). */
+export type EditCommand =
+  | { kind: 'rotate_pages'; pages: number[]; quarter_turns: number }
+  | { kind: 'delete_pages'; pages: number[] }
+  | { kind: 'move_pages'; pages: number[]; to: number }
+  | { kind: 'insert_blank_page'; at: number; size: PageSize }
+  | { kind: 'insert_pages_from_file'; path: string; pages: number[] | null; at: number };
+
+/** État de l'historique (miroir de `EditState`). */
+export interface EditState {
+  modified: boolean;
+  can_undo: boolean;
+  can_redo: boolean;
+  undo_label: string | null;
+  redo_label: string | null;
+}
+
+/** Résultat d'une édition (miroir de `EditResult`). */
+export interface EditResult {
+  summary: DocumentSummary;
+  state: EditState;
+}
+
 /** Erreur renvoyée par le backend (miroir de `AppError`). */
 export interface AppError {
-  kind: 'password_required' | 'wrong_password' | 'invalid_pdf' | 'not_found' | 'io' | 'internal';
+  kind:
+    | 'password_required'
+    | 'wrong_password'
+    | 'invalid_pdf'
+    | 'not_found'
+    | 'invalid_operation'
+    | 'io'
+    | 'internal';
   message: string;
 }
 
@@ -132,6 +162,56 @@ export async function documentProperties(id: number): Promise<DocumentProperties
 
 export async function fileSize(path: string): Promise<number> {
   return invoke<number>('file_size', { path });
+}
+
+export async function applyEdit(id: number, command: EditCommand): Promise<EditResult> {
+  return invoke<EditResult>('apply_edit', { id, command });
+}
+
+export async function undoEdit(id: number): Promise<EditResult> {
+  return invoke<EditResult>('undo_edit', { id });
+}
+
+export async function redoEdit(id: number): Promise<EditResult> {
+  return invoke<EditResult>('redo_edit', { id });
+}
+
+export async function editState(id: number): Promise<EditState> {
+  return invoke<EditState>('edit_state', { id });
+}
+
+/** Enregistre à son chemin, ou dans `path` (« Enregistrer sous »). */
+export async function saveDocument(id: number, path?: string): Promise<EditResult> {
+  return invoke<EditResult>('save_document', { id, path: path ?? null });
+}
+
+export async function extractPages(id: number, pages: number[], path: string): Promise<void> {
+  await invoke('extract_pages', { id, pages, path });
+}
+
+export async function mergeFiles(paths: string[]): Promise<DocumentSummary> {
+  return invoke<DocumentSummary>('merge_files', { paths });
+}
+
+export async function splitDocument(
+  id: number,
+  parts: number[][],
+  outDir: string,
+  baseName: string,
+): Promise<string[]> {
+  return invoke<string[]>('split_document', { id, parts, outDir, baseName });
+}
+
+/** Dialogue natif « Enregistrer sous » ; `null` si annulé. */
+export async function pickSavePath(defaultPath?: string): Promise<string | null> {
+  const { save } = await import('@tauri-apps/plugin-dialog');
+  return save({ defaultPath, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+}
+
+/** Dialogue natif de choix d'un dossier ; `null` si annulé. */
+export async function pickDirectory(): Promise<string | null> {
+  const picked = await open({ directory: true, multiple: false });
+  return typeof picked === 'string' ? picked : null;
 }
 
 /** Fichier PDF passé en argument au lancement de l'application, s'il y en a un. */

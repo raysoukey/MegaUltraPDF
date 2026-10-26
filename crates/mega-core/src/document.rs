@@ -55,7 +55,7 @@ impl Document {
 
     /// Charge un PDF depuis des octets déjà en mémoire.
     pub fn from_bytes(bytes: Vec<u8>, password: Option<&str>) -> CoreResult<Document> {
-        let inner = engine::pdfium()?.load_pdf_from_byte_vec(bytes, password)?;
+        let inner = engine::load_bytes(bytes, password)?;
         Ok(Document { inner, path: None })
     }
 

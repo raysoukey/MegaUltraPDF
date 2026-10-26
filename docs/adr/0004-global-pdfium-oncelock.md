@@ -36,5 +36,10 @@ application Tauri exécute ses commandes sur plusieurs threads.
   `concurrent_first_use_is_safe`.
 - Un échec de chargement est mémorisé pour la durée du processus : après
   `cargo xtask fetch-pdfium`, relancer le programme.
+- Les **chargements de documents** sont sérialisés par un verrou de `mega-core`
+  (`engine::load_bytes`) : PDFium stocke le code d'erreur du dernier chargement dans une
+  variable globale, lue par un second appel ; `thread_safe` ne verrouille que chaque appel,
+  donc deux chargements entrelacés corrompaient le diagnostic (« invalide » → « inconnu »).
+  Le patron acteur du Lot 1 (un seul thread PDFium) supprimera cette classe de problèmes.
 - Tout accès à PDFium est sérialisé : le rendu de plusieurs pages ne sera pas parallèle. Le
   Lot 1 mesurera et, si nécessaire, rendra par lots côté acteur.

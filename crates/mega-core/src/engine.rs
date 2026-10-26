@@ -7,9 +7,9 @@
 //! pour être appelée depuis plusieurs threads à la fois.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
-use pdfium_render::prelude::Pdfium;
+use pdfium_render::prelude::{PdfDocument, Pdfium};
 
 use crate::error::{CoreError, CoreResult};
 
@@ -66,6 +66,26 @@ pub(crate) fn pdfium() -> CoreResult<&'static Pdfium> {
             searched: searched.clone(),
         }),
     }
+}
+
+/// Charge un document PDF depuis des octets, de façon atomique vis-à-vis des autres
+/// chargements.
+///
+/// \[Apprentissage\] PDFium range le code d'erreur du dernier chargement dans une
+/// **variable globale** (`FPDF_GetLastError`). `pdfium-render` fait deux appels :
+/// charger, puis lire ce code si le chargement a échoué. La feature `thread_safe`
+/// verrouille chaque appel séparément, donc un chargement réussi sur un autre thread
+/// peut s'intercaler et effacer le code (« fichier invalide » devenait « erreur
+/// inconnue », vu en CI Linux/macOS). Ce `Mutex` rend la paire d'appels indivisible.
+/// `unwrap_or_else(|e| e.into_inner())` récupère le verrou même si un thread a paniqué
+/// en le tenant : il ne protège aucune donnée, seulement l'ordre des appels.
+pub(crate) fn load_bytes(
+    bytes: Vec<u8>,
+    password: Option<&str>,
+) -> CoreResult<PdfDocument<'static>> {
+    static LOAD_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = LOAD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(pdfium()?.load_pdf_from_byte_vec(bytes, password)?)
 }
 
 /// Charge la bibliothèque ; en cas d'échec, retourne la liste des dossiers essayés.

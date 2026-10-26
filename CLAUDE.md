@@ -74,6 +74,9 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
 
 - PDFium n'est pas thread-safe : ne jamais partager un `PdfDocument` entre threads sans la
   feature `thread_safe` ; ne pas réintroduire `Arc<Mutex<Document>>` hors de l'état Tauri.
+- `thread_safe` verrouille **chaque appel**, pas une séquence : l'initialisation passe par
+  `OnceLock::get_or_init` et tout chargement de document par `engine::load_bytes` (verrou),
+  car `FPDF_GetLastError` est une variable globale. Deux bugs réels de la CI du Lot 0.
 - Sous Windows, le protocole `mega://` est vu par le WebView comme `http://mega.localhost/…` ;
   la CSP (`tauri.conf.json`) autorise les deux formes. `convertFileSrc` percent-encode le chemin.
 - La DLL PDFium vient de `cargo xtask fetch-pdfium` (`vendor/pdfium/<triple>/`, non commitée).

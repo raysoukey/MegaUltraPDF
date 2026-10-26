@@ -66,10 +66,8 @@ fn pdf_text_string(text: &str) -> String {
 /// # Panics
 /// Si PDFium n'est pas disponible : ce générateur n'est utilisé que par des tests.
 pub fn blank_pdf(width_pt: f32, height_pt: f32) -> Vec<u8> {
-    let pdfium = engine::pdfium().expect("PDFium doit être disponible pour les tests");
-    let mut doc = pdfium
-        .load_pdf_from_byte_vec(minimal_pdf_with_title("vierge"), None)
-        .expect("squelette PDF valide");
+    let mut doc = engine::load_bytes(minimal_pdf_with_title("vierge"), None)
+        .expect("PDFium doit être disponible et le squelette PDF valide");
     doc.pages_mut()
         .create_page_at_end(PdfPagePaperSize::Custom(
             PdfPoints::new(width_pt),
@@ -88,8 +86,8 @@ pub fn sample_pdf(pages: u16, title: &str) -> Vec<u8> {
 }
 
 fn try_sample_pdf(pages: u16, title: &str) -> Result<Vec<u8>, PdfiumError> {
-    let pdfium = engine::pdfium().expect("PDFium doit être disponible pour les tests");
-    let mut doc = pdfium.load_pdf_from_byte_vec(minimal_pdf_with_title(title), None)?;
+    let mut doc = engine::load_bytes(minimal_pdf_with_title(title), None)
+        .expect("PDFium doit être disponible et le squelette PDF valide");
     let font = doc.fonts_mut().helvetica();
     for n in 1..=pages {
         let mut page = doc.pages_mut().create_page_at_end(PdfPagePaperSize::a4())?;

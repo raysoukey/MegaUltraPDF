@@ -26,16 +26,21 @@ const MAX_SCALE: f32 = 8.0;
 /// Une demande de page analysée depuis l'URL.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageRequest {
+    /// Identifiant du document dans le registre.
     pub id: DocId,
+    /// Index de page, à partir de 0.
     pub index: u16,
+    /// Échelle de rendu, déjà bornée à [`MIN_SCALE`, `MAX_SCALE`].
     pub scale: f32,
 }
 
 /// Pourquoi une URL n'est pas une demande de page valide.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ProtocolError {
+    /// Le chemin ne commence pas par `page/<id>/<index>`.
     #[error("route inconnue : {0}")]
     UnknownRoute(String),
+    /// `id`, `index` ou `scale` n'est pas un nombre valide.
     #[error("paramètre invalide : {0}")]
     BadParameter(&'static str),
 }

@@ -17,6 +17,7 @@ use clap::{Parser, Subcommand};
     about = "Outil en ligne de commande de MegaUltraPDF"
 )]
 pub struct Cli {
+    /// Sous-commande choisie par l'utilisateur.
     #[command(subcommand)]
     pub command: Command,
 }

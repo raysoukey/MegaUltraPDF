@@ -37,6 +37,7 @@ pub enum ErrorKind {
 }
 
 impl AppError {
+    /// Construit une erreur avec sa catégorie et un message déjà rédigé en français.
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         AppError {
             kind,

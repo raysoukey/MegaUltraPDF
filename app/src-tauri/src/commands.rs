@@ -18,14 +18,22 @@ use crate::registry::{DocId, DocumentRegistry};
 /// Ce que le frontend sait d'un document ouvert (reflété par `DocumentInfo` dans `api.ts`).
 #[derive(Debug, Serialize)]
 pub struct DocumentInfo {
+    /// Identifiant à renvoyer dans les commandes suivantes et dans les URL `mega://`.
     pub id: DocId,
+    /// Chemin du fichier tel qu'ouvert.
     pub path: String,
+    /// Titre des métadonnées, s'il existe.
     pub title: Option<String>,
+    /// Nombre de pages.
     pub page_count: u16,
+    /// Dimensions de chaque page en points, dans l'ordre.
     pub pages: Vec<PageSize>,
 }
 
 /// État partagé de l'application : le registre, protégé par un verrou.
+///
+/// Tauri exige `Send + Sync` pour tout état géré ; le `Mutex` le garantit et sérialise
+/// les accès venant des commandes et du protocole `mega://`.
 pub type SharedRegistry = Mutex<DocumentRegistry>;
 
 /// Verrouille le registre ; un verrou « empoisonné » (panique d'un autre thread) est

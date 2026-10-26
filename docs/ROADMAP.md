@@ -7,7 +7,7 @@ Légende : ✅ terminé · 🚧 en cours · ⬜ à venir. Démarrer un lot : `/l
 | Lot | Nom | Contenu | État |
 |---|---|---|---|
 | 0 | Fondations et environnement | Outillage, workspace Cargo, `xtask fetch-pdfium`, `mega-core` (ouverture, métadonnées, rendu), `mega-cli info/render`, coquille Tauri 2 + Svelte affichant la page 1, environnement Claude Code, CI | ✅ |
-| 1 | Lecteur | Ouverture (dialogue, glisser-déposer, argument, récents), mot de passe, rendu net à tout zoom avec cache et acteur PDFium, modes page/continu, navigation, vignettes, signets, recherche, calque de texte (sélection, copie), thème, raccourcis, onglets | ⬜ |
+| 1 | Lecteur | Ouverture (dialogue, glisser-déposer, argument, récents), mot de passe, rendu net à tout zoom avec cache et acteur PDFium, modes page/continu, navigation, vignettes, signets, recherche, calque de texte (sélection, copie), thème, raccourcis, onglets | 🚧 |
 | 2 | Pages et documents | Pivoter, supprimer, réordonner, extraire, insérer, fusionner, scinder, enregistrer (écriture atomique), annuler/rétablir (patron Command), CLI `merge/split/rotate/extract` | ⬜ |
 | 3 | Annotations | Surligner, souligner, barrer, note, texte libre, encre, formes, tampon ; propriétés ; panneau des annotations ; calque SVG | ⬜ |
 | 4 | Formulaires et signature visuelle | Champs AcroForm en champs HTML, remplissage, enregistrement, aplatir ; image ou dessin de signature | ⬜ |

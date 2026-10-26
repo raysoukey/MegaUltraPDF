@@ -13,5 +13,6 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [`thiserror` : la cause n'est pas le message](concepts/thiserror-source-vs-display.md)
 - [Ownership et emprunts](concepts/ownership-et-emprunts.md)
 - [`OnceLock` : initialiser une fois, lire partout](concepts/oncelock.md)
+- [`Mutex` et état partagé](concepts/mutex-et-etat-partage.md)
 
-_À venir : `mutex-et-etat-partage`, `iterateurs-et-fermetures`._
+_À venir : `iterateurs-et-fermetures`._

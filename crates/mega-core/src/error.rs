@@ -76,6 +76,22 @@ pub enum CoreError {
     /// Toute autre erreur remontée par PDFium, conservée sous forme de texte.
     #[error("Erreur interne de PDFium : {0}")]
     Pdfium(String),
+
+    /// L'identifiant ne correspond à aucun document ouvert (fermé ou jamais ouvert).
+    #[error("Document inconnu ({id}).")]
+    NotFound {
+        /// Identifiant demandé.
+        id: u32,
+    },
+
+    /// Le rendu demandé appartient à une génération périmée (zoom ou rotation changés
+    /// depuis) : il est abandonné sans travail. Le frontend ignore simplement la réponse.
+    #[error("Rendu annulé (génération périmée).")]
+    Cancelled,
+
+    /// Le thread de l'acteur PDFium s'est arrêté : plus aucune opération possible.
+    #[error("Le service PDF est arrêté.")]
+    ServiceStopped,
 }
 
 /// Raccourci pour `Result<T, CoreError>`, comme `io::Result` dans la bibliothèque standard.

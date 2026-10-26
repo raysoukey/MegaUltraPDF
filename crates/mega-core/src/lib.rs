@@ -35,6 +35,7 @@ pub mod links;
 pub mod outline;
 pub mod properties;
 pub mod render;
+pub mod service;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod text;

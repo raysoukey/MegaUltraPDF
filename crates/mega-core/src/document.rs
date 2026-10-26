@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use pdfium_render::prelude::{PdfDocument, PdfDocumentMetadataTagType, PdfPageIndex};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
@@ -12,7 +12,7 @@ use crate::error::{CoreError, CoreResult};
 /// Dimensions d'une page en points PDF (1 point = 1/72 de pouce).
 ///
 /// Dérive `Serialize` pour traverser la frontière Rust → TypeScript telle quelle.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PageSize {
     /// Largeur en points.
     pub width_pt: f32,

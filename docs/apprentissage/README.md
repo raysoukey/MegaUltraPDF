@@ -9,5 +9,7 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 
 ## Fiches concept (`/concept <nom>` pour en ajouter une)
 
-_(aucune pour l'instant ; candidats : `result-et-operateur-point-d-interrogation`, `ownership-et-emprunts`,
-`oncelock`, `thiserror-vs-anyhow`, `traits-et-derive`, `mutex-et-etat-partage`)_
+- [`Result` et l'opérateur `?`](concepts/result-et-operateur-point-d-interrogation.md)
+
+_À venir : `ownership-et-emprunts`, `thiserror-source-vs-display`, `oncelock`,
+`mutex-et-etat-partage`, `iterateurs-et-fermetures`._

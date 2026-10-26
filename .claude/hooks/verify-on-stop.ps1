@@ -17,8 +17,19 @@ if (Test-Path $cargoBin) { $env:Path = "$cargoBin;" + $env:Path }
 $changed = @(git status --porcelain 2>$null | ForEach-Object { ($_ -replace '^...', '') -replace '\\', '/' })
 if ($changed.Count -eq 0) { exit 0 }
 
-$rust = @($changed | Where-Object { $_ -match '\.rs$|Cargo\.toml$' })
-$front = @($changed | Where-Object { $_ -match '^app/src/|^app/package\.json$' })
+# Securite : si un fichier qui pilote la compilation ou les scripts a change (build.rs,
+# Cargo.toml, config cargo, package.json, configs Vite/Svelte, .npmrc), le hook n'execute
+# rien automatiquement : il demande une verification manuelle (/verif) apres relecture.
+$buildConfig = @($changed | Where-Object {
+  $_ -match '(^|/)build\.rs$|(^|/)Cargo\.toml$|^\.cargo/|^rust-toolchain\.toml$|(^|/)package\.json$|^app/(vite|svelte|vitest)\.config\.|^app/\.npmrc$|^app/pnpm-workspace\.yaml$|^\.claude/'
+})
+if ($buildConfig.Count -gt 0) {
+  Write-Output ("[INFO] Fichiers de configuration modifies (" + ($buildConfig -join ', ') + ") : le hook Stop n'execute rien automatiquement. Relire ces fichiers puis lancer /verif.")
+  exit 0
+}
+
+$rust = @($changed | Where-Object { $_ -match '\.rs$' })
+$front = @($changed | Where-Object { $_ -match '^app/src/' })
 if ($rust.Count -eq 0 -and $front.Count -eq 0) { exit 0 }
 
 $script:failures = @()

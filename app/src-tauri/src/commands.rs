@@ -18,14 +18,22 @@ use crate::registry::{DocId, DocumentRegistry};
 /// Ce que le frontend sait d'un document ouvert (reflété par `DocumentInfo` dans `api.ts`).
 #[derive(Debug, Serialize)]
 pub struct DocumentInfo {
+    /// Identifiant à renvoyer dans les commandes suivantes et dans les URL `mega://`.
     pub id: DocId,
+    /// Chemin du fichier tel qu'ouvert.
     pub path: String,
+    /// Titre des métadonnées, s'il existe.
     pub title: Option<String>,
+    /// Nombre de pages.
     pub page_count: u16,
+    /// Dimensions de chaque page en points, dans l'ordre.
     pub pages: Vec<PageSize>,
 }
 
 /// État partagé de l'application : le registre, protégé par un verrou.
+///
+/// Tauri exige `Send + Sync` pour tout état géré ; le `Mutex` le garantit et sérialise
+/// les accès venant des commandes et du protocole `mega://`.
 pub type SharedRegistry = Mutex<DocumentRegistry>;
 
 /// Verrouille le registre ; un verrou « empoisonné » (panique d'un autre thread) est
@@ -60,7 +68,12 @@ pub fn open_document(
 /// Ferme le document `id`.
 #[tauri::command]
 pub fn close_document(registry: State<'_, SharedRegistry>, id: DocId) -> Result<(), AppError> {
-    if lock_registry(&registry)?.remove(id) {
+    close_in(&registry, id)
+}
+
+/// Logique de `close_document`, séparée de la commande pour être testable sans Tauri.
+pub fn close_in(registry: &SharedRegistry, id: DocId) -> Result<(), AppError> {
+    if lock_registry(registry)?.remove(id) {
         Ok(())
     } else {
         Err(AppError::new(
@@ -100,6 +113,13 @@ mod tests {
 
     fn fixture(name: &str) -> String {
         format!("{}/../../fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    #[test]
+    fn close_document_unknown_id_is_not_found() {
+        let registry: SharedRegistry = Mutex::new(DocumentRegistry::default());
+        let err = close_in(&registry, 42).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NotFound);
     }
 
     #[test]

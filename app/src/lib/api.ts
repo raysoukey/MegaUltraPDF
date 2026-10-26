@@ -22,7 +22,7 @@ export interface DocumentInfo {
 
 /** Erreur renvoyée par le backend (miroir de `AppError`). */
 export interface AppError {
-  kind: 'password_required' | 'invalid_pdf' | 'not_found' | 'io' | 'internal';
+  kind: 'password_required' | 'wrong_password' | 'invalid_pdf' | 'not_found' | 'io' | 'internal';
   message: string;
 }
 

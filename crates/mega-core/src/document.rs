@@ -66,7 +66,19 @@ impl Document {
     /// Charge un PDF depuis des octets déjà en mémoire.
     pub fn from_bytes(bytes: Vec<u8>, password: Option<&str>) -> CoreResult<Document> {
         let guard = engine::guard();
-        let inner = engine::load_bytes(&guard, bytes, password)?;
+        let inner = match engine::load_bytes(&guard, bytes, password) {
+            // PDFium ne distingue pas « pas de mot de passe » de « mauvais mot de passe ».
+            Err(CoreError::PasswordRequired) if password.is_some() => {
+                return Err(CoreError::WrongPassword);
+            }
+            other => other?,
+        };
+        // Invariant du crate : un index de page tient dans un `u16` (voir `count_unlocked`).
+        if inner.pages().len() > i32::from(u16::MAX) {
+            return Err(CoreError::InvalidPdf(
+                "plus de 65 535 pages, limite de MegaUltraPDF".to_string(),
+            ));
+        }
         Ok(Document {
             inner: Some(inner),
             path: None,
@@ -119,6 +131,9 @@ impl Document {
     }
 
     /// Nombre de pages, **jeton déjà pris par l'appelant**.
+    ///
+    /// `from_bytes` refuse tout document de plus de `u16::MAX` pages, donc la conversion
+    /// ne peut pas échouer ; le repli sur `u16::MAX` n'est qu'une ceinture de sécurité.
     pub(crate) fn count_unlocked(&self) -> u16 {
         u16::try_from(self.inner().pages().len()).unwrap_or(u16::MAX)
     }

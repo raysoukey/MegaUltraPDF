@@ -18,7 +18,8 @@ cargo doc -p mega-core --no-deps
 pnpm --dir app check && pnpm --dir app lint && pnpm --dir app test && pnpm --dir app format:check
 ```
 
-La CI (`.github/workflows/ci.yml`) exécute exactement ces commandes sur Windows, Linux et macOS.
+La CI (`.github/workflows/ci.yml`) exécute ces commandes sur Windows, Linux et macOS,
+précédées de `cargo xtask fetch-pdfium` et suivies de `pnpm --dir app tauri build --debug --no-bundle`.
 
 ## Conventions
 

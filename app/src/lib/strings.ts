@@ -11,6 +11,7 @@ export const fr = {
   pageOf: (n: number, total: number) => `Page ${n} / ${total}`,
   openError: (message: string) => `Impossible d'ouvrir le document : ${message}`,
   passwordRequired: 'Ce document est protégé par un mot de passe.',
+  wrongPassword: 'Mot de passe incorrect.',
 } as const;
 
 export const t = fr;

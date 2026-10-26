@@ -75,6 +75,14 @@ pub fn verify_sha256(bytes: &[u8], expected_hex: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Fichier marqueur de version, **par cible** : `vendor/pdfium/<target>/VERSION`.
+///
+/// Un marqueur unique pour toutes les cibles faisait croire qu'une cible était à jour
+/// dès qu'une autre venait d'être téléchargée avec le nouveau tag.
+pub fn version_marker_path(vendor_dir: &Path, target: &str) -> PathBuf {
+    vendor_dir.join(target).join("VERSION")
+}
+
 /// Nom du fichier de bibliothèque (dernier segment du chemin dans l'archive).
 fn library_file_name(asset: &Asset) -> &str {
     asset
@@ -93,12 +101,18 @@ pub fn fetch(workspace_root: &Path, target: &str) -> anyhow::Result<PathBuf> {
     let vendor_dir = workspace_root.join("vendor").join("pdfium");
     let dest_dir = vendor_dir.join(target);
     let dest = dest_dir.join(library_file_name(asset));
-    let version_file = vendor_dir.join("VERSION");
+    let version_file = version_marker_path(&vendor_dir, target);
 
     let already_present = dest.exists()
         && std::fs::read_to_string(&version_file)
             .map(|v| v.trim() == tag)
             .unwrap_or(false);
+    // Ancien emplacement (partagé entre cibles, avant la révision du Lot 0) : on l'ignore,
+    // ce qui force un retéléchargement unique, puis on le supprime.
+    let legacy_marker = vendor_dir.join("VERSION");
+    if legacy_marker.exists() {
+        let _ = std::fs::remove_file(&legacy_marker);
+    }
     if already_present {
         println!("PDFium {tag} déjà présent : {}", dest.display());
         return Ok(dest);
@@ -176,5 +190,20 @@ mod tests {
             )
             .is_ok()
         );
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn version_marker_is_per_target() {
+        let vendor = Path::new("vendor/pdfium");
+        let a = version_marker_path(vendor, "x86_64-pc-windows-msvc");
+        let b = version_marker_path(vendor, "aarch64-apple-darwin");
+        assert_ne!(a, b);
+        assert!(a.starts_with(vendor.join("x86_64-pc-windows-msvc")));
+        assert!(a.ends_with("VERSION"));
     }
 }

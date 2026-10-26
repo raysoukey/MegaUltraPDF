@@ -5,6 +5,7 @@
 //! et un protocole `mega://` qui sert les pages rendues. Aucune logique PDF ici.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 mod commands;
 mod error;

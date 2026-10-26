@@ -81,7 +81,9 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
 - Sous Windows, le protocole `mega://` est vu par le WebView comme `http://mega.localhost/…` ;
   la CSP (`tauri.conf.json`) autorise les deux formes. `convertFileSrc` percent-encode le chemin.
 - La DLL PDFium vient de `cargo xtask fetch-pdfium` (`vendor/pdfium/<triple>/`, non commitée).
-  Sans elle : `CoreError::LibraryNotFound`.
+  Sans elle : `CoreError::LibraryNotFound`. **En profil `release`**, ce dossier n'est plus
+  cherché (`cfg!(debug_assertions)`) : la DLL doit être à côté de l'exécutable ou désignée
+  par `MEGA_PDFIUM_DIR` (le bundler du Lot 7 s'en chargera).
 - `pdfium-render` 0.9 : `PdfPageIndex` est `i32`, pas de setter de métadonnées
   (voir `mega-core/src/testing.rs` pour le squelette PDF écrit à la main).
 - Les métadonnées d'un PDF sont du texte PDFDocEncoding ou UTF-16BE+BOM, jamais de l'UTF-8 brut.

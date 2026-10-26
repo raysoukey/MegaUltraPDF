@@ -22,14 +22,22 @@ pub struct AppError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorKind {
+    /// Document chiffré, aucun mot de passe fourni.
     PasswordRequired,
+    /// Document chiffré, mot de passe fourni mais refusé.
+    WrongPassword,
+    /// Le fichier n'est pas un PDF lisible (ou le rendu demandé est démesuré).
     InvalidPdf,
+    /// Document ou page inconnus.
     NotFound,
+    /// Fichier introuvable ou inaccessible.
     Io,
+    /// Défaillance interne (PDFium absente, verrou indisponible…).
     Internal,
 }
 
 impl AppError {
+    /// Construit une erreur avec sa catégorie et un message déjà rédigé en français.
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         AppError {
             kind,
@@ -42,6 +50,7 @@ impl From<CoreError> for AppError {
     fn from(e: CoreError) -> Self {
         let kind = match &e {
             CoreError::PasswordRequired => ErrorKind::PasswordRequired,
+            CoreError::WrongPassword => ErrorKind::WrongPassword,
             CoreError::InvalidPdf(_) => ErrorKind::InvalidPdf,
             CoreError::PageOutOfRange { .. } => ErrorKind::NotFound,
             CoreError::Io(_) => ErrorKind::Io,
@@ -68,6 +77,17 @@ impl Serialize for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrong_password_has_its_own_kind() {
+        let e = AppError::from(CoreError::WrongPassword);
+        assert_eq!(e.kind, ErrorKind::WrongPassword);
+        assert!(
+            serde_json::to_string(&e)
+                .unwrap()
+                .contains(r#""kind":"wrong_password""#)
+        );
+    }
 
     #[test]
     fn serializes_as_kind_and_message() {

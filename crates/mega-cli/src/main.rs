@@ -5,6 +5,7 @@
 //! et de banc d'essai pour `mega-core` sans passer par l'interface graphique.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 mod cli;
 mod commands;

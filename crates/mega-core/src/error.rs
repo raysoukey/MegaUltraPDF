@@ -27,9 +27,16 @@ pub enum CoreError {
         searched: Vec<PathBuf>,
     },
 
-    /// Le document est chiffré et aucun mot de passe valide n'a été fourni.
+    /// Le document est chiffré et aucun mot de passe n'a été fourni.
     #[error("Ce document est protégé par un mot de passe.")]
     PasswordRequired,
+
+    /// Le document est chiffré et le mot de passe fourni ne l'ouvre pas.
+    ///
+    /// PDFium renvoie le même code dans les deux cas ; c'est `Document::from_bytes` qui
+    /// distingue « aucun mot de passe » de « mauvais mot de passe ».
+    #[error("Mot de passe incorrect.")]
+    WrongPassword,
 
     /// Les octets fournis ne forment pas un PDF lisible.
     #[error("Ce fichier n'est pas un PDF valide ({0}).")]

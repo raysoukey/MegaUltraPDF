@@ -33,16 +33,22 @@ pub fn library_search_paths() -> Vec<PathBuf> {
     {
         paths.push(exe_dir);
     }
-    // `CARGO_MANIFEST_DIR` vaut `<racine>/crates/mega-core` ; on remonte de deux niveaux.
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    paths.push(
-        workspace_root
-            .join("vendor")
-            .join("pdfium")
-            .join(env!("MEGA_TARGET_TRIPLE")),
-    );
+    // En développement seulement : `vendor/pdfium/<triple>/` à la racine du workspace
+    // (`CARGO_MANIFEST_DIR` vaut `<racine>/crates/mega-core`, on remonte de deux niveaux).
+    // \[Apprentissage\] `cfg!(debug_assertions)` vaut `true` en profil `dev`, `false` en
+    // `release` : le chemin absolu de la machine de compilation n'est ainsi jamais embarqué
+    // dans un binaire distribué (il apparaîtrait dans le message « bibliothèque introuvable »).
+    if cfg!(debug_assertions) {
+        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
+        paths.push(
+            workspace_root
+                .join("vendor")
+                .join("pdfium")
+                .join(env!("MEGA_TARGET_TRIPLE")),
+        );
+    }
     paths
 }
 
@@ -58,6 +64,11 @@ pub fn library_search_paths() -> Vec<PathBuf> {
 ///
 /// Le résultat d'un échec de chargement est lui aussi mémorisé : si la bibliothèque
 /// manque, il faut la récupérer (`cargo xtask fetch-pdfium`) puis relancer le programme.
+///
+/// Note : `pdfium-render` garde lui-même ses *bindings* (les pointeurs de fonctions de la
+/// DLL) dans un `OnceLock` global (voir `Pdfium::new` dans la source de la crate). Notre
+/// `OnceLock` garantit donc en plus l'unicité de l'appel d'initialisation de PDFium, qui
+/// n'est pas réentrant. Fiche : `docs/apprentissage/concepts/oncelock.md`.
 pub(crate) fn pdfium() -> CoreResult<&'static Pdfium> {
     static PDFIUM: OnceLock<Result<Pdfium, Vec<PathBuf>>> = OnceLock::new();
     match PDFIUM.get_or_init(load) {
@@ -126,9 +137,21 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(debug_assertions)]
     fn search_paths_end_with_vendor_dir_for_this_target() {
         let last = library_search_paths().pop().unwrap();
         assert!(last.ends_with(env!("MEGA_TARGET_TRIPLE")));
         assert!(last.to_string_lossy().contains("vendor"));
+    }
+
+    /// En release (`cargo test --release -p mega-core engine`), aucun chemin de la machine
+    /// de compilation ne doit apparaître.
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn release_search_paths_do_not_embed_build_paths() {
+        for p in library_search_paths() {
+            let s = p.to_string_lossy();
+            assert!(!s.contains("crates") && !s.contains("vendor"), "{s}");
+        }
     }
 }

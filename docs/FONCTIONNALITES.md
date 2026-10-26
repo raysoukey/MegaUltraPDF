@@ -32,16 +32,16 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 
 ## Pages et documents
 
-- [ ] Pivoter des pages (enregistré dans le fichier) [2]
-- [ ] Supprimer des pages [2]
-- [ ] Réordonner par glisser-déposer des vignettes [2]
-- [ ] Extraire des pages vers un nouveau fichier [2]
-- [ ] Insérer une page vide ; insérer des pages d'un autre PDF [2]
-- [ ] Fusionner plusieurs fichiers [2]
-- [ ] Scinder : par plages, toutes les N pages, par signets [2]
-- [ ] Enregistrer / Enregistrer sous (écriture atomique), indicateur « modifié », confirmation à la fermeture [2]
-- [ ] Annuler / Rétablir pour toute édition [2]
-- [ ] CLI : `merge`, `split`, `rotate`, `extract`, `info`, `render` [0, 2]
+- [x] Pivoter des pages (enregistré dans le fichier) [2]
+- [x] Supprimer des pages [2]
+- [x] Réordonner par glisser-déposer des vignettes [2]
+- [x] Extraire des pages vers un nouveau fichier [2]
+- [x] Insérer une page vide ; insérer des pages d'un autre PDF [2]
+- [x] Fusionner plusieurs fichiers [2]
+- [x] Scinder : par plages, toutes les N pages, par signets [2]
+- [x] Enregistrer / Enregistrer sous (écriture atomique), indicateur « modifié », confirmation à la fermeture [2]
+- [x] Annuler / Rétablir pour toute édition [2]
+- [x] CLI : `merge`, `split`, `rotate`, `extract`, `info`, `render` [0, 2]
 
 ## Annotations
 

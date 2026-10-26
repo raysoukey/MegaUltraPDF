@@ -1,0 +1,74 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build*)",
+      "Bash(cargo check*)",
+      "Bash(cargo test*)",
+      "Bash(cargo clippy*)",
+      "Bash(cargo fmt*)",
+      "Bash(cargo doc*)",
+      "Bash(cargo run -p mega-cli*)",
+      "Bash(cargo xtask fetch-pdfium*)",
+      "Bash(cargo xtask gen-fixtures*)",
+      "Bash(cargo tree*)",
+      "Bash(cargo metadata*)",
+      "Bash(rustup show*)",
+      "Bash(rustup component list*)",
+      "Bash(pnpm --dir app install*)",
+      "Bash(pnpm --dir app check*)",
+      "Bash(pnpm --dir app lint*)",
+      "Bash(pnpm --dir app test*)",
+      "Bash(pnpm --dir app format*)",
+      "Bash(pnpm --dir app build*)",
+      "Bash(pnpm --dir app tauri dev*)",
+      "Bash(pnpm --dir app tauri build*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr create*)",
+      "Bash(gh run list*)",
+      "Bash(gh run view*)",
+      "Bash(gh run watch*)"
+    ],
+    "deny": [
+      "Bash(cargo install*)",
+      "Bash(cargo publish*)",
+      "Bash(pnpm dlx*)",
+      "Bash(pnpm exec*)",
+      "Bash(pnpm add*)",
+      "Bash(pnpm publish*)",
+      "Bash(rustup run*)",
+      "Bash(rustup toolchain*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/hooks/format-on-edit.ps1",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/hooks/verify-on-stop.ps1",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}

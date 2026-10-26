@@ -1,0 +1,23 @@
+[package]
+name = "mega-core"
+description = "Cœur de MegaUltraPDF : toute la logique PDF, sans interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[features]
+# Génération de PDF d'exemple pour les tests (utilisée aussi par xtask et l'app en tests).
+testing = []
+
+[dependencies]
+pdfium-render = "0.9.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+mega-core = { path = ".", features = ["testing"] }

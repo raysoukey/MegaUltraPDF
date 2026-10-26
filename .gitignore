@@ -1,1 +1,8 @@
 .remember/
+.superpowers/
+/target
+/vendor/pdfium/
+node_modules/
+app/dist/
+app/src-tauri/gen/
+.DS_Store

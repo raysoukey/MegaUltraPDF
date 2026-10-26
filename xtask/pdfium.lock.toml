@@ -1,0 +1,23 @@
+# Version de PDFium épinglée pour MegaUltraPDF.
+# Binaires précompilés : https://github.com/bblanchon/pdfium-binaries (licence BSD-3).
+# La version 7881 est celle que cible l'API de pdfium-render 0.9.x (feature `pdfium_latest`).
+# Sommes SHA-256 calculées le 2026-10-26 sur les archives téléchargées.
+tag = "chromium/7881"
+
+[[asset]]
+targets = ["x86_64-pc-windows-msvc"]
+file_name = "pdfium-win-x64.tgz"
+sha256 = "73cc0de638ac2095e7445bf56a38200a5b7c7ca0e9f4ba144598f2457377ac08"
+library_path_in_archive = "bin/pdfium.dll"
+
+[[asset]]
+targets = ["x86_64-unknown-linux-gnu"]
+file_name = "pdfium-linux-x64.tgz"
+sha256 = "1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d"
+library_path_in_archive = "lib/libpdfium.so"
+
+[[asset]]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+file_name = "pdfium-mac-univ.tgz"
+sha256 = "df451a413c3609585e84a4a91110a9bc889cff05fe3b2db0ed817c9e90c3f7d3"
+library_path_in_archive = "lib/libpdfium.dylib"

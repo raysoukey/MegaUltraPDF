@@ -80,10 +80,20 @@ function modifiers(step) {
   return (step.alt ? 1 : 0) | (step.ctrl ? 2 : 0) | (step.shift ? 8 : 0);
 }
 
+const VIRTUAL_KEYS = { Enter: 13, Escape: 27, Home: 36, End: 35, PageUp: 33, PageDown: 34, F1: 112, F3: 114 };
+
 async function pressKey(step) {
   const key = step.key;
-  const text = key.length === 1 ? key : undefined;
-  const base = { key, modifiers: modifiers(step), text, unmodifiedText: text };
+  // Entrée doit porter un texte ("\r") pour déclencher la soumission implicite des formulaires.
+  const text = key.length === 1 ? key : key === 'Enter' ? '\r' : undefined;
+  const base = {
+    key,
+    code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+    windowsVirtualKeyCode: VIRTUAL_KEYS[key] ?? (key.length === 1 ? key.toUpperCase().charCodeAt(0) : undefined),
+    modifiers: modifiers(step),
+    text,
+    unmodifiedText: text,
+  };
   await send('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base });
   await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
 }

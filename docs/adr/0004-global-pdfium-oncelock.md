@@ -16,7 +16,10 @@ application Tauri exécute ses commandes sur plusieurs threads.
 - La feature `thread_safe` de `pdfium-render` (activée par défaut) sérialise les appels à
   PDFium derrière un verrou interne ; en 0.9 tous les objets sont `Send + Sync`.
 - Côté Tauri, le registre des documents vit dans `State<Mutex<DocumentRegistry>>` ; chaque
-  commande et chaque requête `mega://` verrouille le temps strict de son travail.
+  commande et chaque requête `mega://` le verrouille pendant toute sa durée (une requête
+  `mega://` tient le verrou du registre pendant le rendu et l'encodage PNG, car la référence
+  au document emprunte le guard). Les commandes non-`async` s'exécutent sur le thread
+  principal ; le protocole répond sur un autre thread : le `Mutex` est nécessaire.
 - Le **patron acteur** (un thread travailleur qui possède tout l'état PDFium, dialogue par
   canaux, file de priorité des rendus, cache LRU) est prévu au **Lot 1** avec le rendu
   asynchrone. Le Lot 0 reste volontairement simple pour l'apprentissage.

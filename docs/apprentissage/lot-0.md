@@ -60,10 +60,14 @@ JSON ; Tauri s'en sert pour livrer les valeurs au frontend. `AppError` implémen
 
 ### 6. État partagé entre threads : `Mutex` et `State` Tauri
 
-Les commandes Tauri peuvent s'exécuter en parallèle. Le registre est donc dans un
-`Mutex<DocumentRegistry>` enregistré avec `.manage(...)` ; chaque commande le verrouille le
-temps strict de son travail. Un verrou « empoisonné » est transformé en erreur plutôt qu'en
-panique.
+Les commandes Tauri **non-`async`** (les nôtres, pour l'instant) s'exécutent sur le thread
+principal, l'une après l'autre ; mais le protocole `mega://` répond sur un autre thread, et
+les commandes `async` du Lot 1 pourront tourner ailleurs. Tauri exige d'ailleurs que tout
+état partagé soit `Send + Sync`. Le registre est donc dans un `Mutex<DocumentRegistry>`
+enregistré avec `.manage(...)` ; chaque commande, et chaque requête `mega://`, le
+verrouille pendant **toute** sa durée (dans `protocol.rs`, le `get()` emprunte le guard,
+donc le verrou reste tenu pendant le rendu et l'encodage PNG). Un verrou « empoisonné »
+est transformé en erreur plutôt qu'en panique.
 
 - À lire : `app/src-tauri/src/commands.rs` (`lock_registry`, `open_document`),
   `app/src-tauri/src/lib.rs` (`.manage`).
@@ -137,7 +141,9 @@ sérialisable), 0004 (`Pdfium` global en `OnceLock`, acteur reporté au Lot 1).
 1. Dans `crates/mega-core/src/document.rs`, pourquoi `open` appelle-t-il `from_bytes` puis
    modifie `doc.path` ensuite, plutôt que de construire le `Document` directement ?
 2. Dans `app/src-tauri/src/protocol.rs`, que se passe-t-il si deux requêtes `mega://` arrivent
-   en même temps ? Où est le verrou, et combien de temps est-il tenu ?
+   en même temps ? Où est le verrou, et combien de temps est-il tenu ? (Indice : suivez la
+   variable `guard` dans `respond` jusqu'à la fin de la fonction, et comptez les verrous :
+   celui du registre, puis celui de PDFium dans `render_page`.)
 3. Dans `crates/mega-core/src/error.rs`, retirez mentalement `#[from]` sur `Io` : quelles lignes
    du projet ne compileraient plus, et pourquoi ?
 

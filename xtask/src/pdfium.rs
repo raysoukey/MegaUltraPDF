@@ -44,7 +44,7 @@ struct Lock {
 
 /// Désérialise le verrou une seule fois, à la première demande.
 ///
-/// [Apprentissage] `OnceLock` : une valeur initialisée paresseusement, une seule fois,
+/// \[Apprentissage\] `OnceLock` : une valeur initialisée paresseusement, une seule fois,
 /// sûre entre threads. On obtient une référence `'static` sans variable mutable globale.
 /// Le même outil sert dans `mega-core` pour l'instance PDFium.
 fn lock() -> &'static Lock {

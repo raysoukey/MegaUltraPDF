@@ -5,15 +5,15 @@
     closeDocument,
     isAppError,
     openDocument,
-    pickPdfFile,
+    pickPdfFiles,
     startupFile,
-    type DocumentInfo,
+    type DocumentSummary,
   } from '$lib/api';
   import PageImage from '$lib/components/PageImage.svelte';
   import { t } from '$lib/strings';
 
   // État de la vue (runes Svelte 5) : le document courant et l'erreur à afficher.
-  let doc = $state<DocumentInfo | null>(null);
+  let doc = $state<DocumentSummary | null>(null);
   let error = $state<string | null>(null);
   let busy = $state(false);
 
@@ -43,7 +43,7 @@
   }
 
   async function onOpen() {
-    const path = await pickPdfFile();
+    const [path] = await pickPdfFiles();
     if (path) await openPath(path);
   }
 

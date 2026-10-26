@@ -14,7 +14,15 @@ describe('pageUrl', () => {
     expect(pagePath(3, 0)).toBe('page/3/0');
   });
 
-  it('appends the scale query', () => {
-    expect(pageUrl(3, 0, 2)).toBe('http://mega.localhost/page%2F3%2F0?scale=2');
+  it('appends scale, rotation, generation and priority', () => {
+    expect(pageUrl(3, 0, 2, 'cw90', 5, 'thumbnail')).toBe(
+      'http://mega.localhost/page%2F3%2F0?scale=2&rot=90&gen=5&prio=thumbnail',
+    );
+  });
+
+  it('defaults to upright, generation 0, visible', () => {
+    expect(pageUrl(3, 0, 1.5)).toBe(
+      'http://mega.localhost/page%2F3%2F0?scale=1.5&rot=0&gen=0&prio=visible',
+    );
   });
 });

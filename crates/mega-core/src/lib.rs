@@ -36,6 +36,7 @@
 )]
 
 pub mod annotations;
+pub mod attachments;
 pub mod cleanup;
 pub mod content;
 pub mod document;
@@ -46,6 +47,7 @@ pub mod export;
 pub mod forms;
 pub mod geometry;
 pub mod links;
+pub mod optimize;
 pub mod outline;
 pub mod overlay;
 pub mod pages;
@@ -61,6 +63,7 @@ pub mod text;
 pub use annotations::{
     Annotation, AnnotationKind, AnnotationPatch, Color, Geometry, NewAnnotation, Style,
 };
+pub use attachments::Attachment;
 pub use content::redact::RedactReport;
 pub use content::{FontFamily, ObjectKind, PageObject, TextStyle};
 pub use document::{Document, PageSize};
@@ -71,6 +74,7 @@ pub use forms::{
 };
 pub use geometry::{PageFrame, Rect, Rotation};
 pub use links::{LinkTarget, PageLink};
+pub use optimize::{OptimizeOptions, OptimizeReport};
 pub use outline::OutlineNode;
 pub use overlay::{Corner, CropSpec, PageNumbering, Watermark};
 pub use pagespec::PageSpec;

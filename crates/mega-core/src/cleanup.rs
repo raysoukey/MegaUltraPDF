@@ -53,7 +53,7 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
 }
 
 /// Vrai si `out` se relit comme un PDF non vide ayant encore `pages_before` pages.
-fn rewrite_is_sane(pages_before: usize, out: &[u8]) -> bool {
+pub(crate) fn rewrite_is_sane(pages_before: usize, out: &[u8]) -> bool {
     match Document::load_mem(out) {
         Ok(reloaded) => {
             reloaded.get_pages().len() == pages_before && reloaded.trailer.get(b"Root").is_ok()

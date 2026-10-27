@@ -198,6 +198,21 @@ pub enum EditCommand {
     },
     /// Retire la protection (document ouvert avec son mot de passe).
     Unprotect,
+    /// Optimise le document (élagage, compression, images).
+    Optimize {
+        /// Réglages.
+        options: crate::optimize::OptimizeOptions,
+    },
+    /// Joint un fichier au document.
+    AddAttachment {
+        /// Chemin du fichier à joindre.
+        path: String,
+    },
+    /// Retire une pièce jointe.
+    DeleteAttachment {
+        /// Position dans la liste des pièces jointes.
+        index: u16,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -269,6 +284,15 @@ impl Command for EditCommand {
             EditCommand::SetMetadata { .. } => "Modifier les métadonnées".to_string(),
             EditCommand::Protect { .. } => "Protéger le document".to_string(),
             EditCommand::Unprotect => "Retirer la protection".to_string(),
+            EditCommand::Optimize { .. } => "Optimiser".to_string(),
+            EditCommand::AddAttachment { path } => format!(
+                "Joindre : {}",
+                Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone())
+            ),
+            EditCommand::DeleteAttachment { .. } => "Retirer la pièce jointe".to_string(),
         }
     }
 
@@ -303,6 +327,11 @@ impl Command for EditCommand {
             EditCommand::Watermark { spec } => Some(pages_label("Filigraner", &spec.pages, doc)),
             EditCommand::PageNumbers { spec } => Some(pages_label("Numéroter", &spec.pages, doc)),
             EditCommand::CropPages { spec } => Some(pages_label("Recadrer", &spec.pages, doc)),
+            EditCommand::DeleteAttachment { index } => doc
+                .attachments()
+                .ok()
+                .and_then(|a| a.into_iter().find(|a| a.index == *index))
+                .map(|a| format!("Retirer la pièce jointe : {}", a.name)),
             _ => None,
         };
         label.unwrap_or_else(|| self.label())
@@ -363,6 +392,9 @@ impl Command for EditCommand {
             EditCommand::SetMetadata { patch } => doc.set_metadata(patch),
             EditCommand::Protect { protection } => doc.protect(protection),
             EditCommand::Unprotect => doc.unprotect(),
+            EditCommand::Optimize { options } => doc.optimize(options).map(|_| ()),
+            EditCommand::AddAttachment { path } => doc.add_attachment(Path::new(path)),
+            EditCommand::DeleteAttachment { index } => doc.delete_attachment(*index),
         }
     }
 }

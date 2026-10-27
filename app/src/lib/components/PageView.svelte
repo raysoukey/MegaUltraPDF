@@ -8,6 +8,7 @@
   import AnnotationLayer from './AnnotationLayer.svelte';
   import FormLayer from './FormLayer.svelte';
   import LinkLayer from './LinkLayer.svelte';
+  import ObjectLayer from './ObjectLayer.svelte';
   import TextLayer from './TextLayer.svelte';
 
   let {
@@ -102,6 +103,7 @@
     <TextLayer {doc} {index} />
     <FormLayer {doc} {index} />
     <AnnotationLayer {doc} {index} />
+    <ObjectLayer {doc} {index} />
   {/if}
 </div>
 

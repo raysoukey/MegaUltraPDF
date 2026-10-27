@@ -11,9 +11,22 @@
   import { saveSettings, settings } from '$lib/state/settings.svelte';
   import { currentStyle, setStamp, setTool, STAMPS, toolState } from '$lib/state/tools.svelte';
   import { t } from '$lib/strings';
+  import ContentToolbar from './ContentToolbar.svelte';
   import StylePicker from './StylePicker.svelte';
 
-  let { doc, onedit }: { doc: OpenDoc; onedit: () => void } = $props();
+  let {
+    doc,
+    onedit,
+    onwatermark,
+    onnumbering,
+    oncrop,
+  }: {
+    doc: OpenDoc;
+    onedit: () => void;
+    onwatermark: () => void;
+    onnumbering: () => void;
+    oncrop: () => void;
+  } = $props();
 
   const TOOLS: { tool: Tool; glyph: string; key: string }[] = [
     { tool: 'select', glyph: '⬚', key: 'Échap' },
@@ -79,6 +92,7 @@
   <div class="group">
     <StylePicker />
   </div>
+  <ContentToolbar {doc} {onwatermark} {onnumbering} {oncrop} />
   <div class="group right">
     <button
       type="button"

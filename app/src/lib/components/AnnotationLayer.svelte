@@ -3,6 +3,7 @@
   import type { Annotation, Rect } from '$lib/api';
   import { handlesFor, hitTest, noteIconRect, resize, type HandleId } from '$lib/logic/annotations';
   import { cssPointToPdf, pdfRectToCss, type CssRect } from '$lib/logic/geometry';
+  import { isContentTool } from '$lib/logic/content';
   import {
     beginDraft,
     extendDraft,
@@ -43,6 +44,8 @@
   });
 
   const drawing = $derived(isDrawingTool(toolState.tool));
+  // Sous un outil de contenu, le calque d'annotation laisse passer tous les gestes.
+  const passive = $derived(isContentTool(toolState.tool));
   const selected = $derived.by(() => {
     const sel = doc.selectedAnnotation;
     if (!sel || sel.page !== index) return null;
@@ -258,7 +261,7 @@
 <div
   class="annotation-layer"
   class:drawing
-  class:selecting={!drawing}
+  class:selecting={!drawing && !passive}
   bind:this={root}
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}

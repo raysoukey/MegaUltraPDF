@@ -11,8 +11,9 @@
     undo,
     type OpenDoc,
   } from '$lib/state/documents.svelte';
-  import { clearRecent, saveSettings, settings, type Theme } from '$lib/state/settings.svelte';
+  import { saveSettings, settings, type Theme } from '$lib/state/settings.svelte';
   import { t } from '$lib/strings';
+  import FileMenu from './FileMenu.svelte';
 
   let {
     doc,
@@ -25,6 +26,11 @@
     onhelp,
     onmerge,
     onsplit,
+    onexport,
+    onprint,
+    onprotect,
+    onoptimize,
+    oncompare,
   }: {
     doc: OpenDoc | null;
     onopen: () => void;
@@ -36,9 +42,13 @@
     onhelp: () => void;
     onmerge: () => void;
     onsplit: () => void;
+    onexport: () => void;
+    onprint: () => void;
+    onprotect: () => void;
+    onoptimize: () => void;
+    oncompare: () => void;
   } = $props();
 
-  let recentOpen = $state(false);
   // Dérivé modifiable : suit la page courante, mais l'utilisateur peut taper dedans.
   let pageInput = $derived(doc ? String(doc.page + 1) : '');
 
@@ -67,47 +77,17 @@
 <header class="toolbar">
   <div class="group">
     <button type="button" onclick={onopen} title="{t.openFile} (Ctrl+O)">{t.openFile}</button>
-    <div class="menu">
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={recentOpen}
-        onclick={() => (recentOpen = !recentOpen)}
-        title={t.recentFiles}>▾</button
-      >
-      {#if recentOpen}
-        <ul class="dropdown" role="menu" onmouseleave={() => (recentOpen = false)}>
-          {#if settings.recent.length === 0}
-            <li class="muted">{t.noRecentFiles}</li>
-          {:else}
-            {#each settings.recent as path (path)}
-              <li>
-                <button
-                  type="button"
-                  role="menuitem"
-                  title={path}
-                  onclick={() => {
-                    recentOpen = false;
-                    onopenrecent(path);
-                  }}>{path.split(/[\\/]/).pop()}</button
-                >
-              </li>
-            {/each}
-            <li class="separator"></li>
-            <li>
-              <button
-                type="button"
-                role="menuitem"
-                onclick={() => {
-                  recentOpen = false;
-                  clearRecent();
-                }}>{t.clearRecent}</button
-              >
-            </li>
-          {/if}
-        </ul>
-      {/if}
-    </div>
+    <FileMenu
+      {doc}
+      {onopen}
+      {onopenrecent}
+      {onexport}
+      {onprint}
+      {onproperties}
+      {onprotect}
+      {onoptimize}
+      {oncompare}
+    />
     <button
       type="button"
       class:active={settings.sidebarOpen}
@@ -272,36 +252,5 @@
   input[type='text'] {
     width: 3.5rem;
     text-align: center;
-  }
-  .menu {
-    position: relative;
-  }
-  .dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    z-index: 20;
-    list-style: none;
-    margin: 0;
-    padding: 0.25rem;
-    min-width: 240px;
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-  }
-  .dropdown li button {
-    width: 100%;
-    text-align: left;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .dropdown .separator {
-    border-top: 1px solid var(--panel-border);
-    margin: 0.25rem 0;
-  }
-  .dropdown .muted {
-    padding: 0.3rem 0.55rem;
   }
 </style>

@@ -4,6 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { parseCounters } from '$lib/logic/export';
 
 /** Dimensions d'une page en points (miroir de `mega_core::PageSize`). */
 export interface PageSize {
@@ -164,7 +165,7 @@ export interface Attachment {
 
 /** Résultat d'une comparaison : image PNG et compteurs. */
 export interface ComparedPages {
-  png: Uint8Array;
+  png: Uint8Array<ArrayBuffer>;
   differing_pixels: number;
   total_pixels: number;
   width_px: number;
@@ -483,15 +484,7 @@ export async function comparePages(
   scale: number,
 ): Promise<ComparedPages> {
   const raw = await invoke<ArrayBuffer>('compare_pages', { idA, pageA, idB, pageB, scale });
-  const bytes = new Uint8Array(raw);
-  const view = new DataView(raw);
-  return {
-    differing_pixels: Number(view.getBigUint64(0, true)),
-    total_pixels: Number(view.getBigUint64(8, true)),
-    width_px: view.getUint32(16, true),
-    height_px: view.getUint32(20, true),
-    png: bytes.slice(24),
-  };
+  return parseCounters(raw);
 }
 
 /** Dialogue natif : n'importe quel fichier ; `null` si annulé. */

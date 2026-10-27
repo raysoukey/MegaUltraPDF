@@ -4,7 +4,14 @@
 
 import {
   annotations as fetchAnnotations,
+  attachments as fetchAttachments,
   applyEdit as apiApplyEdit,
+  exportImages as apiExportImages,
+  exportText as apiExportText,
+  pickAnyFile,
+  pickSaveFile,
+  saveAttachment as apiSaveAttachment,
+  security as fetchSecurity,
   formFields as fetchFormFields,
   formInfo as fetchFormInfo,
   closeDocument,
@@ -32,6 +39,12 @@ import {
   type FormField,
   type FormInfo,
   type NewAnnotation,
+  type Attachment,
+  type ImageExport,
+  type MetadataPatch,
+  type OptimizeOptions,
+  type Protection,
+  type SecurityInfo,
   type CropSpec,
   type PageNumbering,
   type PageObject,
@@ -106,6 +119,10 @@ export interface OpenDoc {
   textInsertRequest: { page: number; at: [number, number] } | null;
   /** Zone tracée avec l'outil Caviarder, en attente de confirmation. */
   redactRequest: { page: number; rect: Rect } | null;
+  /** État de sécurité (chargé à la demande, rafraîchi après édition), Lot 6. */
+  security: SecurityInfo | null;
+  /** Pièces jointes (chargées à la demande, rafraîchies après édition). */
+  attachments: Attachment[] | null;
 }
 
 export interface PasswordPrompt {
@@ -202,6 +219,8 @@ export async function openPath(path: string, password?: string): Promise<boolean
       selectedObject: null,
       textInsertRequest: null,
       redactRequest: null,
+      security: null,
+      attachments: null,
     });
     docsState.activeId = summary.id;
     docsState.passwordPrompt = null;
@@ -457,6 +476,8 @@ function afterEdit(doc: OpenDoc, result: EditResult): void {
   // désigner un autre objet (annuler une insertion, caviarder). Les actions qui veulent
   // garder la sélection (déplacer, modifier le texte) la reposent après coup.
   doc.selectedObject = null;
+  doc.security = null;
+  doc.attachments = null;
   doc.page = Math.min(doc.page, Math.max(0, result.summary.page_count - 1));
   nextGeneration(doc);
 }
@@ -601,6 +622,8 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
       selectedObject: null,
       textInsertRequest: null,
       redactRequest: null,
+      security: null,
+      attachments: null,
     });
     docsState.activeId = summary.id;
     return true;
@@ -858,6 +881,104 @@ export async function addPageNumbers(doc: OpenDoc, spec: PageNumbering): Promise
 
 export async function cropPages(doc: OpenDoc, spec: CropSpec): Promise<boolean> {
   return applyEdit(doc, { kind: 'crop_pages', spec });
+}
+
+// ---- Export, sécurité, pièces jointes (Lot 6) ----
+
+export async function ensureSecurity(doc: OpenDoc): Promise<SecurityInfo | null> {
+  if (doc.security) return doc.security;
+  const info = await fetchSecurity(doc.summary.id).catch(() => null);
+  doc.security = info;
+  return info;
+}
+
+export async function ensureAttachments(doc: OpenDoc): Promise<Attachment[]> {
+  if (doc.attachments) return doc.attachments;
+  const list = await fetchAttachments(doc.summary.id).catch(() => []);
+  doc.attachments = list;
+  return list;
+}
+
+export async function setMetadata(doc: OpenDoc, patch: MetadataPatch): Promise<boolean> {
+  return applyEdit(doc, { kind: 'set_metadata', patch });
+}
+
+export async function protectDoc(doc: OpenDoc, protection: Protection): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'protect', protection });
+  if (ok) showNotice(t.protected);
+  return ok;
+}
+
+export async function unprotectDoc(doc: OpenDoc): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'unprotect' });
+  if (ok) showNotice(t.unprotected);
+  return ok;
+}
+
+export async function optimizeDoc(doc: OpenDoc, options: OptimizeOptions): Promise<boolean> {
+  return applyEdit(doc, { kind: 'optimize', options });
+}
+
+export async function deleteAttachment(doc: OpenDoc, index: number): Promise<boolean> {
+  return applyEdit(doc, { kind: 'delete_attachment', index });
+}
+
+/** Choisit un fichier puis le joint ; faux si l'utilisateur annule. */
+export async function addAttachmentFromDialog(doc: OpenDoc): Promise<boolean> {
+  const path = await pickAnyFile();
+  if (!path) return false;
+  return applyEdit(doc, { kind: 'add_attachment', path });
+}
+
+/** Choisit un chemin puis y écrit la pièce jointe. */
+export async function saveAttachmentToDialog(doc: OpenDoc, a: Attachment): Promise<boolean> {
+  const path = await pickSaveFile(a.name);
+  if (!path) return false;
+  docsState.error = null;
+  try {
+    await apiSaveAttachment(doc.summary.id, a.index, path);
+    showNotice(t.attachmentSaved);
+    return true;
+  } catch (e) {
+    reportError(t.exportError, e);
+    return false;
+  }
+}
+
+/** Exporte des pages en images ; `null` en cas d'erreur (affichée dans le bandeau). */
+export async function exportImagesTo(
+  doc: OpenDoc,
+  spec: ImageExport,
+  dir: string,
+  prefix: string,
+  force: boolean,
+): Promise<string[] | null> {
+  docsState.error = null;
+  try {
+    const written = await apiExportImages(doc.summary.id, spec, dir, prefix, force);
+    showNotice(t.exportedImages(written.length));
+    return written;
+  } catch (e) {
+    reportError(t.exportError, e);
+    return null;
+  }
+}
+
+export async function exportTextTo(
+  doc: OpenDoc,
+  pages: number[] | null,
+  separators: boolean,
+  path: string,
+): Promise<boolean> {
+  docsState.error = null;
+  try {
+    await apiExportText(doc.summary.id, pages, separators, path);
+    showNotice(t.exportedText);
+    return true;
+  } catch (e) {
+    reportError(t.exportError, e);
+    return false;
+  }
 }
 
 export function setSelectedPages(doc: OpenDoc, pages: number[]): void {

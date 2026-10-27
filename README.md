@@ -16,7 +16,8 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | 1 | Lecteur complet (onglets, zoom, rotation, vignettes, signets, liens, sélection, recherche, propriétés, thème, raccourcis) | ✅ |
 | 2 | Pages et documents (pivoter, supprimer, réordonner, extraire, insérer, fusionner, scinder, enregistrer, annuler/rétablir) | ✅ |
 | 3 | Annotations (marquages de texte, notes, texte, encre, formes, tampons ; panneau ; rendu des annotations existantes) | ✅ |
-| 4 → 7 | Formulaires, édition de contenu, export/sécurité, finition | ⬜ |
+| 4 | Formulaires (champs HTML natifs, remplissage, aplatir, XFA détecté) et signature visuelle | ✅ |
+| 5 → 7 | Édition de contenu, export/sécurité, finition | ⬜ |
 
 ## Prérequis (développement)
 
@@ -56,6 +57,8 @@ cargo run -p mega-cli -- split rapport.pdf --every 10 -o parties/      # ou --ra
 cargo run -p mega-cli -- rotate rapport.pdf --pages 1,3-4 --degrees 90 -o tourne.pdf
 cargo run -p mega-cli -- extract rapport.pdf --pages 2-3 -o extrait.pdf
 cargo run -p mega-cli -- annots rapport.pdf --page 1                      # liste les annotations
+cargo run -p mega-cli -- fields formulaire.pdf                             # liste les champs
+cargo run -p mega-cli -- flatten formulaire.pdf -o plat.pdf                # aplatit
 ```
 
 Toutes les écritures sont atomiques (fichier temporaire puis renommage) : un échec ne laisse
@@ -67,6 +70,7 @@ jamais un fichier à moitié écrit.
 scripts/ui-check.ps1 -Pdf fixtures/simple.pdf -Scenario scripts/scenarios/lecteur-simple.json
 scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/edition-pages.json   # modifie le fichier !
 scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/annotation.json      # idem
+scripts/ui-check.ps1 -Pdf copie-form.pdf -Scenario scripts/scenarios/formulaire.json  # idem
 ```
 
 Lance l'application avec le port de débogage WebView2, déroule un scénario (clics, touches,

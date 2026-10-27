@@ -22,7 +22,9 @@ l'utilisateur apprend en le lisant.
   reflète `commands.rs` / `error.rs`.
 - `xtask` : tâches de dev (`cargo xtask fetch-pdfium`, `cargo xtask gen-fixtures`).
 - Une seule instance PDFium globale (`OnceLock`, feature `thread_safe`) ; patron acteur prévu
-  au Lot 1. `Document` possède ses octets (`from_bytes` / `to_bytes`) ; `lopdf` n'arrive qu'au Lot 5.
+  au Lot 1. `Document` possède ses octets (`from_bytes` / `to_bytes`) ; `lopdf` (ADR-0003) sert
+  depuis le Lot 4 à écrire ce que pdfium-render écrit mal (`forms/write.rs`) : passer par lui
+  pour toute écriture de dictionnaire PDF, puis recharger dans PDFium.
 
 ## Conventions
 
@@ -104,3 +106,8 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   et PDFium génère un `/AP` au premier rendu) : la couleur se lit dans les objets ; couleurs
   posées **avant** toute apparence (`FPDFAnnot_SetColor` refuse ensuite) ; apparences
   personnalisées seulement sur `Ink` et `Stamp` ; aucun binding brut (`forbid(unsafe_code)`).
+- Formulaires (ADR-0009) : **ne jamais écrire une valeur de champ avec pdfium-render**
+  (`set_checked` écrit `/AS (/Yes)` en chaîne, `set_value` vise le widget et non le champ) :
+  `forms/write.rs` (`lopdf`) écrit `/V`, `/AS`, `/NeedAppearances`, puis `reload_from_bytes` ;
+  charger une page dans l'environnement de formulaire (rendu minuscule) avant de lire ou
+  d'aplatir ; `PdfPage::flatten` aplatit aussi les annotations.

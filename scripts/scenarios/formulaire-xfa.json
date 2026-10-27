@@ -1,0 +1,5 @@
+[
+  { "wait": 1800 },
+  { "assert": "document.body.innerText.includes('Formulaire XFA')", "label": "bandeau XFA affiché" },
+  { "shot": "01-xfa.png" }
+]

@@ -338,3 +338,28 @@ fn annots_lists_annotations() {
         .assert()
         .code(1);
 }
+
+// ---- Lot 4 : formulaires ----
+
+#[test]
+fn fields_and_flatten_commands() {
+    mega()
+        .args(["fields", &fixture("form.pdf")])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("p1 nom [text] ="))
+        .stdout(predicate::str::contains("p1 ville [combo] = Paris"))
+        .stdout(predicate::str::contains("p1 ok [checkbox] = non"))
+        .stdout(predicate::str::contains("8 champs"));
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("plat.pdf");
+    mega()
+        .args(["flatten", &fixture("form.pdf"), "-o", out.to_str().unwrap()])
+        .assert()
+        .success();
+    mega()
+        .args(["fields", out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 champ"));
+}

@@ -17,7 +17,8 @@ export type Tool =
   | 'ellipse'
   | 'line'
   | 'arrow'
-  | 'stamp';
+  | 'stamp'
+  | 'signature';
 
 export interface Pt {
   x: number;

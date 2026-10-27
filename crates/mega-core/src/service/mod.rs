@@ -173,6 +173,17 @@ enum Request {
         base_name: String,
         reply: SyncSender<CoreResult<Vec<PathBuf>>>,
     },
+    /// Champs de formulaire d'une page.
+    FormFields {
+        id: DocId,
+        page: u16,
+        reply: SyncSender<CoreResult<Vec<crate::forms::FormField>>>,
+    },
+    /// Nature et taille du formulaire.
+    FormInfo {
+        id: DocId,
+        reply: SyncSender<CoreResult<crate::forms::FormInfo>>,
+    },
     /// Prévisualise une scission (parties calculées, rien d'écrit).
     SplitPlan {
         id: DocId,
@@ -434,6 +445,16 @@ impl ServiceHandle {
         })
     }
 
+    /// Champs de formulaire d'une page (voir `Document::form_fields`).
+    pub fn form_fields(&self, id: DocId, page: u16) -> CoreResult<Vec<crate::forms::FormField>> {
+        self.call(|reply| Request::FormFields { id, page, reply })
+    }
+
+    /// Nature du formulaire et nombre de champs.
+    pub fn form_info(&self, id: DocId) -> CoreResult<crate::forms::FormInfo> {
+        self.call(|reply| Request::FormInfo { id, reply })
+    }
+
     /// Les parties qu'une scission produirait, selon `mode` (rien n'est écrit).
     pub fn split_plan(
         &self,
@@ -612,6 +633,12 @@ impl Actor {
                     crate::pages::split_to_dir(&e.doc, &parts, &out_dir, &base_name, false)
                 });
                 let _ = reply.send(result);
+            }
+            Request::FormFields { id, page, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.form_fields(page)));
+            }
+            Request::FormInfo { id, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.form_info()));
             }
             Request::SplitPlan { id, mode, reply } => {
                 let result = self

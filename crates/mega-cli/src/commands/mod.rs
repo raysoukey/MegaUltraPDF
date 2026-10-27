@@ -3,6 +3,8 @@
 
 pub mod annots;
 pub mod extract;
+pub mod fields;
+pub mod flatten;
 pub mod info;
 pub mod merge;
 pub mod render;

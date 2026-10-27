@@ -87,7 +87,50 @@ export type EditCommand =
   | { kind: 'add_annotation'; page: number; annotation: NewAnnotation }
   | { kind: 'delete_annotation'; page: number; index: number }
   | { kind: 'update_annotation'; page: number; index: number; patch: AnnotationPatch }
-  | { kind: 'move_annotation'; page: number; index: number; rect: Rect };
+  | { kind: 'move_annotation'; page: number; index: number; rect: Rect }
+  | { kind: 'set_field_value'; page: number; index: number; value: FieldValue }
+  | { kind: 'flatten_form' }
+  | { kind: 'insert_signature'; page: number; rect: Rect; source: SignatureSource };
+
+/** Nature du formulaire (miroir de `FormType`). */
+export type FormType = 'none' | 'acro_form' | 'xfa';
+
+/** Genre de champ (miroir de `FieldKind`). */
+export type FieldKind =
+  'text' | 'checkbox' | 'radio' | 'combo' | 'list' | 'button' | 'signature' | 'unknown';
+
+export interface FieldOption {
+  label: string;
+  selected: boolean;
+}
+
+/** Un champ de formulaire lu (miroir de `FormField`). */
+export interface FormField {
+  page: number;
+  index: number;
+  name: string;
+  kind: FieldKind;
+  value: string | null;
+  checked: boolean | null;
+  options: FieldOption[];
+  rect: Rect;
+  read_only: boolean;
+  required: boolean;
+  multiline: boolean;
+  password: boolean;
+}
+
+export interface FormInfo {
+  form_type: FormType;
+  field_count: number;
+}
+
+/** Valeur à écrire (miroir de `FieldValue`). */
+export type FieldValue = { kind: 'text'; text: string } | { kind: 'checked'; checked: boolean };
+
+/** Source d'une signature visuelle (miroir de `SignatureSource`). */
+export type SignatureSource =
+  { kind: 'image'; path: string } | { kind: 'strokes'; strokes: [number, number][][] };
 
 /** Genre d'annotation (miroir de `AnnotationKind`). */
 export type AnnotationKind =
@@ -238,6 +281,24 @@ export async function outline(id: number): Promise<OutlineNode[]> {
 
 export async function annotations(id: number, page: number): Promise<Annotation[]> {
   return invoke<Annotation[]>('annotations', { id, page });
+}
+
+export async function formFields(id: number, page: number): Promise<FormField[]> {
+  return invoke<FormField[]>('form_fields', { id, page });
+}
+
+export async function formInfo(id: number): Promise<FormInfo> {
+  return invoke<FormInfo>('form_info', { id });
+}
+
+/** Dialogue natif : une image PNG ou JPEG ; `null` si annulé. */
+export async function pickImageFile(): Promise<string | null> {
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg'] }],
+  });
+  return typeof picked === 'string' ? picked : null;
 }
 
 export async function pageLinks(id: number, page: number): Promise<PageLink[]> {

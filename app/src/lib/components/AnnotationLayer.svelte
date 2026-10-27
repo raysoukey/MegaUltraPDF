@@ -15,6 +15,7 @@
     addAnnotation,
     ensureAnnotations,
     moveAnnotation,
+    requestSignature,
     selectAnnotation,
     updateAnnotation,
     type OpenDoc,
@@ -192,7 +193,13 @@
       const d = draft;
       draft = null;
       if (d.tool === 'text' || d.tool === 'note') openEntry(d, null);
-      else commit(d, '');
+      else if (d.tool === 'signature') {
+        const r = draftRect(d);
+        if (r.w >= 10 && r.h >= 5) {
+          requestSignature(doc, index, r);
+          setTool('select');
+        }
+      } else commit(d, '');
       return;
     }
     if (drag) {
@@ -284,7 +291,7 @@
     {/if}
     {#if draft}
       {@const d = draft}
-      {#if d.tool === 'rect' || d.tool === 'ellipse' || d.tool === 'text'}
+      {#if d.tool === 'rect' || d.tool === 'ellipse' || d.tool === 'text' || d.tool === 'signature'}
         {@const c = css(draftRect(d))}
         {#if d.tool === 'ellipse'}
           <ellipse

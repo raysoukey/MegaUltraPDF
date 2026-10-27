@@ -113,6 +113,25 @@ pub enum Command {
         #[arg(long)]
         password: Option<String>,
     },
+    /// Liste les champs de formulaire d'un PDF.
+    Fields {
+        /// Fichier PDF à inspecter.
+        file: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Aplatit formulaire et annotations dans un nouveau fichier.
+    Flatten {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
     /// Copie des pages dans un nouveau fichier.
     Extract {
         /// Fichier PDF source.

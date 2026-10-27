@@ -5,6 +5,7 @@
   import type { Annotation } from '$lib/api';
   import AnnotationEditor from '$lib/components/AnnotationEditor.svelte';
   import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
+  import SignatureDialog from '$lib/components/SignatureDialog.svelte';
   import CloseConfirmDialog from '$lib/components/CloseConfirmDialog.svelte';
   import MergeDialog from '$lib/components/MergeDialog.svelte';
   import PasswordDialog from '$lib/components/PasswordDialog.svelte';
@@ -23,9 +24,11 @@
     activeDoc,
     annotateSelection,
     cancelPassword,
+    cancelSignature,
     deleteSelectedAnnotation,
     displayName,
     ensureAnnotations,
+    ensureFormInfo,
     docById,
     docsState,
     goToPage,
@@ -77,6 +80,11 @@
 
   $effect(() => {
     applyTheme(settings.theme);
+  });
+
+  // Nature du formulaire du document actif (onglet « Formulaire », bandeau XFA).
+  $effect(() => {
+    if (doc && !doc.formInfo) void ensureFormInfo(doc);
   });
 
   onMount(() => {
@@ -157,7 +165,11 @@
     if (typing && !e.ctrlKey && !e.key.startsWith('F') && e.key !== 'Escape') return;
     if (typing && (action === 'undo' || action === 'redo')) return;
     // Un dialogue modal garde le clavier pour lui (sauf Échap).
-    if ((docsState.closePrompt || mergeOpen || splitOpen || editing) && action !== 'escape') return;
+    if (
+      (docsState.closePrompt || mergeOpen || splitOpen || editing || doc?.signatureRequest) &&
+      action !== 'escape'
+    )
+      return;
     e.preventDefault();
     switch (action) {
       case 'open':
@@ -252,6 +264,7 @@
         break;
       case 'escape':
         if (docsState.closePrompt) resolveClosePrompt('cancel');
+        else if (doc?.signatureRequest) cancelSignature(doc);
         else if (editing) editing = null;
         else if (mergeOpen) mergeOpen = false;
         else if (splitOpen) splitOpen = false;
@@ -292,6 +305,9 @@
   {#if docsState.error}
     <p class="error" role="alert">{docsState.error}</p>
   {/if}
+  {#if doc?.formInfo?.form_type === 'xfa'}
+    <p class="error" role="status">{t.formXfa}</p>
+  {/if}
 
   <section class="body">
     {#if doc}
@@ -328,6 +344,9 @@
   {/if}
   {#if doc && splitOpen}
     <SplitDialog {doc} onclose={() => (splitOpen = false)} />
+  {/if}
+  {#if doc && doc.signatureRequest}
+    <SignatureDialog {doc} page={doc.signatureRequest.page} rect={doc.signatureRequest.rect} />
   {/if}
   {#if doc && editing}
     {#key editing.annotation.index}

@@ -21,6 +21,7 @@ use crate::annotations::{AnnotationPatch, NewAnnotation};
 use crate::document::{Document, PageSize};
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
+use crate::forms::{FieldValue, SignatureSource};
 use crate::geometry::Rect;
 
 /// Une édition de la structure du document, sérialisable (le frontend l'envoie telle quelle).
@@ -95,6 +96,26 @@ pub enum EditCommand {
         /// Nouvelle emprise (`/Rect`).
         rect: Rect,
     },
+    /// Écrit la valeur d'un champ de formulaire (Lot 4).
+    SetFieldValue {
+        /// Page.
+        page: u16,
+        /// Index du widget dans `/Annots`.
+        index: u16,
+        /// La valeur.
+        value: FieldValue,
+    },
+    /// Aplatit le formulaire et les annotations de toutes les pages.
+    FlattenForm,
+    /// Appose une signature visuelle (contenu de page).
+    InsertSignature {
+        /// Page.
+        page: u16,
+        /// Zone, en points PDF.
+        rect: Rect,
+        /// Image ou traits.
+        source: SignatureSource,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -103,10 +124,10 @@ pub trait Command {
     fn label(&self) -> String;
     /// Applique l'édition ; en cas d'erreur, le document doit rester inchangé.
     fn apply(&self, doc: &mut Document) -> CoreResult<()>;
-    /// Si la commande vise une annotation existante : (verbe, page, index), pour que
-    /// l'historique nomme le genre réel (« Supprimer : Note »). Par défaut : aucune.
-    fn annotation_target(&self) -> Option<(&'static str, u16, u16)> {
-        None
+    /// Libellé précisé d'après l'état du document **avant** l'application (le genre de
+    /// l'annotation supprimée, le nom du champ rempli). Par défaut : [`label`](Self::label).
+    fn label_in(&self, _doc: &Document) -> String {
+        self.label()
     }
 }
 
@@ -151,16 +172,35 @@ impl Command for EditCommand {
             EditCommand::DeleteAnnotation { .. } => "Supprimer : Annotation".to_string(),
             EditCommand::UpdateAnnotation { .. } => "Modifier : Annotation".to_string(),
             EditCommand::MoveAnnotation { .. } => "Déplacer : Annotation".to_string(),
+            EditCommand::SetFieldValue { .. } => "Remplir un champ".to_string(),
+            EditCommand::FlattenForm => "Aplatir le formulaire".to_string(),
+            EditCommand::InsertSignature { .. } => "Apposer une signature".to_string(),
         }
     }
 
-    fn annotation_target(&self) -> Option<(&'static str, u16, u16)> {
-        match self {
-            EditCommand::DeleteAnnotation { page, index } => Some(("Supprimer", *page, *index)),
-            EditCommand::MoveAnnotation { page, index, .. } => Some(("Déplacer", *page, *index)),
-            EditCommand::UpdateAnnotation { page, index, .. } => Some(("Modifier", *page, *index)),
+    fn label_in(&self, doc: &Document) -> String {
+        let annotation = |verb: &str, page: u16, index: u16| {
+            doc.annotations(page)
+                .ok()
+                .and_then(|a| a.into_iter().find(|a| a.index == index))
+                .map(|a| format!("{verb} : {}", a.kind.label_fr()))
+        };
+        let label = match self {
+            EditCommand::DeleteAnnotation { page, index } => annotation("Supprimer", *page, *index),
+            EditCommand::MoveAnnotation { page, index, .. } => {
+                annotation("Déplacer", *page, *index)
+            }
+            EditCommand::UpdateAnnotation { page, index, .. } => {
+                annotation("Modifier", *page, *index)
+            }
+            EditCommand::SetFieldValue { page, index, .. } => doc
+                .form_fields(*page)
+                .ok()
+                .and_then(|f| f.into_iter().find(|f| f.index == *index))
+                .map(|f| format!("Remplir : {}", f.name)),
             _ => None,
-        }
+        };
+        label.unwrap_or_else(|| self.label())
     }
 
     fn apply(&self, doc: &mut Document) -> CoreResult<()> {
@@ -186,6 +226,13 @@ impl Command for EditCommand {
             }
             EditCommand::MoveAnnotation { page, index, rect } => {
                 doc.set_annotation_rect(*page, *index, *rect).map(|_| ())
+            }
+            EditCommand::SetFieldValue { page, index, value } => {
+                doc.set_field_value(*page, *index, value)
+            }
+            EditCommand::FlattenForm => doc.flatten_all(),
+            EditCommand::InsertSignature { page, rect, source } => {
+                doc.insert_signature(*page, *rect, source)
             }
         }
     }
@@ -306,18 +353,7 @@ impl Document {
     /// Libellé d'une commande, précisé quand il dépend de l'état du document (le genre de
     /// l'annotation supprimée ou déplacée n'est connu qu'avant l'application).
     fn label_for(&self, command: &dyn Command) -> String {
-        let generic = command.label();
-        let Some((verb, page, index)) = command.annotation_target() else {
-            return generic;
-        };
-        match self
-            .annotations(page)
-            .ok()
-            .and_then(|a| a.into_iter().find(|a| a.index == index))
-        {
-            Some(a) => format!("{verb} : {}", a.kind.label_fr()),
-            None => generic,
-        }
+        command.label_in(self)
     }
 
     /// Annule la dernière édition.
@@ -443,7 +479,7 @@ impl Document {
     }
 
     /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.
-    fn reload_from_bytes(&mut self, bytes: Vec<u8>) -> CoreResult<()> {
+    pub(crate) fn reload_from_bytes(&mut self, bytes: Vec<u8>) -> CoreResult<()> {
         let guard = engine::guard();
         let inner = engine::load_bytes(&guard, bytes, self.password())?;
         self.replace_inner(inner);

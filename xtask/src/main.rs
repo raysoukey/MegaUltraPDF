@@ -87,5 +87,11 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let annotated = dir.join("annotated.pdf");
     std::fs::write(&annotated, mega_core::testing::annotated_pdf())?;
     println!("écrit : {}", annotated.display());
+    let form = dir.join("form.pdf");
+    std::fs::write(&form, mega_core::testing::form_pdf())?;
+    println!("écrit : {}", form.display());
+    let xfa = dir.join("xfa.pdf");
+    std::fs::write(&xfa, mega_core::testing::xfa_pdf())?;
+    println!("écrit : {}", xfa.display());
     Ok(())
 }

@@ -75,6 +75,12 @@ fn main() {
             page,
             password,
         } => commands::annots::run(&file, page, password.as_deref()),
+        Command::Fields { file, password } => commands::fields::run(&file, password.as_deref()),
+        Command::Flatten {
+            file,
+            out,
+            password,
+        } => commands::flatten::run(&file, &out, password.as_deref()),
         Command::Extract {
             file,
             pages,

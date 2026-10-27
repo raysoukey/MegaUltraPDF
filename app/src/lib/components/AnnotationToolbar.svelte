@@ -25,6 +25,7 @@
     { tool: 'line', glyph: '╱', key: '' },
     { tool: 'arrow', glyph: '➚', key: '' },
     { tool: 'stamp', glyph: '✔', key: '' },
+    { tool: 'signature', glyph: '✍', key: '' },
   ];
   const MARKUPS: { tool: Tool; kind: AnnotationKind; glyph: string; key: string }[] = [
     { tool: 'highlight', kind: 'highlight', glyph: '🖍', key: 'H' },

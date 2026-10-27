@@ -953,3 +953,29 @@ fn compare_accepts_two_passwords() {
         .assert()
         .success();
 }
+
+/// B30 : `rotate` passe par l'enregistrement complet (nettoyage, `/ModDate`), comme l'app.
+#[test]
+fn rotate_output_has_a_modification_date() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("date.pdf");
+    mega()
+        .args([
+            "rotate",
+            &fixture("simple.pdf"),
+            "--pages",
+            "1",
+            "--degrees",
+            "90",
+        ])
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .success();
+    mega()
+        .arg("meta")
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Modifié le : —").not());
+}

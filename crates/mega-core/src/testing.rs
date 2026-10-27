@@ -240,6 +240,42 @@ pub fn checkbox_states_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Un document avec des métadonnées **XMP** non compressées (`/Metadata` du catalogue) :
+/// titre « Ancien », auteur « Alice », date de modification 2020.
+pub fn xmp_pdf() -> Vec<u8> {
+    let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
+xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\">\
+<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Ancien</rdf:li></rdf:Alt></dc:title>\
+<dc:creator><rdf:Seq><rdf:li>Alice</rdf:li></rdf:Seq></dc:creator>\
+<xmp:ModifyDate>2020-01-01T00:00:00Z</xmp:ModifyDate>\
+</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        format!(
+            "<< /Type /Metadata /Subtype /XML /Length {} >>\nstream\n{xmp}\nendstream",
+            xmp.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Title (Ancien) /Author (Alice) >>")
+}
+
+/// Un document dont le dictionnaire `/Info` est **direct** dans la remorque (permis, rare).
+pub fn direct_info_pdf() -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&sample_pdf(1, "Titre")).expect("squelette");
+    let info = lopdf::Dictionary::from_iter(vec![
+        ("Title", lopdf::Object::string_literal("Titre")),
+        ("Author", lopdf::Object::string_literal("Alice")),
+    ]);
+    doc.trailer.set("Info", lopdf::Object::Dictionary(info));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
 /// Un formulaire AcroForm écrit à la main (`/NeedAppearances true`) : texte « nom » (vide),
 /// texte multiligne « adresse », case « ok », groupe radio « choix » (A coché, B), combo
 /// « ville » (Paris, Lyon ; Paris choisi), texte lecture seule « ref », texte requis « email ».

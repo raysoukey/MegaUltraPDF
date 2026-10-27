@@ -54,7 +54,10 @@ pub struct Protection {
 pub struct SecurityInfo {
     /// Le fichier est chiffré.
     pub encrypted: bool,
-    /// Il a fallu un mot de passe pour l'ouvrir.
+    /// Il a fallu un mot de passe pour l'ouvrir : le fichier a donc un mot de passe
+    /// **utilisateur** non vide (PDFium ouvre sans rien demander un fichier protégé par le
+    /// seul mot de passe propriétaire). Qu'il s'agisse du mot de passe utilisateur ou
+    /// propriétaire, la personne qui l'a saisi peut retirer la protection.
     pub user_password_required: bool,
     /// Permissions telles que PDFium les lit.
     pub permissions: Permissions,
@@ -180,10 +183,18 @@ impl Document {
             modify: false,
             annotate: false,
         };
-        let Ok(bytes) = self.inner().save_to_bytes() else {
-            return denied;
+        // Rien de changé : `/Encrypt` se lit dans les octets du fichier, sans réécriture (C15).
+        let saved;
+        let bytes: &[u8] = if self.changed {
+            let Ok(b) = self.inner().save_to_bytes() else {
+                return denied;
+            };
+            saved = b;
+            &saved
+        } else {
+            self.file_bytes()
         };
-        let Ok(doc) = lopdf::Document::load_mem(&bytes) else {
+        let Ok(doc) = lopdf::Document::load_mem(bytes) else {
             return denied;
         };
         // Mot de passe utilisateur vide : lopdf a déjà déchiffré et retiré `/Encrypt` du

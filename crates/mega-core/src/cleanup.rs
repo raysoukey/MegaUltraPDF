@@ -43,6 +43,8 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
         identify_annotations(&mut doc, *page_id)?;
     }
     drop_dangling_annotation_links(&mut doc, &pages)?;
+    // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
+    crate::properties::stamp_mod_date(&mut doc);
     let pages_before = doc.get_pages().len();
     doc.prune_objects();
     doc.renumber_objects();

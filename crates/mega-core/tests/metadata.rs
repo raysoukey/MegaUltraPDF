@@ -104,3 +104,116 @@ fn set_metadata_validates_and_refuses_encrypted() {
         other => panic!("{other:?}"),
     }
 }
+
+// --- Lot 9 : XMP, /Info direct, contrôles, /ModDate (C11-C16) ----------------------------
+
+fn title(text: &str) -> MetadataPatch {
+    MetadataPatch {
+        title: Some(text.to_string()),
+        ..Default::default()
+    }
+}
+
+/// Le texte du flux `/Metadata` du catalogue.
+fn xmp_of(bytes: &[u8]) -> String {
+    let doc = lopdf::Document::load_mem(bytes).unwrap();
+    let id = doc
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+    let data = stream
+        .decompressed_content()
+        .unwrap_or_else(|_| stream.content.clone());
+    String::from_utf8(data).unwrap()
+}
+
+#[test]
+fn set_metadata_updates_xmp_title() {
+    let mut d = Document::from_bytes(mega_core::testing::xmp_pdf(), None).unwrap();
+    d.set_metadata(&MetadataPatch {
+        title: Some("Nouveau <titre> & co".to_string()),
+        author: Some("Bob".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    let xmp = xmp_of(&d.to_bytes().unwrap());
+    assert!(xmp.contains("Nouveau &lt;titre&gt; &amp; co"), "{xmp}");
+    assert!(!xmp.contains("Ancien"), "{xmp}");
+    assert!(xmp.contains("<rdf:li>Bob</rdf:li>"), "{xmp}");
+    assert!(
+        !xmp.contains("2020-01-01"),
+        "ModifyDate mise à jour : {xmp}"
+    );
+}
+
+#[test]
+fn direct_info_keeps_its_keys() {
+    let mut d = Document::from_bytes(mega_core::testing::direct_info_pdf(), None).unwrap();
+    d.set_metadata(&title("Nouveau")).unwrap();
+    let p = d.properties().unwrap();
+    assert_eq!(p.title.as_deref(), Some("Nouveau"));
+    assert_eq!(
+        p.author.as_deref(),
+        Some("Alice"),
+        "clé du /Info direct conservée"
+    );
+}
+
+#[test]
+fn control_characters_in_metadata_are_refused() {
+    let mut d = doc();
+    assert!(matches!(
+        d.set_metadata(&title("a\u{7}b")),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    // La tabulation reste permise.
+    d.set_metadata(&title("a\tb")).unwrap();
+}
+
+#[test]
+fn save_sets_mod_date() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("date.pdf");
+    let mut d = doc();
+    assert_eq!(d.properties().unwrap().modification_date, None);
+    d.apply(&EditCommand::RotatePages {
+        pages: vec![0],
+        quarter_turns: 1,
+    })
+    .unwrap();
+    d.save_as(&path).unwrap();
+    let reopened = Document::open(&path, None).unwrap();
+    let date = reopened.properties().unwrap().modification_date;
+    assert!(
+        date.as_deref().is_some_and(|d| d.starts_with("D:20")),
+        "{date:?}"
+    );
+}
+
+#[test]
+fn mod_date_of_a_user_password_file_is_read() {
+    use mega_core::security::{Permissions, Protection};
+    let mut d = doc();
+    d.set_metadata(&title("Daté")).unwrap();
+    d.protect(&Protection {
+        user_password: "secret".to_string(),
+        owner_password: "patron".to_string(),
+        permissions: Permissions {
+            print: true,
+            copy: true,
+            modify: true,
+            annotate: true,
+        },
+    })
+    .unwrap();
+    let reopened = Document::from_bytes(d.to_bytes().unwrap(), Some("secret")).unwrap();
+    let date = reopened.properties().unwrap().modification_date;
+    assert!(
+        date.as_deref().is_some_and(|d| d.starts_with("D:20")),
+        "{date:?}"
+    );
+}

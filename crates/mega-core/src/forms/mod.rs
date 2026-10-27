@@ -125,7 +125,8 @@ pub struct FormInfo {
 }
 
 impl Document {
-    /// Nature du formulaire et nombre de champs (toutes pages).
+    /// Nature du formulaire et nombre de champs **remplissables** (toutes pages ; les champs de
+    /// signature numérique ne comptent pas).
     pub fn form_info(&self) -> CoreResult<FormInfo> {
         let _guard = engine::guard();
         let form_type = match self.inner().form().map(|f| f.form_type()) {
@@ -139,7 +140,12 @@ impl Document {
                 .annotations()
                 .iter()
                 .take(MAX_ANNOTATIONS_PER_PAGE)
-                .filter(|a| a.as_form_field().is_some())
+                // Les champs de signature numérique ne se remplissent pas : ils ont leur
+                // propre onglet (Lot 8) et ne font pas apparaître « Formulaire ».
+                .filter(|a| {
+                    a.as_form_field()
+                        .is_some_and(|f| !matches!(f, PdfFormField::Signature(_)))
+                })
                 .count() as u32;
         }
         Ok(FormInfo {

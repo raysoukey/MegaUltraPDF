@@ -11,11 +11,13 @@
     onwatermark,
     onnumbering,
     oncrop,
+    onocr,
   }: {
     doc: OpenDoc;
     onwatermark: () => void;
     onnumbering: () => void;
     oncrop: () => void;
+    onocr: () => void;
   } = $props();
 
   const TOOLS: { tool: Tool; glyph: string }[] = [
@@ -96,6 +98,9 @@
         </li>
         <li role="none">
           <button type="button" role="menuitem" onclick={() => pick(oncrop)}>{t.cropTitle}…</button>
+        </li>
+        <li role="none">
+          <button type="button" role="menuitem" onclick={() => pick(onocr)}>{t.ocrMenu}</button>
         </li>
       </ul>
     {/if}

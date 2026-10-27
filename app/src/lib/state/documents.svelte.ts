@@ -5,6 +5,9 @@
 import {
   annotations as fetchAnnotations,
   attachments as fetchAttachments,
+  signatures as fetchSignatures,
+  signDocument as apiSignDocument,
+  pagesWithText as fetchPagesWithText,
   applyEdit as apiApplyEdit,
   exportImages as apiExportImages,
   exportText as apiExportText,
@@ -45,6 +48,8 @@ import {
   type OptimizeOptions,
   type Protection,
   type SecurityInfo,
+  type SignatureInfo,
+  type SignOptions,
   type CropSpec,
   type PageNumbering,
   type PageObject,
@@ -125,6 +130,11 @@ export interface OpenDoc {
   security: SecurityInfo | null;
   /** Pièces jointes (chargées à la demande, rafraîchies après édition). */
   attachments: Attachment[] | null;
+  /**
+   * Signatures numériques du **fichier** (Lot 8), chargées à l'ouverture. Une édition ne
+   * les change pas (elles portent sur le fichier) ; un enregistrement les fait relire.
+   */
+  signatures: SignatureInfo[] | null;
 }
 
 export interface PasswordPrompt {
@@ -216,9 +226,13 @@ export async function openPath(path: string, password?: string): Promise<boolean
       redactRequest: null,
       security: null,
       attachments: null,
+      signatures: null,
     });
     docsState.activeId = summary.id;
     docsState.passwordPrompt = null;
+    // Signatures du fichier lues dès l'ouverture : le bandeau « document signé » en dépend.
+    const opened = docsState.docs.find((d) => d.summary.id === summary.id);
+    if (opened) void ensureSignatures(opened);
     if (summary.path) rememberRecent(summary.path);
     return true;
   } catch (e) {
@@ -552,6 +566,8 @@ async function writeTo(doc: OpenDoc, path: string | undefined): Promise<boolean>
     doc.summary = result.summary;
     doc.edit = result.state;
     if (result.summary.path) rememberRecent(result.summary.path);
+    // Le fichier a changé : ses signatures sont à relire.
+    void refreshSignatures(doc);
     showNotice(t.saved);
     return true;
   } catch (e) {
@@ -619,6 +635,7 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
       redactRequest: null,
       security: null,
       attachments: null,
+      signatures: null,
     });
     docsState.activeId = summary.id;
     return true;
@@ -892,6 +909,58 @@ export async function ensureAttachments(doc: OpenDoc): Promise<Attachment[]> {
   const list = await fetchAttachments(doc.summary.id).catch(() => []);
   doc.attachments = list;
   return list;
+}
+
+/** Signatures du fichier (Lot 8), lues une fois puis gardées. */
+export async function ensureSignatures(doc: OpenDoc): Promise<SignatureInfo[]> {
+  if (doc.signatures) return doc.signatures;
+  const list = await fetchSignatures(doc.summary.id).catch(() => []);
+  doc.signatures = list;
+  return list;
+}
+
+/** Relit les signatures après un enregistrement ou une signature. */
+export async function refreshSignatures(doc: OpenDoc): Promise<void> {
+  doc.signatures = null;
+  await ensureSignatures(doc);
+}
+
+/** Pour chaque page, contient-elle déjà du texte ? (vide en cas d'erreur) */
+export async function pagesWithText(doc: OpenDoc): Promise<boolean[]> {
+  return fetchPagesWithText(doc.summary.id).catch(() => []);
+}
+
+/** Reconnaît le texte d'une page (OCR) ; faux en cas d'échec (erreur affichée). */
+export async function ocrPage(doc: OpenDoc, page: number, languages: string[]): Promise<boolean> {
+  return applyEdit(doc, { kind: 'ocr_page', page, languages });
+}
+
+/**
+ * Signe le document et l'enregistre dans un fichier choisi. Retourne `null` si c'est fait,
+ * `''` si l'utilisateur a annulé le choix du fichier, sinon le message d'erreur à afficher
+ * dans le dialogue (mot de passe incorrect, certificat illisible…).
+ */
+export async function signAndSave(
+  doc: OpenDoc,
+  p12: string,
+  password: string,
+  options: SignOptions,
+): Promise<string | null> {
+  await flushPendingInput();
+  const path = await pickSavePath(doc.summary.path ?? undefined);
+  if (!path) return '';
+  try {
+    const result = await apiSignDocument(doc.summary.id, path, p12, password, options);
+    doc.summary = result.summary;
+    doc.edit = result.state;
+    if (result.summary.path) rememberRecent(result.summary.path);
+    await refreshSignatures(doc);
+    showNotice(t.signDone);
+    return null;
+  } catch (e) {
+    if (isAppError(e) && e.kind === 'wrong_password') return t.wrongPassword;
+    return t.signError(isAppError(e) ? e.message : String(e));
+  }
 }
 
 export async function setMetadata(doc: OpenDoc, patch: MetadataPatch): Promise<boolean> {

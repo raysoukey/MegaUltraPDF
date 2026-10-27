@@ -30,6 +30,7 @@
     onexport,
     onprint,
     onprotect,
+    onsign,
     onoptimize,
     oncompare,
   }: {
@@ -47,6 +48,7 @@
     onexport: () => void;
     onprint: () => void;
     onprotect: () => void;
+    onsign: () => void;
     onoptimize: () => void;
     oncompare: () => void;
   } = $props();
@@ -87,6 +89,7 @@
       {onprint}
       {onproperties}
       {onprotect}
+      {onsign}
       {onoptimize}
       {oncompare}
       {onpreferences}

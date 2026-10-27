@@ -1,0 +1,108 @@
+[
+  {
+    "wait": 1800
+  },
+  {
+    "click": "button[title='Signatures']"
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "assert": "document.querySelector('.signatures .verdict').textContent.includes('Intègre')",
+    "label": "signature intègre"
+  },
+  {
+    "assert": "document.querySelector('.signatures').textContent.includes('MegaUltraPDF Test Signer') && document.querySelector('.signatures').textContent.includes('Approuvé')",
+    "label": "signataire et motif affichés"
+  },
+  {
+    "assert": "document.querySelector('.signatures .note').textContent.includes('pas certifiée')",
+    "label": "l'identité est dite non certifiée"
+  },
+  {
+    "shot": "01-signatures.png"
+  },
+  {
+    "assert": "!document.body.textContent.includes('invalidera')",
+    "label": "pas de bandeau avant modification"
+  },
+  {
+    "eval": "(() => { document.querySelector('.sidebar [role=tab]').click(); return true; })()",
+    "label": "onglet Vignettes"
+  },
+  {
+    "wait": 600
+  },
+  {
+    "eval": "(() => { document.querySelector('.sidebar button[aria-label^=\"Pivoter\"]').click(); return true; })()",
+    "label": "vraie modification : pivoter la page"
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "assert": "document.body.textContent.includes('invalidera ses signatures')",
+    "label": "bandeau après une modification"
+  },
+  {
+    "click": "button[title='Signatures']"
+  },
+  {
+    "wait": 600
+  },
+  {
+    "assert": "document.querySelector('.signatures .verdict').textContent.includes('Intègre')",
+    "label": "le fichier, lui, reste vérifié intègre"
+  },
+  {
+    "eval": "(() => { document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]').click(); return true; })()",
+    "label": "menu Fichier"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=menuitem]')].find((b) => b.textContent.includes('Signer numériquement')).click(); return true; })()",
+    "label": "Signer numériquement…"
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent === 'Signer numériquement'",
+    "label": "dialogue de signature ouvert"
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] button[type=submit]').disabled",
+    "label": "sans certificat, « Signer » est désactivé"
+  },
+  {
+    "shot": "02-sign-dialog.png"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "!document.querySelector('[role=dialog]')",
+    "label": "Échap ferme le dialogue"
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "assert": "!document.body.textContent.includes('invalidera')",
+    "label": "annuler : le bandeau disparaît"
+  },
+  {
+    "eval": "[...document.querySelectorAll('.sidebar [role=tab]')].map((b) => b.textContent.trim() || b.title).join(' | ')",
+    "label": "onglets du panneau (effet du champ de signature invisible)"
+  }
+]

@@ -21,12 +21,14 @@
     onwatermark,
     onnumbering,
     oncrop,
+    onocr,
   }: {
     doc: OpenDoc;
     onedit: () => void;
     onwatermark: () => void;
     onnumbering: () => void;
     oncrop: () => void;
+    onocr: () => void;
   } = $props();
 
   const TOOLS: { tool: Tool; glyph: string; key: string }[] = [
@@ -93,7 +95,7 @@
   <div class="group">
     <StylePicker />
   </div>
-  <ContentToolbar {doc} {onwatermark} {onnumbering} {oncrop} />
+  <ContentToolbar {doc} {onwatermark} {onnumbering} {oncrop} {onocr} />
   <div class="group right">
     <button
       type="button"

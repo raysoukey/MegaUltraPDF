@@ -13,6 +13,7 @@
     onprint,
     onproperties,
     onprotect,
+    onsign,
     onoptimize,
     oncompare,
     onpreferences,
@@ -24,6 +25,7 @@
     onprint: () => void;
     onproperties: () => void;
     onprotect: () => void;
+    onsign: () => void;
     onoptimize: () => void;
     oncompare: () => void;
     onpreferences: () => void;
@@ -49,6 +51,7 @@
     { label: t.printTitle, action: onprint, needsDoc: true, key: 'Ctrl+P' },
     { label: t.properties, action: onproperties, needsDoc: true, key: 'Ctrl+I' },
     { label: t.protectTitle, action: onprotect, needsDoc: true },
+    { label: t.signMenu, action: onsign, needsDoc: true },
     { label: t.optimizeTitle, action: onoptimize, needsDoc: true },
     { label: t.compareTitle, action: oncompare, needsDoc: true },
     { label: t.preferencesMenu, action: onpreferences, needsDoc: false, key: 'Ctrl+,' },

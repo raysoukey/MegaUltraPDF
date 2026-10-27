@@ -390,3 +390,18 @@ fn third_party_pades_signature_verifies() {
     assert!(info.covers_whole_document);
     assert!(info.signed_at.is_some(), "date tirée de /M");
 }
+
+#[test]
+fn signature_fields_do_not_count_as_fillable_form_fields() {
+    // Une signature invisible ajoute un champ `/Sig` : il ne doit pas faire apparaître un
+    // onglet « Formulaire » sur un document qui n'a rien à remplir (il a son onglet).
+    let signed = Document::from_bytes(sign(fixture("simple.pdf"), &rsa()), None).unwrap();
+    assert_eq!(signed.form_info().unwrap().field_count, 0);
+    let form_before = Document::from_bytes(fixture("form.pdf"), None)
+        .unwrap()
+        .form_info()
+        .unwrap()
+        .field_count;
+    let form_signed = Document::from_bytes(sign(fixture("form.pdf"), &rsa()), None).unwrap();
+    assert_eq!(form_signed.form_info().unwrap().field_count, form_before);
+}

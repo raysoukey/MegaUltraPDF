@@ -22,6 +22,8 @@
   import PropertiesDialog from '$lib/components/PropertiesDialog.svelte';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import HelpDialog from '$lib/components/HelpDialog.svelte';
+  import OcrDialog from '$lib/components/OcrDialog.svelte';
+  import SignDialog from '$lib/components/SignDialog.svelte';
   import PreferencesDialog from '$lib/components/PreferencesDialog.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import SplitDialog from '$lib/components/SplitDialog.svelte';
@@ -85,6 +87,8 @@
   let mergeOpen = $state(false);
   let splitOpen = $state(false);
   let watermarkOpen = $state(false);
+  let ocrOpen = $state(false);
+  let signOpen = $state(false);
   let numberingOpen = $state(false);
   let cropOpen = $state(false);
   let exportOpen = $state(false);
@@ -94,6 +98,8 @@
   let compareOpen = $state(false);
   const contentDialogOpen = $derived(
     watermarkOpen ||
+      ocrOpen ||
+      signOpen ||
       numberingOpen ||
       cropOpen ||
       exportOpen ||
@@ -331,6 +337,8 @@
         else if (doc?.textInsertRequest) cancelTextInsert(doc);
         else if (doc?.redactRequest) cancelRedact(doc);
         else if (watermarkOpen) watermarkOpen = false;
+        else if (ocrOpen) ocrOpen = false;
+        else if (signOpen) signOpen = false;
         else if (numberingOpen) numberingOpen = false;
         else if (cropOpen) cropOpen = false;
         else if (printOpen) printOpen = false;
@@ -374,6 +382,7 @@
       onexport={() => doc && (exportOpen = true)}
       onprint={() => doc && (printOpen = true)}
       onprotect={() => doc && (protectOpen = true)}
+      onsign={() => doc && (signOpen = true)}
       onoptimize={() => doc && (optimizeOpen = true)}
       oncompare={() => doc && (compareOpen = true)}
     />
@@ -385,6 +394,7 @@
         onwatermark={() => (watermarkOpen = true)}
         onnumbering={() => (numberingOpen = true)}
         oncrop={() => (cropOpen = true)}
+        onocr={() => (ocrOpen = true)}
       />
     {/if}
     {#if doc && searchOpen}
@@ -392,6 +402,9 @@
     {/if}
     {#if docsState.error}
       <p class="error" role="alert">{docsState.error}</p>
+    {/if}
+    {#if doc && doc.edit.modified && (doc.signatures?.length ?? 0) > 0}
+      <p class="error" role="status">{t.signedModifiedWarning}</p>
     {/if}
     {#if doc?.formInfo?.form_type === 'xfa'}
       <p class="error" role="status">{t.formXfa}</p>
@@ -444,6 +457,12 @@
     {/if}
     {#if doc && doc.redactRequest}
       <RedactConfirmDialog {doc} />
+    {/if}
+    {#if doc && ocrOpen}
+      <OcrDialog {doc} onclose={() => (ocrOpen = false)} />
+    {/if}
+    {#if doc && signOpen}
+      <SignDialog {doc} onclose={() => (signOpen = false)} />
     {/if}
     {#if doc && watermarkOpen}
       <WatermarkDialog {doc} onclose={() => (watermarkOpen = false)} />

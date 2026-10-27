@@ -1,0 +1,128 @@
+[
+  {
+    "wait": 1800
+  },
+  {
+    "key": "f",
+    "ctrl": true
+  },
+  {
+    "wait": 300
+  },
+  {
+    "type": "Page 2"
+  },
+  {
+    "wait": 900
+  },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.trim() === 'Aucun résultat'",
+    "label": "avant l'OCR : « Page 2 » introuvable"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 200
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('button[aria-haspopup=menu]')].find((b) => b.textContent.includes('Contenu')).click(); return true; })()",
+    "label": "menu Contenu"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=menuitem]')].find((b) => b.textContent.includes('OCR')).click(); return true; })()",
+    "label": "Reconnaître le texte (OCR)…"
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent.includes('OCR')",
+    "label": "dialogue OCR ouvert"
+  },
+  {
+    "assert": "[...document.querySelectorAll('[role=dialog] input[type=checkbox]')].some((c) => c.checked)",
+    "label": "une langue installée est cochée"
+  },
+  {
+    "shot": "01-ocr-dialog.png"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.trim() === 'Reconnaître').click(); return true; })()",
+    "label": "lancer la reconnaissance"
+  },
+  {
+    "wait": 15000
+  },
+  {
+    "assert": "!document.querySelector('[role=dialog]')",
+    "label": "reconnaissance terminée, dialogue fermé"
+  },
+  {
+    "key": "f",
+    "ctrl": true
+  },
+  {
+    "wait": 300
+  },
+  {
+    "type": "Page 2"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.trim() === '1 / 1' || 'ERREUR ' + document.querySelector('.searchbar .count').textContent",
+    "label": "après l'OCR : « Page 2 » trouvé une fois"
+  },
+  {
+    "shot": "02-ocr-found.png"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 200
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "key": "f",
+    "ctrl": true
+  },
+  {
+    "wait": 300
+  },
+  {
+    "type": "Page 2"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.trim() === 'Aucun résultat'",
+    "label": "annuler les trois pages reconnues retire la couche de texte"
+  }
+]

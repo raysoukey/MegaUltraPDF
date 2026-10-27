@@ -97,6 +97,7 @@ export type EditCommand =
   | { kind: 'set_object_text'; page: number; index: number; text: string }
   | { kind: 'insert_text'; page: number; at: [number, number]; text: string; style: TextStyle }
   | { kind: 'insert_image'; page: number; rect: Rect; path: string }
+  | { kind: 'ocr_page'; page: number; languages: string[] }
   | { kind: 'redact'; page: number; rect: Rect }
   | { kind: 'watermark'; spec: Watermark }
   | { kind: 'page_numbers'; spec: PageNumbering }
@@ -377,6 +378,39 @@ export interface EditResult {
   state: EditState;
 }
 
+/** État de l'OCR (miroir de `mega_core::ocr::OcrStatus`). */
+export interface OcrStatus {
+  available: boolean;
+  path: string | null;
+  languages: string[];
+}
+
+/** Verdict d'une signature (miroir de `SignatureStatus`, sérialisé `{ kind, detail }`). */
+export type SignatureStatus =
+  | { kind: 'intact' }
+  | { kind: 'invalid'; detail: string }
+  | { kind: 'unsupported'; detail: string };
+
+/** Une signature numérique vérifiée (miroir de `mega_core::digital_signature::SignatureInfo`). */
+export interface SignatureInfo {
+  field: string;
+  signer: string | null;
+  /** Secondes Unix. */
+  signed_at: number | null;
+  reason: string | null;
+  location: string | null;
+  sub_filter: string;
+  status: SignatureStatus;
+  covers_whole_document: boolean;
+}
+
+/** Informations écrites dans une signature (miroir de `SignOptions`). */
+export interface SignOptions {
+  reason: string | null;
+  location: string | null;
+  contact: string | null;
+}
+
 /** Erreur renvoyée par le backend (miroir de `AppError`). */
 export interface AppError {
   kind:
@@ -480,6 +514,28 @@ export async function security(id: number): Promise<SecurityInfo> {
   return invoke<SecurityInfo>('security', { id });
 }
 
+export async function ocrStatus(): Promise<OcrStatus> {
+  return invoke<OcrStatus>('ocr_status');
+}
+
+export async function pagesWithText(id: number): Promise<boolean[]> {
+  return invoke<boolean[]>('pages_with_text', { id });
+}
+
+export async function signatures(id: number): Promise<SignatureInfo[]> {
+  return invoke<SignatureInfo[]>('signatures', { id });
+}
+
+export async function signDocument(
+  id: number,
+  path: string,
+  p12: string,
+  password: string,
+  options: SignOptions,
+): Promise<EditResult> {
+  return invoke<EditResult>('sign_document', { id, path, p12, password, options });
+}
+
 export async function attachments(id: number): Promise<Attachment[]> {
   return invoke<Attachment[]>('attachments', { id });
 }
@@ -521,6 +577,16 @@ export async function pickImageFile(): Promise<string | null> {
     multiple: false,
     directory: false,
     filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg'] }],
+  });
+  return typeof picked === 'string' ? picked : null;
+}
+
+/** Dialogue natif : un certificat PKCS#12 (.p12, .pfx) ; `null` si annulé. */
+export async function pickCertificateFile(): Promise<string | null> {
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'PKCS#12', extensions: ['p12', 'pfx'] }],
   });
   return typeof picked === 'string' ? picked : null;
 }

@@ -52,6 +52,7 @@ pub mod pages;
 pub mod pagespec;
 pub mod properties;
 pub mod render;
+pub mod security;
 pub mod service;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -75,6 +76,7 @@ pub use overlay::{Corner, CropSpec, PageNumbering, Watermark};
 pub use pagespec::PageSpec;
 pub use properties::{DocumentProperties, MetadataPatch};
 pub use render::RenderedPage;
+pub use security::{Permissions, Protection, SecurityInfo};
 pub use text::{SearchHit, SearchOptions, TextBox};
 
 /// Version du crate, lue depuis `Cargo.toml` au moment de la compilation.

@@ -1,0 +1,59 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 10 0 R >> >> /Contents 4 0 R /Annots [5 0 R 6 0 R 7 0 R 8 0 R] >>
+endobj
+4 0 obj
+<< /Length 43 >>
+stream
+BT /F1 24 Tf 72 700 Td (Texte annote) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Text /Rect [50 750 70 770] /F 4 /Contents <FEFF004E006F0074006500200064006500200074006500730074> /T (Alice) /CreationDate (D:20261026120000Z) /M (D:20261026123000Z) /C [1 0.8 0] >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Highlight /Rect [72 700 200 720] /F 4 /QuadPoints [72 720 200 720 72 700 200 700] /C [1 1 0] /CA 0.5 /T (Bob) >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Square /Rect [100 500 300 600] /F 4 /C [1 0 0] /IC [0 0 1] /AP << /N 9 0 R >> >>
+endobj
+8 0 obj
+<< /Type /Annot /Subtype /Underline /Rect [72 640 200 660] /F 4 /QuadPoints [72 660 200 660 72 640 200 640] >>
+endobj
+9 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 200 100] /Length 37 >>
+stream
+1 0 0 RG 0 0 1 rg 2 w 1 1 198 98 re B
+endstream
+endobj
+10 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+11 0 obj
+<< /Title <FEFF0044006F00630075006D0065006E007400200061006E006E006F007400E9> /Producer (MegaUltraPDF tests) >>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000276 00000 n 
+0000000369 00000 n 
+0000000591 00000 n 
+0000000745 00000 n 
+0000000867 00000 n 
+0000000993 00000 n 
+0000001130 00000 n 
+0000001201 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R /Info 11 0 R >>
+startxref
+1328
+%%EOF

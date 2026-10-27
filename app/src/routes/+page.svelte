@@ -2,6 +2,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { pickPdfFiles, startupFile } from '$lib/api';
+  import type { Annotation } from '$lib/api';
+  import AnnotationEditor from '$lib/components/AnnotationEditor.svelte';
+  import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
   import CloseConfirmDialog from '$lib/components/CloseConfirmDialog.svelte';
   import MergeDialog from '$lib/components/MergeDialog.svelte';
   import PasswordDialog from '$lib/components/PasswordDialog.svelte';
@@ -18,8 +21,11 @@
   import { nextZoom } from '$lib/logic/zoom';
   import {
     activeDoc,
+    annotateSelection,
     cancelPassword,
+    deleteSelectedAnnotation,
     displayName,
+    ensureAnnotations,
     docById,
     docsState,
     goToPage,
@@ -34,12 +40,14 @@
     save,
     saveAs,
     setScale,
+    selectAnnotation,
     setSelection,
     showNotice,
     stepSearch,
     undo,
   } from '$lib/state/documents.svelte';
   import { flushSettings, loadSettings, settings } from '$lib/state/settings.svelte';
+  import { currentStyle, setTool, toolState } from '$lib/state/tools.svelte';
   import { t } from '$lib/strings';
   import { applyTheme } from '$lib/theme';
 
@@ -50,6 +58,22 @@
   let helpOpen = $state(false);
   let mergeOpen = $state(false);
   let splitOpen = $state(false);
+  let editing = $state<{ annotation: Annotation; page: number } | null>(null);
+
+  async function editSelected() {
+    if (!doc?.selectedAnnotation) return;
+    const { page, index } = doc.selectedAnnotation;
+    const a = (await ensureAnnotations(doc, page)).find((x) => x.index === index);
+    if (a) editing = { annotation: a, page };
+  }
+
+  async function markupSelection(kind: 'highlight' | 'underline' | 'strike_out') {
+    if (!doc) return;
+    const tool =
+      kind === 'highlight' ? 'highlight' : kind === 'underline' ? 'underline' : 'strikeout';
+    const ok = await annotateSelection(doc, kind, currentStyle(tool), settings.author);
+    if (!ok) showNotice(t.selectTextFirst);
+  }
 
   $effect(() => {
     applyTheme(settings.theme);
@@ -133,7 +157,7 @@
     if (typing && !e.ctrlKey && !e.key.startsWith('F') && e.key !== 'Escape') return;
     if (typing && (action === 'undo' || action === 'redo')) return;
     // Un dialogue modal garde le clavier pour lui (sauf Échap).
-    if ((docsState.closePrompt || mergeOpen || splitOpen) && action !== 'escape') return;
+    if ((docsState.closePrompt || mergeOpen || splitOpen || editing) && action !== 'escape') return;
     e.preventDefault();
     switch (action) {
       case 'open':
@@ -159,6 +183,27 @@
         break;
       case 'split':
         if (doc) splitOpen = true;
+        break;
+      case 'toolNote':
+        if (doc) setTool('note');
+        break;
+      case 'toolText':
+        if (doc) setTool('text');
+        break;
+      case 'toolInk':
+        if (doc) setTool('ink');
+        break;
+      case 'toolHighlight':
+        markupSelection('highlight');
+        break;
+      case 'toolUnderline':
+        markupSelection('underline');
+        break;
+      case 'toolStrikeout':
+        markupSelection('strike_out');
+        break;
+      case 'deleteAnnotation':
+        if (doc) deleteSelectedAnnotation(doc);
         break;
       case 'find':
         if (doc) searchOpen = true;
@@ -207,12 +252,15 @@
         break;
       case 'escape':
         if (docsState.closePrompt) resolveClosePrompt('cancel');
+        else if (editing) editing = null;
         else if (mergeOpen) mergeOpen = false;
         else if (splitOpen) splitOpen = false;
         else if (helpOpen) helpOpen = false;
         else if (propertiesOpen) propertiesOpen = false;
         else if (docsState.passwordPrompt) cancelPassword();
         else if (searchOpen) searchOpen = false;
+        else if (toolState.tool !== 'select') setTool('select');
+        else if (doc?.selectedAnnotation) selectAnnotation(doc, null);
         else if (doc?.selection) setSelection(doc, null);
         break;
     }
@@ -235,6 +283,9 @@
     onsplit={() => doc && (splitOpen = true)}
   />
   <Tabs />
+  {#if doc}
+    <AnnotationToolbar {doc} onedit={editSelected} />
+  {/if}
   {#if doc && searchOpen}
     <SearchBar {doc} onclose={() => (searchOpen = false)} />
   {/if}
@@ -245,7 +296,7 @@
   <section class="body">
     {#if doc}
       {#if settings.sidebarOpen}
-        <Sidebar {doc} />
+        <Sidebar {doc} oneditannotation={(a, page) => (editing = { annotation: a, page })} />
       {/if}
       {#key doc.summary.id}
         <Viewer bind:this={viewer} {doc} />
@@ -277,6 +328,16 @@
   {/if}
   {#if doc && splitOpen}
     <SplitDialog {doc} onclose={() => (splitOpen = false)} />
+  {/if}
+  {#if doc && editing}
+    {#key editing.annotation.index}
+      <AnnotationEditor
+        {doc}
+        page={editing.page}
+        annotation={editing.annotation}
+        onclose={() => (editing = null)}
+      />
+    {/key}
   {/if}
   {#if docsState.closePrompt}
     {@const closing = docById(docsState.closePrompt.id)}

@@ -70,6 +70,11 @@ fn main() {
             out,
             password,
         } => commands::rotate::run(&file, &pages, degrees, &out, password.as_deref()),
+        Command::Annots {
+            file,
+            page,
+            password,
+        } => commands::annots::run(&file, page, password.as_deref()),
         Command::Extract {
             file,
             pages,

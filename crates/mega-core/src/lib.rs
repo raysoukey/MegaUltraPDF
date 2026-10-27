@@ -35,6 +35,7 @@
     )
 )]
 
+pub mod annotations;
 pub mod document;
 pub mod edit;
 pub mod engine;
@@ -51,6 +52,9 @@ pub mod service;
 pub mod testing;
 pub mod text;
 
+pub use annotations::{
+    Annotation, AnnotationKind, AnnotationPatch, Color, Geometry, NewAnnotation, Style,
+};
 pub use document::{Document, PageSize};
 pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};

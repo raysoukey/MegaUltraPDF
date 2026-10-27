@@ -97,6 +97,17 @@ pub async fn outline(
     blocking(handle, move |h| h.outline(id)).await
 }
 
+/// Annotations d'une page.
+#[tauri::command]
+pub async fn annotations(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    page: u16,
+) -> Result<Vec<mega_core::Annotation>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.annotations(id, page)).await
+}
+
 /// Liens d'une page.
 #[tauri::command]
 pub async fn page_links(

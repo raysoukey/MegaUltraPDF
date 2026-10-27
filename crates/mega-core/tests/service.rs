@@ -345,3 +345,61 @@ fn merged_document_stays_modified_through_undo() {
         .unwrap();
     assert!(!state.modified);
 }
+
+// ---- Lot 3 : annotations ----
+
+#[test]
+fn annotations_request_and_cache_invalidation() {
+    use mega_core::{AnnotationKind, Color, EditCommand, Geometry, NewAnnotation, Rect, Style};
+    let handle = PdfService::spawn();
+    let id = open(&handle, 1);
+    assert!(handle.annotations(id, 0).unwrap().is_empty());
+    assert!(matches!(
+        handle.annotations(id, 4),
+        Err(CoreError::PageOutOfRange { .. })
+    ));
+    let before = handle
+        .render_png(request(id, 0, 0, Priority::Visible))
+        .unwrap();
+    let (_, state) = handle
+        .apply(
+            id,
+            EditCommand::AddAnnotation {
+                page: 0,
+                annotation: NewAnnotation {
+                    kind: AnnotationKind::Rect,
+                    geometry: Geometry::Rect {
+                        rect: Rect {
+                            x: 100.0,
+                            y: 500.0,
+                            w: 200.0,
+                            h: 100.0,
+                        },
+                    },
+                    style: Style {
+                        color: Color {
+                            r: 229,
+                            g: 57,
+                            b: 53,
+                        },
+                        fill: None,
+                        opacity: 1.0,
+                        stroke_width: 2.0,
+                        font_size: 14.0,
+                    },
+                    contents: String::new(),
+                    author: String::new(),
+                },
+            },
+        )
+        .unwrap();
+    assert!(state.modified && state.can_undo);
+    assert_eq!(handle.annotations(id, 0).unwrap().len(), 1);
+    let after = handle
+        .render_png(request(id, 0, 0, Priority::Visible))
+        .unwrap();
+    assert_ne!(
+        before, after,
+        "le cache de rendu doit être invalidé par l'ajout d'une annotation"
+    );
+}

@@ -102,6 +102,17 @@ pub enum Command {
         #[arg(long)]
         password: Option<String>,
     },
+    /// Liste les annotations d'un PDF.
+    Annots {
+        /// Fichier PDF à inspecter.
+        file: PathBuf,
+        /// Page (à partir de 1) ; toutes si absent.
+        #[arg(long)]
+        page: Option<u16>,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
     /// Copie des pages dans un nouveau fichier.
     Extract {
         /// Fichier PDF source.

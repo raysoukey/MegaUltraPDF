@@ -1,0 +1,10 @@
+[
+  { "wait": 1500 },
+  { "assert": "document.querySelectorAll('.page img').length >= 1", "label": "page rendue" },
+  { "eval": "(() => { [...document.querySelectorAll('[role=tab]')].find(b => b.textContent.trim() === 'Annotations').click(); return true; })()", "label": "onglet Annotations ouvert" },
+  { "wait": 800 },
+  { "assert": "document.querySelectorAll('.panel li').length === 4", "label": "4 annotations tierces listées" },
+  { "assert": "document.body.innerText.includes('Alice') && document.body.innerText.includes('Note de test') && document.body.innerText.includes('Surlignage') && document.body.innerText.includes('Rectangle') && document.body.innerText.includes('Soulignement')", "label": "genres, auteur et contenu affichés" },
+  { "assert": "document.querySelectorAll('.annotation-layer .note').length === 1", "label": "icône de la note tierce dessinée" },
+  { "shot": "01-tierces.png" }
+]

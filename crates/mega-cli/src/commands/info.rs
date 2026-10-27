@@ -32,7 +32,7 @@ pub fn run(file: &Path, password: Option<&str>) -> anyhow::Result<()> {
 ///
 /// Les métadonnées d'un PDF sont des données non fiables : un fichier malveillant
 /// pourrait y glisser des séquences d'échappement ANSI qui manipulent le terminal.
-fn display_safe(s: &str) -> String {
+pub(crate) fn display_safe(s: &str) -> String {
     s.chars()
         .map(|c| {
             if is_display_dangerous(c) {

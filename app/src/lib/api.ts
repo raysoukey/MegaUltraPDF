@@ -83,7 +83,91 @@ export type EditCommand =
   | { kind: 'delete_pages'; pages: number[] }
   | { kind: 'move_pages'; pages: number[]; to: number }
   | { kind: 'insert_blank_page'; at: number; size: PageSize }
-  | { kind: 'insert_pages_from_file'; path: string; pages: number[] | null; at: number };
+  | { kind: 'insert_pages_from_file'; path: string; pages: number[] | null; at: number }
+  | { kind: 'add_annotation'; page: number; annotation: NewAnnotation }
+  | { kind: 'delete_annotation'; page: number; index: number }
+  | { kind: 'update_annotation'; page: number; index: number; patch: AnnotationPatch }
+  | { kind: 'move_annotation'; page: number; index: number; rect: Rect };
+
+/** Genre d'annotation (miroir de `AnnotationKind`). */
+export type AnnotationKind =
+  | 'note'
+  | 'highlight'
+  | 'underline'
+  | 'strike_out'
+  | 'squiggly'
+  | 'rect'
+  | 'ellipse'
+  | 'line'
+  | 'arrow'
+  | 'ink'
+  | 'text'
+  | 'stamp'
+  | 'link'
+  | 'widget'
+  | 'other';
+
+/** Couleur opaque (miroir de `Color`). */
+export interface Color {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/** Style d'une annotation à créer (miroir de `Style`). */
+export interface Style {
+  color: Color;
+  fill: Color | null;
+  opacity: number;
+  stroke_width: number;
+  font_size: number;
+}
+
+/** Géométrie en points PDF (miroir de `Geometry`, sérialisée avec `kind`). */
+export type Geometry =
+  | { kind: 'rect'; rect: Rect }
+  | { kind: 'quads'; rects: Rect[] }
+  | { kind: 'line'; from: [number, number]; to: [number, number] }
+  | { kind: 'strokes'; strokes: [number, number][][] };
+
+/** Une annotation à créer (miroir de `NewAnnotation`). */
+export interface NewAnnotation {
+  kind: AnnotationKind;
+  geometry: Geometry;
+  style: Style;
+  contents: string;
+  author: string;
+}
+
+/** Modification partielle (miroir de `AnnotationPatch`) ; les champs absents ne changent pas. */
+export interface AnnotationPatch {
+  contents?: string;
+  author?: string;
+  color?: Color;
+  opacity?: number;
+  stroke_width?: number;
+  font_size?: number;
+}
+
+/** Une annotation lue (miroir de `Annotation`). */
+export interface Annotation {
+  index: number;
+  kind: AnnotationKind;
+  rect: Rect;
+  color: Color | null;
+  fill: Color | null;
+  opacity: number;
+  stroke_width: number;
+  font_size: number | null;
+  author: string | null;
+  contents: string | null;
+  created: string | null;
+  modified: string | null;
+  quads: Rect[];
+  geometry: Geometry | null;
+  /** Déplaçable / modifiable par l'application (décidé en Rust). */
+  editable: boolean;
+}
 
 /** État de l'historique (miroir de `EditState`). */
 export interface EditState {
@@ -150,6 +234,10 @@ export async function searchDocument(
 
 export async function outline(id: number): Promise<OutlineNode[]> {
   return invoke<OutlineNode[]>('outline', { id });
+}
+
+export async function annotations(id: number, page: number): Promise<Annotation[]> {
+  return invoke<Annotation[]>('annotations', { id, page });
 }
 
 export async function pageLinks(id: number, page: number): Promise<PageLink[]> {

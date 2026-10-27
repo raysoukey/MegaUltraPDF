@@ -19,6 +19,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 serde.workspace = true
 thiserror.workspace = true
 tempfile = "3"
+# Dates des annotations (`set_creation_date`) ; déjà dans l'arbre via pdfium-render.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 mega-core = { path = ".", features = ["testing"] }

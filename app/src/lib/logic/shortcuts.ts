@@ -28,7 +28,14 @@ export type Action =
   | 'save'
   | 'saveAs'
   | 'merge'
-  | 'split';
+  | 'split'
+  | 'toolNote'
+  | 'toolHighlight'
+  | 'toolUnderline'
+  | 'toolStrikeout'
+  | 'toolText'
+  | 'toolInk'
+  | 'deleteAnnotation';
 
 /** Forme minimale d'un événement clavier, indépendante du DOM (testable). */
 export interface KeyLike {
@@ -65,6 +72,13 @@ const BINDINGS: Binding[] = [
   { key: 's', ctrl: true, shift: true, action: 'saveAs' },
   { key: 'm', ctrl: true, action: 'merge' },
   { key: 'd', ctrl: true, shift: true, action: 'split' },
+  { key: 'n', action: 'toolNote' },
+  { key: 'h', action: 'toolHighlight' },
+  { key: 'u', action: 'toolUnderline' },
+  { key: 'k', action: 'toolStrikeout' },
+  { key: 't', action: 'toolText' },
+  { key: 'd', action: 'toolInk' },
+  { key: 'Delete', action: 'deleteAnnotation' },
   { key: 'r', action: 'rotate' },
   { key: 'Home', action: 'firstPage' },
   { key: 'End', action: 'lastPage' },

@@ -119,6 +119,12 @@ enum Request {
         id: DocId,
         reply: SyncSender<CoreResult<Vec<OutlineNode>>>,
     },
+    /// Annotations d'une page.
+    Annotations {
+        id: DocId,
+        page: u16,
+        reply: SyncSender<CoreResult<Vec<crate::annotations::Annotation>>>,
+    },
     Links {
         id: DocId,
         page: u16,
@@ -327,6 +333,15 @@ impl ServiceHandle {
         self.call(|reply| Request::Outline { id, reply })
     }
 
+    /// Annotations d'une page (voir `Document::annotations`).
+    pub fn annotations(
+        &self,
+        id: DocId,
+        page: u16,
+    ) -> CoreResult<Vec<crate::annotations::Annotation>> {
+        self.call(|reply| Request::Annotations { id, page, reply })
+    }
+
     /// Liens d'une page.
     pub fn links(&self, id: DocId, page: u16) -> CoreResult<Vec<PageLink>> {
         self.call(|reply| Request::Links { id, page, reply })
@@ -532,6 +547,9 @@ impl Actor {
                     self.entry(id)
                         .and_then(|e| search_all(&e.doc, &query, &options)),
                 );
+            }
+            Request::Annotations { id, page, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.annotations(page)));
             }
             Request::Outline { id, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.outline()));

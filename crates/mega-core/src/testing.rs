@@ -116,6 +116,86 @@ pub fn outlined_pdf() -> Vec<u8> {
     )
 }
 
+/// Un PDF d'une page A4 portant quatre annotations « tierces » (écrites à la main, comme
+/// le ferait un autre logiciel) : une note `Text` (auteur, date), un `Highlight` avec
+/// `/QuadPoints` et opacité, un `Square` avec un flux d'apparence `/AP`, et un `Underline`
+/// **sans** couleur. Sert à tester la lecture et le rendu des annotations.
+pub fn annotated_pdf() -> Vec<u8> {
+    annotated_pdf_impl(true)
+}
+
+/// Le même document sans son tableau `/Annots` (pour comparer les rendus).
+pub fn annotated_pdf_without_annots() -> Vec<u8> {
+    annotated_pdf_impl(false)
+}
+
+fn annotated_pdf_impl(with_annots: bool) -> Vec<u8> {
+    let annots = if with_annots {
+        " /Annots [5 0 R 6 0 R 7 0 R 8 0 R]"
+    } else {
+        ""
+    };
+    let content = "BT /F1 24 Tf 72 700 Td (Texte annote) Tj ET";
+    let appearance = "1 0 0 RG 0 0 1 rg 2 w 1 1 198 98 re B";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+             /Resources << /Font << /F1 10 0 R >> >> /Contents 4 0 R{annots} >>"
+        ),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        format!(
+            "<< /Type /Annot /Subtype /Text /Rect [50 750 70 770] /F 4 /Contents {} /T (Alice) \
+             /CreationDate (D:20261026120000Z) /M (D:20261026123000Z) /C [1 0.8 0] >>",
+            pdf_text_string("Note de test")
+        ),
+        "<< /Type /Annot /Subtype /Highlight /Rect [72 700 200 720] /F 4 \
+         /QuadPoints [72 720 200 720 72 700 200 700] /C [1 1 0] /CA 0.5 /T (Bob) >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Square /Rect [100 500 300 600] /F 4 /C [1 0 0] /IC [0 0 1] \
+         /AP << /N 9 0 R >> >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Underline /Rect [72 640 200 660] /F 4 \
+         /QuadPoints [72 660 200 660 72 640 200 640] >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 200 100] /Length {} >>\nstream\n{appearance}\nendstream",
+            appearance.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Document annoté")
+        ),
+    )
+}
+
+/// Une page avec une annotation `Ink` **tierce** lissée en courbes de Bézier (comme
+/// Acrobat ou Xournal l'écrivent) : `/InkList` présent et apparence `m c c S`.
+pub fn bezier_ink_pdf() -> Vec<u8> {
+    let appearance = "0 0 1 RG 2 w 100 100 m 120 160 160 160 180 100 c 200 40 240 40 260 100 c S";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [4 0 R] >>".to_string(),
+        "<< /Type /Annot /Subtype /Ink /Rect [98 38 262 162] /F 4 /C [0 0 1] /BS << /W 2 >> \
+         /InkList [[100 100 140 150 180 100 220 50 260 100]] /AP << /N 5 0 R >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [98 38 262 162] /Length {} >>\nstream\n{appearance}\nendstream",
+            appearance.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un PDF **hostile** : signet dont `/Next` pointe sur lui-même, et signet dont le premier
 /// enfant est lui-même. Sert à vérifier que la lecture des signets est bornée.
 pub fn cyclic_outline_pdf() -> Vec<u8> {

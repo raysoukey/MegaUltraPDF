@@ -79,7 +79,9 @@ impl Document {
         let config = PdfRenderConfig::new()
             .set_target_size(width_px, height_px)
             .rotate(rotation.to_pdfium(), false)
-            .render_form_data(true);
+            .render_form_data(true)
+            // Dessine les annotations (drapeau FPDF_ANNOT) : surlignages, formes, tampons…
+            .render_annotations(true);
         let bitmap = page.render_with_config(&config)?;
         Ok(RenderedPage {
             width_px: bitmap.width() as u32,

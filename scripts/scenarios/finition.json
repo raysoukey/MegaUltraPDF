@@ -209,6 +209,10 @@
     "label": "À propos : version et PDFium"
   },
   {
+    "assert": "/\\d+ crates Rust, \\d+ paquets npm/.test(document.querySelector('#help-panel summary').textContent)",
+    "label": "À propos : inventaire des licences tierces"
+  },
+  {
     "shot": "03-a-propos.png"
   },
   {

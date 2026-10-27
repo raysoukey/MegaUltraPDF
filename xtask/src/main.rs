@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+mod licenses;
 mod pdfium;
 
 use std::path::{Path, PathBuf};
@@ -19,6 +20,7 @@ Usage : cargo xtask <commande>
 Commandes :
   fetch-pdfium [--target <triple>]   Télécharge la bibliothèque PDFium épinglée dans vendor/pdfium/
   gen-fixtures                       Régénère les PDF d'exemple de fixtures/ (sauf encrypted.pdf)
+  licenses                           Inventaire des licences tierces (licenses.json, THIRD_PARTY_LICENSES.md)
 ";
 
 fn main() -> anyhow::Result<()> {
@@ -28,6 +30,7 @@ fn main() -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         Some("fetch-pdfium") => fetch_pdfium(&args[1..]),
         Some("gen-fixtures") => gen_fixtures(),
+        Some("licenses") => licenses::generate(&workspace_root()),
         Some(other) => bail!("commande inconnue : {other}\n\n{USAGE}"),
         None => {
             print!("{USAGE}");

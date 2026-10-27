@@ -4,6 +4,7 @@
   // et « À propos » (version, licence, PDFium).
   import { onMount } from 'svelte';
   import { trapFocus } from '$lib/actions/trapFocus';
+  import licenses from '$lib/generated/licenses.json';
   import { shortcutHelp } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
 
@@ -13,6 +14,8 @@
   const TABS: Tab[] = ['start', 'shortcuts', 'about'];
   let tab = $state<Tab>('start');
   let version = $state('');
+  // Inventaire généré par `cargo xtask licenses` (commité, regénéré à chaque version).
+  const crateCount = licenses.filter((l) => l.source === 'crate').length;
 
   function tabLabel(k: Tab): string {
     if (k === 'start') return t.helpTabStart;
@@ -94,6 +97,28 @@
         <p>{t.aboutTagline}</p>
         <p>{t.aboutLicense}</p>
         <p>{t.aboutPdfium}</p>
+        <p>{t.aboutNotices}</p>
+        <details>
+          <summary>{t.aboutThirdParty(crateCount, licenses.length - crateCount)}</summary>
+          <table class="licenses">
+            <thead>
+              <tr>
+                <th>{t.licenseName}</th>
+                <th>{t.licenseVersion}</th>
+                <th>{t.licenseLicense}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each licenses as l (l.source + l.name + l.version)}
+                <tr>
+                  <td>{l.name}</td>
+                  <td>{l.version}</td>
+                  <td>{l.license ?? t.licenseSeeFile}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </details>
       {/if}
     </div>
 
@@ -147,6 +172,17 @@
   }
   .keys {
     white-space: nowrap;
+  }
+  summary {
+    cursor: pointer;
+    margin: 0.5rem 0;
+  }
+  .licenses {
+    font-size: 0.85rem;
+  }
+  .licenses th {
+    text-align: left;
+    padding-right: 1rem;
   }
   kbd {
     background: var(--bg);

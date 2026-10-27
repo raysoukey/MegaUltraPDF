@@ -5656,6 +5656,7 @@ dependencies = [
  "flate2",
  "mega-core",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tar",
  "toml 0.9.12+spec-1.1.0",

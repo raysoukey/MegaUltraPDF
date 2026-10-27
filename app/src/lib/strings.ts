@@ -128,6 +128,14 @@ export const fr = {
   aboutTagline: 'Lecteur et éditeur PDF libre, sans publicité ni télémétrie.',
   aboutLicense: 'Logiciel libre sous licence GPL-3.0-or-later.',
   aboutPdfium: 'Rendu PDF : PDFium (Google), licence BSD-3-Clause.',
+  aboutThirdParty: (crates: number, npm: number) =>
+    `Composants tiers : ${crates} crates Rust, ${npm} paquets npm`,
+  aboutNotices:
+    'Les textes complets des licences sont livrés avec l’application (pdfium/LICENSE, THIRD_PARTY_LICENSES.md).',
+  licenseName: 'Composant',
+  licenseVersion: 'Version',
+  licenseLicense: 'Licence',
+  licenseSeeFile: 'voir fichier',
   keyShift: 'Maj',
   keyNames: {
     Delete: 'Suppr',
@@ -599,6 +607,14 @@ export const en: Strings = {
   aboutTagline: 'Free PDF reader and editor, with no ads and no telemetry.',
   aboutLicense: 'Free software under the GPL-3.0-or-later licence.',
   aboutPdfium: 'PDF rendering: PDFium (Google), BSD-3-Clause licence.',
+  aboutThirdParty: (crates: number, npm: number) =>
+    `Third-party components: ${crates} Rust crates, ${npm} npm packages`,
+  aboutNotices:
+    'The full licence texts ship with the application (pdfium/LICENSE, THIRD_PARTY_LICENSES.md).',
+  licenseName: 'Component',
+  licenseVersion: 'Version',
+  licenseLicense: 'Licence',
+  licenseSeeFile: 'see file',
   keyShift: 'Shift',
   keyNames: {
     Delete: 'Del',

@@ -2,7 +2,6 @@
 //! Tests de l'acteur PDFium (`mega_core::service`).
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use mega_core::service::{PdfService, Priority, RenderRequest, ServiceHandle};
 use mega_core::testing::sample_pdf;

@@ -216,6 +216,30 @@ pub fn ink_with_matrix_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Deux cases à cocher lues autrement par pdfium-render : « sansap » (`/V /Off`, **sans**
+/// `/AS` ni `/AP`) et « on » (état coché nommé `/On`, pas `/Yes`, et cochée).
+pub fn checkbox_states_pdf() -> Vec<u8> {
+    let on = "0 0 0 rg 4 4 12 12 re f";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R] >> >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [4 0 R 5 0 R] >>".to_string(),
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /T (sansap) /V /Off /F 4 \
+         /Rect [50 700 70 720] /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /T (on) /V /On /AS /On /F 4 \
+         /Rect [50 650 70 670] /P 3 0 R /AP << /N << /On 6 0 R /Off 7 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length {} >>\nstream\n{on}\nendstream",
+            on.len()
+        ),
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>\nstream\n\nendstream"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un formulaire AcroForm écrit à la main (`/NeedAppearances true`) : texte « nom » (vide),
 /// texte multiligne « adresse », case « ok », groupe radio « choix » (A coché, B), combo
 /// « ville » (Paris, Lyon ; Paris choisi), texte lecture seule « ref », texte requis « email ».

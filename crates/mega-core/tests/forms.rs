@@ -495,3 +495,18 @@ fn signature_outside_page_is_refused() {
         Err(CoreError::InvalidOperation(_))
     ));
 }
+
+// --- Lot 9 (B17) : état coché lu soi-même ------------------------------------------------
+
+#[test]
+fn checkbox_states_are_read_from_as_then_v() {
+    let doc = Document::from_bytes(mega_core::testing::checkbox_states_pdf(), None).unwrap();
+    let fields = doc.form_fields(0).unwrap();
+    let checked = |name: &str| fields.iter().find(|f| f.name == name).unwrap().checked;
+    assert_eq!(
+        checked("sansap"),
+        Some(false),
+        "case sans apparence, /V /Off"
+    );
+    assert_eq!(checked("on"), Some(true), "état coché nommé /On");
+}

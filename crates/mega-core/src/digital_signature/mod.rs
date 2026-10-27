@@ -16,6 +16,9 @@
 //! constructeur CMS, générique sur ces traits.
 
 pub mod cms;
+mod pdf;
+
+pub use pdf::{SignOptions, SignatureInfo, signatures};
 
 use der::Decode;
 use p12_keystore::{KeyStore, KeyStoreEntry, Pkcs12ImportPolicy};
@@ -28,8 +31,11 @@ use crate::error::{CoreError, CoreResult};
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
 pub enum SignatureStatus {
-    /// Intègre : l'empreinte correspond et la signature est mathématiquement valide.
-    Valid,
+    /// **Intègre** : l'empreinte correspond, la signature est mathématiquement juste avec la
+    /// clé du certificat joint, et la date déclarée tombe dans sa période de validité.
+    /// L'**identité n'est pas certifiée** : aucune chaîne de confiance ni révocation n'est
+    /// vérifiée (il faudrait le réseau, exclu par le projet). L'interface le dit toujours.
+    Intact,
     /// Altérée ou fausse : le contenu signé ne correspond plus, ou la signature est fausse.
     Invalid(String),
     /// Format ou algorithme que cette version ne sait pas vérifier.

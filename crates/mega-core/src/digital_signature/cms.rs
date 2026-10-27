@@ -38,6 +38,10 @@ const SHA256_WITH_RSA: der::oid::ObjectIdentifier =
     der::oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
 const ECDSA_WITH_SHA256: der::oid::ObjectIdentifier =
     der::oid::ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
+const ID_CONTENT_TYPE: der::oid::ObjectIdentifier =
+    der::oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
+const ID_SUBJECT_KEY_IDENTIFIER: der::oid::ObjectIdentifier =
+    der::oid::ObjectIdentifier::new_unwrap("2.5.29.14");
 const COMMON_NAME: der::oid::ObjectIdentifier = der::oid::ObjectIdentifier::new_unwrap("2.5.4.3");
 
 /// Ce que dit une signature CMS une fois vérifiée.
@@ -207,8 +211,15 @@ pub fn verify(der: &[u8], digest: &[u8]) -> CmsCheck {
     let Ok(signed) = content_info.content.decode_as::<SignedData>() else {
         return check;
     };
-    if signed.encap_content_info.econtent.is_some() {
+    if signed.encap_content_info.econtent.is_some()
+        || signed.encap_content_info.econtent_type != ID_DATA
+    {
         check.status = unsupported("signature avec contenu encapsulé (non détachée)");
+        return check;
+    }
+    // Un seul signataire : en vérifier un et taire les autres serait trompeur.
+    if signed.signer_infos.0.len() > 1 {
+        check.status = unsupported("plusieurs signataires dans une même signature");
         return check;
     }
     let Some(info) = signed.signer_infos.0.iter().next() else {
@@ -225,16 +236,33 @@ pub fn verify(der: &[u8], digest: &[u8]) -> CmsCheck {
     check
 }
 
-/// Le certificat désigné par l'identifiant du signataire (émetteur et numéro de série).
+/// Le certificat désigné par l'identifiant du signataire : émetteur et numéro de série, ou
+/// identifiant de clé (extension `subjectKeyIdentifier`, comparée exactement). Aucun repli
+/// sur « le seul certificat présent » : un identifiant qui ne correspond pas est un échec.
 fn signer_certificate<'a>(signed: &'a SignedData, info: &SignerInfo) -> Option<&'a Certificate> {
-    let SignerIdentifier::IssuerAndSerialNumber(id) = &info.sid else {
-        // Identifiant par clé (SKI) : on se contente du seul certificat, s'il est unique.
-        let certs: Vec<&Certificate> = certificates(signed).collect();
-        return (certs.len() == 1).then(|| certs[0]);
-    };
-    certificates(signed).find(|c| {
-        c.tbs_certificate.issuer == id.issuer && c.tbs_certificate.serial_number == id.serial_number
-    })
+    match &info.sid {
+        SignerIdentifier::IssuerAndSerialNumber(id) => certificates(signed).find(|c| {
+            c.tbs_certificate.issuer == id.issuer
+                && c.tbs_certificate.serial_number == id.serial_number
+        }),
+        SignerIdentifier::SubjectKeyIdentifier(ski) => {
+            certificates(signed).find(|c| subject_key_identifier(c).as_ref() == Some(ski))
+        }
+    }
+}
+
+/// L'extension `subjectKeyIdentifier` d'un certificat, si elle est présente et lisible.
+fn subject_key_identifier(
+    cert: &Certificate,
+) -> Option<x509_cert::ext::pkix::SubjectKeyIdentifier> {
+    cert.tbs_certificate
+        .extensions
+        .as_ref()?
+        .iter()
+        .find(|e| e.extn_id == ID_SUBJECT_KEY_IDENTIFIER)
+        .and_then(|e| {
+            x509_cert::ext::pkix::SubjectKeyIdentifier::from_der(e.extn_value.as_bytes()).ok()
+        })
 }
 
 fn certificates(signed: &SignedData) -> impl Iterator<Item = &Certificate> {
@@ -246,13 +274,15 @@ fn certificates(signed: &SignedData) -> impl Iterator<Item = &Certificate> {
     })
 }
 
-/// Valeur de l'attribut signé `oid`, s'il est présent une fois.
+/// Valeur de l'attribut signé `oid`, seulement s'il est présent **une fois** avec **une**
+/// valeur : un attribut obligatoire en double rend la signature ambiguë, donc refusée.
 fn attribute(info: &SignerInfo, oid: der::oid::ObjectIdentifier) -> Option<&AttributeValue> {
-    info.signed_attrs
-        .as_ref()?
-        .iter()
-        .find(|a| a.oid == oid)
-        .and_then(|a| a.values.iter().next())
+    let mut matching = info.signed_attrs.as_ref()?.iter().filter(|a| a.oid == oid);
+    let attr = matching.next()?;
+    if matching.next().is_some() || attr.values.len() != 1 {
+        return None;
+    }
+    attr.values.iter().next()
 }
 
 fn signing_time(info: &SignerInfo) -> Option<i64> {
@@ -284,6 +314,25 @@ fn verify_signer(info: &SignerInfo, cert: &Certificate, digest: &[u8]) -> Signat
     if stated.as_bytes() != digest {
         return invalid("le contenu a été modifié depuis la signature");
     }
+    // `content-type` est obligatoire (RFC 5652 §5.3) et doit désigner des données (`id-data`) :
+    // sinon une signature faite pour un autre usage pourrait être réemployée ici.
+    let content_type = attribute(info, ID_CONTENT_TYPE)
+        .and_then(|v| v.decode_as::<der::oid::ObjectIdentifier>().ok());
+    if content_type != Some(ID_DATA) {
+        return invalid("attribut content-type absent, en double ou inattendu");
+    }
+    // Contrôle local de la date déclarée : dans la période de validité du certificat.
+    if let Some(when) = signing_time(info) {
+        let validity = &cert.tbs_certificate.validity;
+        let secs = |t: &x509_cert::time::Time| i64::try_from(t.to_unix_duration().as_secs()).ok();
+        let inside = matches!(
+            (secs(&validity.not_before), secs(&validity.not_after)),
+            (Some(from), Some(to)) if from <= when && when <= to
+        );
+        if !inside {
+            return invalid("date de signature hors de la période de validité du certificat");
+        }
+    }
     // Ce qui est signé : les attributs signés encodés comme un SET (étiquette 0x31).
     let Ok(message) = signed_attrs.to_der() else {
         return invalid("attributs signés illisibles");
@@ -299,11 +348,14 @@ fn verify_signer(info: &SignerInfo, cert: &Certificate, digest: &[u8]) -> Signat
         let Ok(public) = rsa::RsaPublicKey::from_public_key_der(&spki_der) else {
             return invalid("clé publique RSA illisible");
         };
+        if rsa::traits::PublicKeyParts::size(&public) * 8 < 2048 {
+            return unsupported("clé RSA trop courte (moins de 2048 bits)");
+        }
         let Ok(sig) = rsa::pkcs1v15::Signature::try_from(signature) else {
             return invalid("valeur de signature RSA illisible");
         };
         match rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public).verify(&message, &sig) {
-            Ok(()) => SignatureStatus::Valid,
+            Ok(()) => SignatureStatus::Intact,
             Err(_) => invalid("signature RSA fausse"),
         }
     } else if algorithm == ECDSA_WITH_SHA256 {
@@ -316,7 +368,7 @@ fn verify_signer(info: &SignerInfo, cert: &Certificate, digest: &[u8]) -> Signat
             return invalid("valeur de signature ECDSA illisible");
         };
         match public.verify(&message, &sig) {
-            Ok(()) => SignatureStatus::Valid,
+            Ok(()) => SignatureStatus::Intact,
             Err(_) => invalid("signature ECDSA fausse"),
         }
     } else {

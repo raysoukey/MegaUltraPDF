@@ -688,6 +688,28 @@ impl Document {
             self.history.saved_position = Some(self.history.position);
             return Ok(());
         }
+        let bytes = self.rewritten_bytes()?;
+        write_atomically(path, &bytes)?;
+        self.set_path(Some(path.to_path_buf()));
+        self.history.saved_position = Some(self.history.position);
+        // Ce qui vient d'être écrit est désormais l'état du fichier.
+        self.file_bytes = bytes;
+        self.changed = false;
+        Ok(())
+    }
+
+    /// Le document vient d'être écrit dans `path` avec les octets `bytes` (enregistrement ou
+    /// signature) : ce fichier devient son état de référence.
+    pub(crate) fn mark_saved(&mut self, path: &Path, bytes: Vec<u8>) {
+        self.set_path(Some(path.to_path_buf()));
+        self.history.saved_position = Some(self.history.position);
+        self.file_bytes = bytes;
+        self.changed = false;
+    }
+
+    /// Le document réécrit tel que « Enregistrer » l'écrirait (sans l'écrire) : PDFium, puis
+    /// passe de nettoyage `lopdf`. Sert aussi de base à une signature d'un document modifié.
+    pub(crate) fn rewritten_bytes(&mut self) -> CoreResult<Vec<u8>> {
         // Chaque rendu avec annotations laisse dans le document PDFium des objets orphelins
         // (apparences de popup) que `save_to_bytes` écrirait. Recharger depuis les octets
         // courants ne garde que les objets atteignables : le fichier enregistré est propre,
@@ -701,14 +723,7 @@ impl Document {
             bytes
         };
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
-        let bytes = crate::cleanup::before_save(&bytes)?;
-        write_atomically(path, &bytes)?;
-        self.set_path(Some(path.to_path_buf()));
-        self.history.saved_position = Some(self.history.position);
-        // Ce qui vient d'être écrit est désormais l'état du fichier.
-        self.file_bytes = bytes;
-        self.changed = false;
-        Ok(())
+        crate::cleanup::before_save(&bytes)
     }
 
     /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.

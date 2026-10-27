@@ -171,7 +171,7 @@ impl Document {
 /// Chaîne de texte PDF (§7.9.2.2) : UTF-16BE si elle commence par le BOM `FE FF`, sinon
 /// PDFDocEncoding, dont les 256 valeurs coïncident avec Latin-1 pour tout ce qu'une date ou
 /// un titre ordinaire contient.
-fn decode_text_string(bytes: &[u8]) -> String {
+pub(crate) fn decode_text_string(bytes: &[u8]) -> String {
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
         let (pairs, _odd) = rest.as_chunks::<2>();
         let units: Vec<u16> = pairs.iter().map(|c| u16::from_be_bytes(*c)).collect();

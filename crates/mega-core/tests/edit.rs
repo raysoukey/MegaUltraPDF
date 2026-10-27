@@ -318,3 +318,87 @@ fn never_saved_document_stays_modified_through_undo() {
     doc.save_as(dir.path().join("fusion.pdf")).unwrap();
     assert!(!doc.is_modified());
 }
+
+// ---- Lot 3 : annotations ----
+
+#[test]
+fn annotation_commands_undo_and_labels() {
+    use mega_core::{AnnotationKind, Color, Geometry, NewAnnotation, Rect, Style};
+    let mut doc = three();
+    let style = Style {
+        color: Color {
+            r: 229,
+            g: 57,
+            b: 53,
+        },
+        fill: None,
+        opacity: 1.0,
+        stroke_width: 2.0,
+        font_size: 14.0,
+    };
+    let rect = NewAnnotation {
+        kind: AnnotationKind::Rect,
+        geometry: Geometry::Rect {
+            rect: Rect {
+                x: 100.0,
+                y: 500.0,
+                w: 200.0,
+                h: 100.0,
+            },
+        },
+        style,
+        contents: String::new(),
+        author: "Moi".to_string(),
+    };
+    doc.apply(&EditCommand::AddAnnotation {
+        page: 0,
+        annotation: rect.clone(),
+    })
+    .unwrap();
+    assert_eq!(doc.annotations(0).unwrap().len(), 1);
+    assert_eq!(doc.undo_label().as_deref(), Some("Ajouter : Rectangle"));
+    assert!(doc.is_modified());
+    doc.undo().unwrap();
+    assert!(doc.annotations(0).unwrap().is_empty());
+    doc.redo().unwrap();
+    assert_eq!(doc.annotations(0).unwrap().len(), 1);
+
+    doc.apply(&EditCommand::MoveAnnotation {
+        page: 0,
+        index: 0,
+        rect: Rect {
+            x: 10.0,
+            y: 10.0,
+            w: 100.0,
+            h: 50.0,
+        },
+    })
+    .unwrap();
+    let a = &doc.annotations(0).unwrap()[0];
+    assert!((a.rect.x - 10.0).abs() < 1.5, "{:?}", a.rect);
+    assert_eq!(doc.undo_label().as_deref(), Some("Déplacer : Rectangle"));
+
+    let mut recolored = rect.clone();
+    recolored.style.color = Color { r: 0, g: 0, b: 255 };
+    doc.apply(&EditCommand::UpdateAnnotation {
+        page: 0,
+        index: 0,
+        annotation: recolored,
+    })
+    .unwrap();
+    let anns = doc.annotations(0).unwrap();
+    assert_eq!(anns.len(), 1);
+    assert_eq!(anns[0].color, Some(Color { r: 0, g: 0, b: 255 }));
+    assert_eq!(doc.undo_label().as_deref(), Some("Modifier : Rectangle"));
+
+    doc.apply(&EditCommand::DeleteAnnotation { page: 0, index: 0 })
+        .unwrap();
+    assert!(doc.annotations(0).unwrap().is_empty());
+    assert_eq!(doc.undo_label().as_deref(), Some("Supprimer : Rectangle"));
+    // Supprimer un index absent : refusé, document et historique inchangés.
+    assert!(
+        doc.apply(&EditCommand::DeleteAnnotation { page: 0, index: 7 })
+            .is_err()
+    );
+    assert_eq!(doc.undo_label().as_deref(), Some("Supprimer : Rectangle"));
+}

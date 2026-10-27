@@ -17,9 +17,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::annotations::NewAnnotation;
 use crate::document::{Document, PageSize};
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
+use crate::geometry::Rect;
 
 /// Une édition de la structure du document, sérialisable (le frontend l'envoie telle quelle).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,6 +62,38 @@ pub enum EditCommand {
         /// Index d'insertion.
         at: u16,
     },
+    /// Ajoute une annotation (Lot 3).
+    AddAnnotation {
+        /// Page (index 0-based).
+        page: u16,
+        /// Ce qu'il faut créer.
+        annotation: NewAnnotation,
+    },
+    /// Supprime une annotation.
+    DeleteAnnotation {
+        /// Page.
+        page: u16,
+        /// Index dans le tableau `/Annots` de la page.
+        index: u16,
+    },
+    /// Remplace une annotation (supprimée puis recréée ; son index peut changer).
+    UpdateAnnotation {
+        /// Page.
+        page: u16,
+        /// Index actuel.
+        index: u16,
+        /// Nouvelle définition.
+        annotation: NewAnnotation,
+    },
+    /// Déplace ou redimensionne une annotation.
+    MoveAnnotation {
+        /// Page.
+        page: u16,
+        /// Index actuel.
+        index: u16,
+        /// Nouvelle emprise (`/Rect`).
+        rect: Rect,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -68,6 +102,11 @@ pub trait Command {
     fn label(&self) -> String;
     /// Applique l'édition ; en cas d'erreur, le document doit rester inchangé.
     fn apply(&self, doc: &mut Document) -> CoreResult<()>;
+    /// Si la commande vise une annotation existante : (verbe, page, index), pour que
+    /// l'historique nomme le genre réel (« Supprimer : Note »). Par défaut : aucune.
+    fn annotation_target(&self) -> Option<(&'static str, u16, u16)> {
+        None
+    }
 }
 
 fn plural(n: usize, singular: &str, plural: &str) -> String {
@@ -103,6 +142,24 @@ impl Command for EditCommand {
                     None => format!("Insérer les pages de {name}"),
                 }
             }
+            EditCommand::AddAnnotation { annotation, .. } => {
+                format!("Ajouter : {}", annotation.kind.label_fr())
+            }
+            // Le genre n'est connu qu'à l'exécution ; le libellé est précisé par `apply`
+            // via `label_with_kind` (voir `Document::apply` pour les annotations).
+            EditCommand::DeleteAnnotation { .. } => "Supprimer : Annotation".to_string(),
+            EditCommand::UpdateAnnotation { annotation, .. } => {
+                format!("Modifier : {}", annotation.kind.label_fr())
+            }
+            EditCommand::MoveAnnotation { .. } => "Déplacer : Annotation".to_string(),
+        }
+    }
+
+    fn annotation_target(&self) -> Option<(&'static str, u16, u16)> {
+        match self {
+            EditCommand::DeleteAnnotation { page, index } => Some(("Supprimer", *page, *index)),
+            EditCommand::MoveAnnotation { page, index, .. } => Some(("Déplacer", *page, *index)),
+            _ => None,
         }
     }
 
@@ -119,6 +176,21 @@ impl Command for EditCommand {
                 let other = Document::open(path, None)?;
                 let all: Vec<u16> = (0..other.page_count()).collect();
                 doc.insert_pages_from(&other, pages.as_deref().unwrap_or(&all), *at)
+            }
+            EditCommand::AddAnnotation { page, annotation } => {
+                doc.add_annotation(*page, annotation).map(|_| ())
+            }
+            EditCommand::DeleteAnnotation { page, index } => doc.delete_annotation(*page, *index),
+            EditCommand::UpdateAnnotation {
+                page,
+                index,
+                annotation,
+            } => {
+                doc.delete_annotation(*page, *index)?;
+                doc.add_annotation(*page, annotation).map(|_| ())
+            }
+            EditCommand::MoveAnnotation { page, index, rect } => {
+                doc.set_annotation_rect(*page, *index, *rect).map(|_| ())
             }
         }
     }
@@ -212,6 +284,7 @@ impl Document {
     /// Applique une commande et l'enregistre dans l'historique. Si la commande échoue,
     /// ni le document ni l'historique ne changent.
     pub fn apply(&mut self, command: &dyn Command) -> CoreResult<()> {
+        let label = self.label_for(command);
         let before = self.to_bytes()?;
         if let Err(e) = command.apply(self) {
             // Une commande peut échouer après avoir commencé à modifier le document
@@ -228,11 +301,28 @@ impl Document {
             }
         }
         self.history.push_undo(Snapshot {
-            label: command.label(),
+            label,
             bytes: before,
         });
         self.history.position += 1;
         Ok(())
+    }
+
+    /// Libellé d'une commande, précisé quand il dépend de l'état du document (le genre de
+    /// l'annotation supprimée ou déplacée n'est connu qu'avant l'application).
+    fn label_for(&self, command: &dyn Command) -> String {
+        let generic = command.label();
+        let Some((verb, page, index)) = command.annotation_target() else {
+            return generic;
+        };
+        match self
+            .annotations(page)
+            .ok()
+            .and_then(|a| a.into_iter().find(|a| a.index == index))
+        {
+            Some(a) => format!("{verb} : {}", a.kind.label_fr()),
+            None => generic,
+        }
     }
 
     /// Annule la dernière édition.

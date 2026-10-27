@@ -34,3 +34,4 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [`Read`, `Write` et `Cursor` : des octets sans se soucier d'où ils viennent](concepts/read-write-et-cursor.md)
 - [Features Cargo et dépendances : n'embarquer que ce qui sert](concepts/features-cargo-et-dependances.md)
 - [Profils Cargo et distribution : du `cargo run` au paquet installé](concepts/profils-cargo-et-distribution.md)
+- [Complexité et collections : choisir `Vec`, `HashMap` ou `BTreeSet`](concepts/complexite-et-collections.md)

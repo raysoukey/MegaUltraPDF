@@ -47,7 +47,7 @@ et l'élément n'a plus besoin d'être comparable du tout (`impl<T>` sans `T: Eq
 sur un `BTreeSet`, un logarithme. Le cache des pages range ses dates d'utilisation dans un
 `BTreeMap` (le premier élément est le moins récent) ; l'élagage des objets PDF suit le graphe
 avec un `BTreeSet` au lieu du `Vec` de `lopdf`.
-- Fiche proposée : `/concept complexite-et-collections`.
+- Fiche : [`complexite-et-collections`](concepts/complexite-et-collections.md).
 
 ### 6. Fonction nommée contre fermeture : les durées de vie (`crates/mega-core/src/properties.rs:145`)
 

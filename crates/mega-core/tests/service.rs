@@ -443,3 +443,45 @@ fn form_requests() {
         .unwrap();
     assert_ne!(before, after, "cache de rendu invalidé");
 }
+
+// --- Lot 8 : OCR et signature par l'acteur -----------------------------------------------
+
+#[cfg(feature = "ocr")]
+#[test]
+fn pages_with_text_through_the_service() {
+    let handle = PdfService::spawn();
+    let scanned = handle
+        .open_bytes(mega_core::testing::scanned_pdf(), None)
+        .unwrap();
+    assert_eq!(handle.pages_with_text(scanned.id).unwrap(), vec![false; 3]);
+    let text = handle.open_bytes(sample_pdf(2, "texte"), None).unwrap();
+    assert_eq!(handle.pages_with_text(text.id).unwrap(), vec![true; 2]);
+}
+
+#[cfg(feature = "signature")]
+#[test]
+fn signatures_and_signing_through_the_service() {
+    use mega_core::digital_signature::{SignOptions, SignatureStatus};
+    let handle = PdfService::spawn();
+    let summary = handle.open_bytes(sample_pdf(2, "signé"), None).unwrap();
+    assert!(handle.signatures(summary.id).unwrap().is_empty());
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("signe.pdf");
+    let p12 =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/test-signer.p12");
+    let (signed, state) = handle
+        .sign_document(summary.id, &out, &p12, "test", SignOptions::default())
+        .unwrap();
+    assert_eq!(signed.path.as_deref(), Some(out.to_string_lossy().as_ref()));
+    assert!(!state.modified);
+    let list = handle.signatures(summary.id).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].status, SignatureStatus::Intact);
+    // Mauvais mot de passe : erreur typée, rien d'écrit.
+    let other = dir.path().join("autre.pdf");
+    let err = handle
+        .sign_document(summary.id, &other, &p12, "faux", SignOptions::default())
+        .unwrap_err();
+    assert!(matches!(err, CoreError::WrongPassword), "{err:?}");
+    assert!(!other.exists());
+}

@@ -411,4 +411,60 @@ pub enum Command {
         #[arg(long)]
         password: Option<String>,
     },
+    /// Rend cherchables les pages numérisées : reconnaissance du texte par Tesseract, ajouté
+    /// en couche invisible (les pages qui ont déjà du texte sont ignorées).
+    #[cfg(feature = "ocr")]
+    Ocr {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Langues Tesseract, séparées par `+` (ex. « fra+eng »).
+        #[arg(long, default_value = "eng")]
+        lang: String,
+        /// Pages visées (ex. « 1,3-4 ») ; toutes si absent.
+        #[arg(long)]
+        pages: Option<String>,
+        /// Chemin de l'exécutable `tesseract` (sinon : MEGA_TESSERACT, PATH, dossiers usuels).
+        #[arg(long)]
+        tesseract: Option<PathBuf>,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Signe un PDF avec un certificat PKCS#12 (.p12 / .pfx) ; le mot de passe du certificat
+    /// est lu dans MEGA_P12_PASSWORD ou sur l'entrée standard.
+    #[cfg(feature = "signature")]
+    Sign {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Fichier du certificat (PKCS#12).
+        #[arg(long)]
+        p12: PathBuf,
+        /// Motif de la signature.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Lieu de la signature.
+        #[arg(long)]
+        location: Option<String>,
+        /// Contact du signataire.
+        #[arg(long)]
+        contact: Option<String>,
+        /// Fichier PDF signé à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe du PDF, s'il est chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Liste et vérifie les signatures numériques d'un PDF.
+    #[cfg(feature = "signature")]
+    Signatures {
+        /// Fichier PDF à vérifier.
+        file: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
 }

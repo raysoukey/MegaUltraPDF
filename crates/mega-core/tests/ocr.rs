@@ -175,3 +175,16 @@ fn ocr_makes_a_scanned_page_searchable_and_is_undoable() {
     doc.undo().unwrap();
     assert!(doc.search_page(1, "Page 2", &options).unwrap().is_empty());
 }
+
+#[test]
+fn ocr_status_matches_the_installed_tool() {
+    let status = ocr::ocr_status();
+    assert_eq!(status.available, ocr::find_tesseract().is_some());
+    assert_eq!(status.available, status.path.is_some());
+    if status.available {
+        assert!(!status.languages.is_empty(), "{status:?}");
+        assert!(!status.languages.contains(&"osd".to_string()));
+    } else {
+        assert!(status.languages.is_empty());
+    }
+}

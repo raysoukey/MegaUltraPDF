@@ -224,6 +224,28 @@ enum Request {
         id: DocId,
         reply: SyncSender<CoreResult<crate::security::SecurityInfo>>,
     },
+    /// Pour chaque page, contient-elle déjà du texte ? (choix des pages à reconnaître)
+    #[cfg(feature = "ocr")]
+    PagesWithText {
+        id: DocId,
+        reply: SyncSender<CoreResult<Vec<bool>>>,
+    },
+    /// Signatures numériques du fichier, vérifiées.
+    #[cfg(feature = "signature")]
+    Signatures {
+        id: DocId,
+        reply: SyncSender<CoreResult<Vec<crate::digital_signature::SignatureInfo>>>,
+    },
+    /// Signe le document avec l'identité d'un fichier PKCS#12 et l'enregistre dans `path`.
+    #[cfg(feature = "signature")]
+    SignDocument {
+        id: DocId,
+        path: PathBuf,
+        p12: PathBuf,
+        password: String,
+        options: crate::digital_signature::SignOptions,
+        reply: SyncSender<CoreResult<(DocumentSummary, EditState)>>,
+    },
     /// Pièces jointes.
     Attachments {
         id: DocId,
@@ -597,6 +619,43 @@ impl ServiceHandle {
         self.call(|reply| Request::Security { id, reply })
     }
 
+    /// Pages qui contiennent déjà du texte (voir `Document::page_has_text`).
+    #[cfg(feature = "ocr")]
+    pub fn pages_with_text(&self, id: DocId) -> CoreResult<Vec<bool>> {
+        self.call(|reply| Request::PagesWithText { id, reply })
+    }
+
+    /// Signatures numériques du fichier (voir `Document::signatures`).
+    #[cfg(feature = "signature")]
+    pub fn signatures(
+        &self,
+        id: DocId,
+    ) -> CoreResult<Vec<crate::digital_signature::SignatureInfo>> {
+        self.call(|reply| Request::Signatures { id, reply })
+    }
+
+    /// Signe le document avec l'identité du fichier PKCS#12 `p12` et l'enregistre dans
+    /// `path` (voir `Document::sign_to`) ; retourne le nouveau résumé et l'état d'édition.
+    #[cfg(feature = "signature")]
+    pub fn sign_document(
+        &self,
+        id: DocId,
+        path: impl Into<PathBuf>,
+        p12: impl Into<PathBuf>,
+        password: &str,
+        options: crate::digital_signature::SignOptions,
+    ) -> CoreResult<(DocumentSummary, EditState)> {
+        let (path, p12, password) = (path.into(), p12.into(), password.to_string());
+        self.call(|reply| Request::SignDocument {
+            id,
+            path,
+            p12,
+            password,
+            options,
+            reply,
+        })
+    }
+
     /// Pièces jointes (voir `Document::attachments`).
     pub fn attachments(&self, id: DocId) -> CoreResult<Vec<crate::attachments::Attachment>> {
         self.call(|reply| Request::Attachments { id, reply })
@@ -865,6 +924,42 @@ impl Actor {
             }
             Request::Attachments { id, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.attachments()));
+            }
+            #[cfg(feature = "ocr")]
+            Request::PagesWithText { id, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| {
+                    (0..e.doc.page_count())
+                        .map(|p| e.doc.page_has_text(p))
+                        .collect()
+                }));
+            }
+            #[cfg(feature = "signature")]
+            Request::Signatures { id, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.signatures()));
+            }
+            #[cfg(feature = "signature")]
+            Request::SignDocument {
+                id,
+                path,
+                p12,
+                password,
+                options,
+                reply,
+            } => {
+                // Signer enregistre sans changer l'aspect des pages : pas d'invalidation.
+                let result = match self.docs.get_mut(&id) {
+                    Some(entry) => std::fs::read(&p12)
+                        .map_err(CoreError::from)
+                        .and_then(|bytes| {
+                            crate::digital_signature::SigningIdentity::from_pkcs12(
+                                &bytes, &password,
+                            )
+                        })
+                        .and_then(|identity| entry.doc.sign_to(&path, &identity, &options))
+                        .and_then(|_| Ok((summary_of(id, entry)?, entry.doc.edit_state()))),
+                    None => Err(CoreError::NotFound { id }),
+                };
+                let _ = reply.send(result);
             }
             Request::SaveAttachment {
                 id,

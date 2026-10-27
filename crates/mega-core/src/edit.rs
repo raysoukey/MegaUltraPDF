@@ -684,17 +684,15 @@ impl Document {
         // Document intact : les octets du fichier, tels quels (signatures préservées).
         if !self.changed {
             write_atomically(path, &self.file_bytes)?;
-            self.set_path(Some(path.to_path_buf()));
-            self.history.saved_position = Some(self.history.position);
+            // Les octets du fichier restent les mêmes : on les reprend sans copie.
+            let bytes = std::mem::take(&mut self.file_bytes);
+            self.mark_saved(path, bytes);
             return Ok(());
         }
         let bytes = self.rewritten_bytes()?;
         write_atomically(path, &bytes)?;
-        self.set_path(Some(path.to_path_buf()));
-        self.history.saved_position = Some(self.history.position);
         // Ce qui vient d'être écrit est désormais l'état du fichier.
-        self.file_bytes = bytes;
-        self.changed = false;
+        self.mark_saved(path, bytes);
         Ok(())
     }
 

@@ -17,6 +17,8 @@ unsafe_code = "forbid"
 mega-core = { path = "../mega-core" }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
+# Affichage des dates de signature (`mega signatures`) ; déjà dans l'arbre via mega-core.
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -27,4 +29,4 @@ tempfile = "3"
 # Le produit livré contient les options de `mega-core` (désactivées par défaut dans la bibliothèque).
 default = ["ocr", "signature"]
 ocr = ["mega-core/ocr"]
-signature = ["mega-core/signature"]
+signature = ["mega-core/signature", "dep:chrono"]

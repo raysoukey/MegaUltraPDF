@@ -265,6 +265,34 @@ pub fn tesseract_languages(exe: &Path) -> CoreResult<Vec<String>> {
     Ok(langs)
 }
 
+/// État de l'OCR pour l'interface : Tesseract trouvé ou non, et ses langues installées.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OcrStatus {
+    /// Vrai si un exécutable `tesseract` utilisable a été trouvé.
+    pub available: bool,
+    /// Son chemin, s'il a été trouvé.
+    pub path: Option<String>,
+    /// Langues installées (sans `osd`), triées ; vide si Tesseract est absent.
+    pub languages: Vec<String>,
+}
+
+/// L'état de l'OCR : où est Tesseract, et quelles langues il connaît. Un Tesseract trouvé
+/// mais inutilisable (`--list-langs` échoue) compte comme absent.
+pub fn ocr_status() -> OcrStatus {
+    match find_tesseract().and_then(|exe| tesseract_languages(&exe).ok().map(|l| (exe, l))) {
+        Some((exe, languages)) => OcrStatus {
+            available: true,
+            path: Some(exe.to_string_lossy().into_owned()),
+            languages,
+        },
+        None => OcrStatus {
+            available: false,
+            path: None,
+            languages: Vec::new(),
+        },
+    }
+}
+
 impl Document {
     /// Vrai si la page contient du texte extractible (visible ou invisible) : une page déjà
     /// reconnue n'est pas reconnue une seconde fois.

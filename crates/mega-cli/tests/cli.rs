@@ -728,3 +728,79 @@ fn optimize_attachments_and_compare_commands() {
         .stdout(predicate::str::contains("pixels différents"));
     assert!(diff.exists());
 }
+
+// --- Lot 8 : signature et OCR --------------------------------------------------------------
+
+#[test]
+fn sign_then_signatures_reports_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("signe.pdf");
+    mega()
+        .args([
+            "sign",
+            &fixture("simple.pdf"),
+            "--p12",
+            &fixture("test-signer.p12"),
+        ])
+        .args(["--reason", "Approuvé", "-o"])
+        .arg(&out)
+        .env("MEGA_P12_PASSWORD", "test")
+        .assert()
+        .success();
+    mega()
+        .arg("signatures")
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("MegaUltraPDF Test Signer"))
+        .stdout(predicate::str::contains("intègre"))
+        .stdout(predicate::str::contains("Approuvé"));
+}
+
+#[test]
+fn sign_with_a_wrong_password_fails_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("signe.pdf");
+    mega()
+        .args([
+            "sign",
+            &fixture("simple.pdf"),
+            "--p12",
+            &fixture("test-signer.p12"),
+            "-o",
+        ])
+        .arg(&out)
+        .env("MEGA_P12_PASSWORD", "faux")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("incorrect"));
+    assert!(!out.exists());
+}
+
+#[test]
+fn signatures_of_an_unsigned_file() {
+    mega()
+        .args(["signatures", &fixture("simple.pdf")])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Aucune signature"));
+}
+
+#[test]
+fn ocr_without_tesseract_fails_cleanly() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("ocr.pdf");
+    mega()
+        .args([
+            "ocr",
+            &fixture("scanned.pdf"),
+            "--tesseract",
+            "/nulle/part/tesseract",
+            "-o",
+        ])
+        .arg(&out)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Tesseract"));
+    assert!(!out.exists());
+}

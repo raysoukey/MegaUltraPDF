@@ -2783,6 +2783,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "chrono",
  "clap",
  "mega-core",
  "predicates",

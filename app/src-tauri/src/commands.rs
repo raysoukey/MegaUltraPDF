@@ -332,6 +332,56 @@ pub async fn edit_state(
     blocking(handle, move |h| h.edit_state(id)).await
 }
 
+/// État de Tesseract pour l'OCR : trouvé ou non, et ses langues installées.
+#[tauri::command]
+pub async fn ocr_status(
+    service: State<'_, ServiceHandle>,
+) -> Result<mega_core::ocr::OcrStatus, AppError> {
+    // Pas de PDFium ici : seulement un processus `tesseract --list-langs`, hors du thread
+    // de l'interface.
+    let handle = service.inner().clone();
+    blocking(handle, |_| Ok(mega_core::ocr::ocr_status())).await
+}
+
+/// Pour chaque page, contient-elle déjà du texte ? (choix des pages à reconnaître)
+#[tauri::command]
+pub async fn pages_with_text(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<Vec<bool>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.pages_with_text(id)).await
+}
+
+/// Signatures numériques du fichier ouvert, vérifiées.
+#[tauri::command]
+pub async fn signatures(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<Vec<mega_core::digital_signature::SignatureInfo>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.signatures(id)).await
+}
+
+/// Signe le document avec le certificat `p12` (mot de passe `password`) et l'enregistre dans
+/// `path`. Le mot de passe ne fait que passer : il n'est ni gardé ni journalisé.
+#[tauri::command]
+pub async fn sign_document(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    path: String,
+    p12: String,
+    password: String,
+    options: mega_core::digital_signature::SignOptions,
+) -> Result<EditResult, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| {
+        h.sign_document(id, path, p12, &password, options)
+            .map(EditResult::from)
+    })
+    .await
+}
+
 /// Enregistre le document à son chemin, ou dans `path` s'il est fourni (« Enregistrer sous »).
 #[tauri::command]
 pub async fn save_document(
@@ -443,6 +493,35 @@ mod tests {
 
     fn fixture(name: &str) -> String {
         format!("{}/../../fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    #[test]
+    fn signature_info_serializes_for_the_frontend() {
+        // Forme attendue par `api.ts` (`SignatureInfo`, `SignatureStatus`).
+        let info = mega_core::digital_signature::signatures(
+            &std::fs::read(fixture("signed-external.pdf")).unwrap(),
+        )
+        .unwrap();
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json[0]["status"], serde_json::json!({ "kind": "intact" }));
+        assert_eq!(json[0]["field"], "Sig1");
+        assert_eq!(json[0]["covers_whole_document"], true);
+        assert!(json[0]["signed_at"].is_i64());
+        let invalid = serde_json::to_value(mega_core::digital_signature::SignatureStatus::Invalid(
+            "modifié".to_string(),
+        ))
+        .unwrap();
+        assert_eq!(
+            invalid,
+            serde_json::json!({ "kind": "invalid", "detail": "modifié" })
+        );
+    }
+
+    #[test]
+    fn ocr_status_serializes_for_the_frontend() {
+        let json = serde_json::to_value(mega_core::ocr::ocr_status()).unwrap();
+        assert!(json["available"].is_boolean());
+        assert!(json["languages"].is_array());
     }
 
     #[test]

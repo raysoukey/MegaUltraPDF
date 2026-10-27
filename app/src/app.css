@@ -7,8 +7,10 @@
   --panel: #f7f7f8;
   --panel-border: #d0d0d5;
   --text: #1d1d1f;
-  --muted: #6e6e73;
+  --muted: #5d5d62;
   --accent: #2563eb;
+  /* Texte sur la couleur d'accent (boutons principaux, onglet actif) : ≥ 4,5:1. */
+  --on-accent: #ffffff;
   --accent-soft: rgba(37, 99, 235, 0.18);
   --danger-bg: #fde8e8;
   --danger-text: #8a1c1c;
@@ -28,6 +30,7 @@
     --text: #ececef;
     --muted: #a0a0a8;
     --accent: #60a5fa;
+    --on-accent: #0b1220;
     --accent-soft: rgba(96, 165, 250, 0.22);
     --danger-bg: #3b1d1d;
     --danger-text: #fca5a5;
@@ -44,6 +47,7 @@
   --text: #ececef;
   --muted: #a0a0a8;
   --accent: #60a5fa;
+  --on-accent: #0b1220;
   --accent-soft: rgba(96, 165, 250, 0.22);
   --danger-bg: #3b1d1d;
   --danger-text: #fca5a5;
@@ -133,6 +137,18 @@ select {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }
 
+.dialog-form {
+  /* Le <form> d'un dialogue est transparent pour la mise en page : ses enfants se placent
+     comme s'ils étaient directement dans .dialog (le rôle dialog est porté par l'enveloppe). */
+  display: contents;
+}
+
+/* Contour de focus visible au clavier seulement (pas au clic). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .dialog h2 {
   margin: 0 0 0.75rem;
   font-size: 1.05rem;
@@ -147,5 +163,5 @@ select {
 
 .dialog .actions .primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }

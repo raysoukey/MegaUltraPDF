@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { t } from '$lib/strings';
 
   let {
@@ -27,33 +28,34 @@
 </script>
 
 <div class="dialog-backdrop" role="presentation">
-  <form
-    class="dialog"
-    aria-labelledby="pwd-title"
-    onsubmit={(e) => {
-      e.preventDefault();
-      onsubmit(password);
-    }}
-  >
-    <h2 id="pwd-title">{t.passwordPrompt}</h2>
-    <p class="file">{fileName(path)}</p>
-    <p>{t.passwordRequired}</p>
-    <input
-      bind:this={input}
-      bind:value={password}
-      type="password"
-      placeholder={t.passwordPlaceholder}
-      aria-label={t.passwordPrompt}
-      autocomplete="off"
-    />
-    {#if error}
-      <p class="error" role="alert">{error}</p>
-    {/if}
-    <div class="actions">
-      <button type="button" onclick={oncancel}>{t.cancel}</button>
-      <button type="submit" class="primary" disabled={password.length === 0}>{t.ok}</button>
-    </div>
-  </form>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="pwd-title" use:trapFocus>
+    <form
+      class="dialog-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        onsubmit(password);
+      }}
+    >
+      <h2 id="pwd-title">{t.passwordPrompt}</h2>
+      <p class="file">{fileName(path)}</p>
+      <p>{t.passwordRequired}</p>
+      <input
+        bind:this={input}
+        bind:value={password}
+        type="password"
+        placeholder={t.passwordPlaceholder}
+        aria-label={t.passwordPrompt}
+        autocomplete="off"
+      />
+      {#if error}
+        <p class="error" role="alert">{error}</p>
+      {/if}
+      <div class="actions">
+        <button type="button" onclick={oncancel}>{t.cancel}</button>
+        <button type="submit" class="primary" disabled={password.length === 0}>{t.ok}</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <style>

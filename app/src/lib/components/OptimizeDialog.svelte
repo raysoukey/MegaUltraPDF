@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { isAppError, optimizePreview, type OptimizeOptions, type OptimizeReport } from '$lib/api';
   import { optimizeDoc, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
@@ -65,83 +66,95 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <form
+  <div
     class="dialog"
+    role="dialog"
+    aria-modal="true"
     aria-labelledby="optimize-title"
-    onsubmit={(e) => {
-      e.preventDefault();
-      if (done) onclose();
-      else if (gain) apply();
-      else analyze();
-    }}
+    use:trapFocus
   >
-    <h2 id="optimize-title">{t.optimizeTitle}</h2>
-    {#if done}
-      <p role="status">{t.optimizeDone}</p>
-      <p class="muted">{t.optimizeSaveHint}</p>
-    {:else}
-      <p class="muted">{t.optimizeHint}</p>
-      <label class="row check">
-        <input type="checkbox" bind:this={first} bind:checked={recompress} onchange={invalidate} />
-        {t.optimizeRecompress}
-      </label>
-      <label class="row">
-        {t.optimizeQuality}
-        <input
-          type="number"
-          min="10"
-          max="100"
-          bind:value={quality}
-          disabled={!recompress}
-          oninput={invalidate}
-        />
-      </label>
-      <label class="row check">
-        <input type="checkbox" bind:checked={downsample} onchange={invalidate} />
-        {t.optimizeDownsample}
-      </label>
-      <label class="row">
-        {t.optimizeMaxPx}
-        <input
-          type="number"
-          min="256"
-          max="8192"
-          step="256"
-          bind:value={maxPx}
-          disabled={!downsample}
-          oninput={invalidate}
-        />
-      </label>
-      <label class="row check">
-        <input type="checkbox" bind:checked={compressStreams} onchange={invalidate} />
-        {t.optimizeCompressStreams}
-      </label>
-      {#if report}
-        <p class="report" role="status">
-          {gain
-            ? t.optimizeReport(
-                t.bytes(report.bytes_before),
-                t.bytes(report.bytes_after),
-                pct,
-                report.images_recompressed,
-              )
-            : t.optimizeNothing}
-        </p>
+    <form
+      class="dialog-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        if (done) onclose();
+        else if (gain) apply();
+        else analyze();
+      }}
+    >
+      <h2 id="optimize-title">{t.optimizeTitle}</h2>
+      {#if done}
+        <p role="status">{t.optimizeDone}</p>
+        <p class="muted">{t.optimizeSaveHint}</p>
+      {:else}
+        <p class="muted">{t.optimizeHint}</p>
+        <label class="row check">
+          <input
+            type="checkbox"
+            bind:this={first}
+            bind:checked={recompress}
+            onchange={invalidate}
+          />
+          {t.optimizeRecompress}
+        </label>
+        <label class="row">
+          {t.optimizeQuality}
+          <input
+            type="number"
+            min="10"
+            max="100"
+            bind:value={quality}
+            disabled={!recompress}
+            oninput={invalidate}
+          />
+        </label>
+        <label class="row check">
+          <input type="checkbox" bind:checked={downsample} onchange={invalidate} />
+          {t.optimizeDownsample}
+        </label>
+        <label class="row">
+          {t.optimizeMaxPx}
+          <input
+            type="number"
+            min="256"
+            max="8192"
+            step="256"
+            bind:value={maxPx}
+            disabled={!downsample}
+            oninput={invalidate}
+          />
+        </label>
+        <label class="row check">
+          <input type="checkbox" bind:checked={compressStreams} onchange={invalidate} />
+          {t.optimizeCompressStreams}
+        </label>
+        {#if report}
+          <p class="report" role="status">
+            {gain
+              ? t.optimizeReport(
+                  t.bytes(report.bytes_before),
+                  t.bytes(report.bytes_after),
+                  pct,
+                  report.images_recompressed,
+                )
+              : t.optimizeNothing}
+          </p>
+        {/if}
+        {#if error}
+          <p class="error" role="alert">{error}</p>
+        {/if}
       {/if}
-      {#if error}
-        <p class="error" role="alert">{error}</p>
-      {/if}
-    {/if}
-    <div class="actions">
-      {#if !done}
-        <button type="button" onclick={onclose}>{t.cancel}</button>
-        <button type="button" disabled={busy} onclick={analyze}>{t.optimizeAnalyze}</button>
-      {/if}
-      <button type="submit" class="primary" disabled={busy || (!done && !gain)}
-        >{done ? t.close : t.optimizeAction}</button
-      >
-    </div>
-  </form>
+      <div class="actions">
+        {#if !done}
+          <button type="button" onclick={onclose}>{t.cancel}</button>
+          <button type="button" disabled={busy} onclick={analyze}>{t.optimizeAnalyze}</button>
+        {/if}
+        <button type="submit" class="primary" disabled={busy || (!done && !gain)}
+          >{done ? t.close : t.optimizeAction}</button
+        >
+      </div>
+    </form>
+  </div>
 </div>
 
 <style>

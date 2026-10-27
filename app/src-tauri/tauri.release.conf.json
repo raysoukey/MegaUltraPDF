@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "cargo xtask stage-pdfium && pnpm build"
+  },
+  "bundle": {
+    "resources": {
+      "resources/pdfium/": "pdfium/",
+      "../../THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md",
+      "../../LICENSE": "LICENSE"
+    }
+  }
+}

@@ -60,7 +60,7 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 - [x] Navigation au clavier entre champs (contrôles HTML natifs), enregistrement des valeurs [4]
 - [x] Aplatir le formulaire [4]
 - [x] Signature visuelle : image ou dessin, placement, enregistrement (contenu de page) [4]
-- [ ] Signature numérique cryptographique (option désactivée par défaut) [7]
+- [ ] Signature numérique cryptographique et vérification (option désactivée par défaut) [8]
 
 ## Édition de contenu
 
@@ -84,12 +84,14 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 
 ## Finition et distribution
 
-- [ ] Interface FR / EN [7]
-- [ ] Accessibilité : clavier complet, lecteurs d'écran, contrastes [7]
-- [ ] Aide intégrée [7]
-- [ ] Installeurs Windows (NSIS/MSI), Linux (AppImage/deb), macOS (dmg) ; version portable ; DLL PDFium embarquée [7]
-- [ ] OCR (option désactivée par défaut) [7]
-- [ ] Aucun appel réseau, aucune télémétrie (vérifié) [0 → 7]
+- [x] Interface FR / EN (préférence « système / français / anglais », sans fermer les documents) [7]
+- [x] Accessibilité : menus au clavier, piège de focus dans les dialogues, noms accessibles, contour de focus, contrastes ≥ 4,5:1 vérifiés par test [7]
+- [x] Préférences (langue, thème, zoom, affichage, auteur, position de lecture, récents) [7]
+- [x] Aide intégrée (prise en main, raccourcis, « À propos » avec licences tierces) [7]
+- [x] Installeurs Windows (NSIS/MSI, vérifié de bout en bout), Linux (AppImage/deb) et macOS (dmg, Apple Silicon) construits par la CI (lancement non vérifié) ; version portable ; PDFium embarqué ; association des `.pdf` ; paquets non signés [7]
+- [ ] Ouverture d'un PDF depuis le Finder macOS (événement Apple) [8]
+- [x] Aucun appel réseau, aucune télémétrie (vérifié par test : sources, CSP) [0 → 7]
+- [ ] OCR (option désactivée par défaut) [8]
 
 ## Qualité transversale (chaque lot)
 

@@ -191,8 +191,8 @@
     "wait": 900
   },
   {
-    "assert": "document.querySelectorAll('[role=dialog] tr').length >= 10",
-    "label": "propriétés : tableau rempli"
+    "assert": "document.querySelectorAll('[role=dialog] tr').length >= 9 && document.querySelector('[role=dialog] input').value.length > 0",
+    "label": "propriétés : tableau rempli et titre lu (champs éditables depuis le Lot 6)"
   },
   {
     "shot": "08-proprietes.png"

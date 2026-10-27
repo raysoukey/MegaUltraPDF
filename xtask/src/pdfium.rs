@@ -84,7 +84,7 @@ pub fn version_marker_path(vendor_dir: &Path, target: &str) -> PathBuf {
 }
 
 /// Nom du fichier de bibliothèque (dernier segment du chemin dans l'archive).
-fn library_file_name(asset: &Asset) -> &str {
+pub fn library_file_name(asset: &Asset) -> &str {
     asset
         .library_path_in_archive
         .rsplit('/')
@@ -103,7 +103,9 @@ pub fn fetch(workspace_root: &Path, target: &str) -> anyhow::Result<PathBuf> {
     let dest = dest_dir.join(library_file_name(asset));
     let version_file = version_marker_path(&vendor_dir, target);
 
+    let notice = dest_dir.join(NOTICE_FILE);
     let already_present = dest.exists()
+        && notice.exists()
         && std::fs::read_to_string(&version_file)
             .map(|v| v.trim() == tag)
             .unwrap_or(false);
@@ -137,16 +139,71 @@ pub fn fetch(workspace_root: &Path, target: &str) -> anyhow::Result<PathBuf> {
 
     std::fs::create_dir_all(&dest_dir)
         .with_context(|| format!("création de {}", dest_dir.display()))?;
-    extract_single_file(&body, &asset.library_path_in_archive, &dest)?;
+    let notices = extract_library_and_notices(&body, &asset.library_path_in_archive, &dest)?;
+    std::fs::write(&notice, combine_notices(&notices))
+        .with_context(|| format!("écriture de {}", notice.display()))?;
     std::fs::write(&version_file, format!("{tag}\n"))?;
     println!("PDFium {tag} installé : {}", dest.display());
     Ok(dest)
 }
 
-/// Extrait un seul fichier `wanted` d'une archive `.tgz` en mémoire vers `dest`.
-fn extract_single_file(tgz: &[u8], wanted: &str, dest: &Path) -> anyhow::Result<()> {
+/// Nom du fichier de licences livré à côté de la bibliothèque (et embarqué par le bundler).
+pub const NOTICE_FILE: &str = "LICENSE";
+
+/// Une entrée de l'archive fait-elle partie des licences à livrer ? (`LICENSE` à la racine,
+/// licence de l'empaqueteur pdfium-binaries, et chaque fichier de `licenses/` : PDFium et les
+/// bibliothèques qu'il inclut.)
+pub fn is_notice_entry(path: &str) -> bool {
+    path == "LICENSE" || (path.starts_with("licenses/") && path.len() > "licenses/".len())
+}
+
+/// Assemble les licences en un seul texte : `LICENSE` d'abord, puis `licenses/pdfium.txt`,
+/// puis les autres par ordre alphabétique, chacune précédée de son chemin dans l'archive.
+pub fn combine_notices(notices: &[(String, String)]) -> String {
+    let rank = |p: &str| match p {
+        "LICENSE" => 0,
+        "licenses/pdfium.txt" => 1,
+        _ => 2,
+    };
+    let mut sorted: Vec<&(String, String)> = notices.iter().collect();
+    sorted.sort_by(|a, b| rank(&a.0).cmp(&rank(&b.0)).then_with(|| a.0.cmp(&b.0)));
+    let mut out = String::from(
+        "Licences de PDFium et des bibliothèques qu'il inclut (archive pdfium-binaries).
+",
+    );
+    for (path, text) in sorted {
+        out.push_str(&format!(
+            "
+===== {path} =====
+
+{}
+",
+            text.trim_end()
+        ));
+    }
+    out
+}
+
+/// Texte d'un fichier de licence : UTF-8 s'il est valide, sinon Latin-1 (cas réel :
+/// `licenses/freetype.txt` de l'archive), où chaque octet est un caractère.
+pub fn decode_notice(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_string(),
+        Err(_) => bytes.iter().map(|&b| char::from(b)).collect(),
+    }
+}
+
+/// Extrait la bibliothèque `wanted` vers `dest` et retourne le texte des licences
+/// (`is_notice_entry`) trouvées dans la même archive `.tgz` en mémoire.
+fn extract_library_and_notices(
+    tgz: &[u8],
+    wanted: &str,
+    dest: &Path,
+) -> anyhow::Result<Vec<(String, String)>> {
     let gz = flate2::read::GzDecoder::new(tgz);
     let mut archive = tar::Archive::new(gz);
+    let mut found = false;
+    let mut notices = Vec::new();
     for entry in archive.entries().context("lecture de l'archive tar")? {
         let mut entry = entry?;
         let path = entry
@@ -158,10 +215,22 @@ fn extract_single_file(tgz: &[u8], wanted: &str, dest: &Path) -> anyhow::Result<
             let mut out = std::fs::File::create(dest)
                 .with_context(|| format!("création de {}", dest.display()))?;
             std::io::copy(&mut entry, &mut out)?;
-            return Ok(());
+            found = true;
+        } else if is_notice_entry(&path) {
+            let mut bytes = Vec::new();
+            entry
+                .read_to_end(&mut bytes)
+                .with_context(|| format!("lecture de {path} dans l'archive"))?;
+            notices.push((path, decode_notice(&bytes)));
         }
     }
-    bail!("fichier {wanted} introuvable dans l'archive")
+    if !found {
+        bail!("fichier {wanted} introuvable dans l'archive");
+    }
+    if notices.is_empty() {
+        bail!("aucun fichier de licence dans l'archive PDFium");
+    }
+    Ok(notices)
 }
 
 #[cfg(test)]
@@ -196,6 +265,36 @@ mod tests {
 #[cfg(test)]
 mod version_tests {
     use super::*;
+
+    #[test]
+    fn combined_notice_starts_with_the_archive_license_then_components() {
+        let notice = combine_notices(&[
+            ("licenses/zlib.txt".into(), "zlib text".into()),
+            ("LICENSE".into(), "packager text".into()),
+            ("licenses/pdfium.txt".into(), "pdfium text".into()),
+        ]);
+        let packager = notice.find("packager text").unwrap();
+        let pdfium = notice.find("pdfium text").unwrap();
+        let zlib = notice.find("zlib text").unwrap();
+        assert!(packager < pdfium && pdfium < zlib);
+        assert!(notice.contains("licenses/pdfium.txt"));
+    }
+
+    #[test]
+    fn notice_text_falls_back_to_latin1() {
+        assert_eq!(decode_notice("café".as_bytes()), "café");
+        // « Ré » en Latin-1 : 0x52 0xE9 (pas de l'UTF-8 valide).
+        assert_eq!(decode_notice(&[0x52, 0xE9]), "Ré");
+    }
+
+    #[test]
+    fn notice_entries_are_the_root_license_and_the_licenses_folder() {
+        assert!(is_notice_entry("LICENSE"));
+        assert!(is_notice_entry("licenses/icu.txt"));
+        assert!(!is_notice_entry("licenses/"));
+        assert!(!is_notice_entry("bin/pdfium.dll"));
+        assert!(!is_notice_entry("include/fpdfview.h"));
+    }
 
     #[test]
     fn version_marker_is_per_target() {

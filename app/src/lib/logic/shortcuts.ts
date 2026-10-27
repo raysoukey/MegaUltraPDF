@@ -36,7 +36,8 @@ export type Action =
   | 'toolText'
   | 'toolInk'
   | 'deleteAnnotation'
-  | 'print';
+  | 'print'
+  | 'preferences';
 
 /** Forme minimale d'un événement clavier, indépendante du DOM (testable). */
 export interface KeyLike {
@@ -67,6 +68,7 @@ const BINDINGS: Binding[] = [
   { key: '2', ctrl: true, action: 'fitPage' },
   { key: 'i', ctrl: true, action: 'properties' },
   { key: 'p', ctrl: true, action: 'print' },
+  { key: ',', ctrl: true, action: 'preferences' },
   { key: 'z', ctrl: true, action: 'undo' },
   { key: 'y', ctrl: true, action: 'redo' },
   { key: 'z', ctrl: true, shift: true, action: 'redo' },
@@ -105,13 +107,16 @@ export function actionFor(event: KeyLike): Action | null {
 function label(b: Binding): string {
   const parts: string[] = [];
   if (b.ctrl) parts.push('Ctrl');
-  if (b.shift) parts.push('Maj');
-  parts.push(b.key.length === 1 ? b.key.toUpperCase() : b.key);
+  if (b.shift) parts.push(t.keyShift);
+  parts.push(b.key.length === 1 ? b.key.toUpperCase() : (t.keyNames[b.key] ?? b.key));
   return parts.join('+');
 }
 
-/** Aide des raccourcis : une ligne par action, toutes ses touches, un libellé. */
-export const SHORTCUT_HELP: { action: Action; keys: string[]; label: string }[] = (() => {
+/**
+ * Aide des raccourcis : une ligne par action, toutes ses touches, un libellé dans la langue
+ * **courante** (calculée à l'appel, pas une fois pour toutes à l'import du module).
+ */
+export function shortcutHelp(): { action: Action; keys: string[]; label: string }[] {
   const byAction = new Map<Action, string[]>();
   for (const b of BINDINGS) {
     const keys = byAction.get(b.action) ?? [];
@@ -123,4 +128,4 @@ export const SHORTCUT_HELP: { action: Action; keys: string[]; label: string }[] 
     keys,
     label: t.actions[action],
   }));
-})();
+}

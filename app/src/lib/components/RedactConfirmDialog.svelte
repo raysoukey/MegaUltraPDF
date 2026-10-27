@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { cancelRedact, confirmRedact, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
 
@@ -19,7 +20,13 @@
 </script>
 
 <div class="dialog-backdrop" role="presentation">
-  <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="redact-title">
+  <div
+    class="dialog"
+    role="alertdialog"
+    aria-modal="true"
+    use:trapFocus
+    aria-labelledby="redact-title"
+  >
     <h2 id="redact-title">{t.redactTitle}</h2>
     <p>{t.redactConfirm}</p>
     <div class="actions">

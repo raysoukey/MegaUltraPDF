@@ -9,7 +9,8 @@
     type OpenDoc,
   } from '$lib/state/documents.svelte';
   import { saveSettings, settings } from '$lib/state/settings.svelte';
-  import { currentStyle, setStamp, setTool, STAMPS, toolState } from '$lib/state/tools.svelte';
+  import { currentStyle, setStamp, setTool, toolState } from '$lib/state/tools.svelte';
+  import { STAMP_IDS, stampLabel, type StampId } from '$lib/logic/tools';
   import { t } from '$lib/strings';
   import ContentToolbar from './ContentToolbar.svelte';
   import StylePicker from './StylePicker.svelte';
@@ -29,7 +30,7 @@
   } = $props();
 
   const TOOLS: { tool: Tool; glyph: string; key: string }[] = [
-    { tool: 'select', glyph: '⬚', key: 'Échap' },
+    { tool: 'select', glyph: '⬚', key: 'Escape' },
     { tool: 'note', glyph: '🗨', key: 'N' },
     { tool: 'text', glyph: 'T', key: 'T' },
     { tool: 'ink', glyph: '✎', key: 'D' },
@@ -62,7 +63,7 @@
         class:active={toolState.tool === item.tool}
         aria-pressed={toolState.tool === item.tool}
         aria-label={t.tool[item.tool]}
-        title="{t.tool[item.tool]}{item.key ? ` (${item.key})` : ''}"
+        title="{t.tool[item.tool]}{item.key ? ` (${t.keyNames[item.key] ?? item.key})` : ''}"
         onclick={() => setTool(item.tool)}>{item.glyph}</button
       >
     {/each}
@@ -70,10 +71,10 @@
       <select
         aria-label={t.stampLabel}
         value={toolState.stamp}
-        onchange={(e) => setStamp((e.currentTarget as HTMLSelectElement).value)}
+        onchange={(e) => setStamp((e.currentTarget as HTMLSelectElement).value as StampId)}
       >
-        {#each STAMPS as s (s)}
-          <option value={s}>{s}</option>
+        {#each STAMP_IDS as s (s)}
+          <option value={s}>{stampLabel(s)}</option>
         {/each}
       </select>
     {/if}
@@ -105,7 +106,7 @@
       type="button"
       disabled={!doc.selectedAnnotation}
       aria-label={t.deleteAnnotation}
-      title="{t.deleteAnnotation} (Suppr)"
+      title="{t.deleteAnnotation} ({t.keyNames.Delete})"
       onclick={() => deleteSelectedAnnotation(doc)}>🗑</button
     >
     <input

@@ -62,6 +62,8 @@ import {
 } from '$lib/api';
 import { quadsFromSelection, selectionAfterMove } from '$lib/logic/annotations';
 import { fileName } from '$lib/logic/labels';
+import { initialPosition } from '$lib/logic/position';
+import { openErrorMessage } from '$lib/logic/errors';
 import { selectionRects } from '$lib/logic/selection';
 import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
@@ -176,13 +178,6 @@ export function docById(id: number): OpenDoc | null {
   return docsState.docs.find((d) => d.summary.id === id) ?? null;
 }
 
-function initialScaleFor(path: string | null): { scale: number; zoomMode: ZoomMode; page: number } {
-  const remembered = path ? settings.positions[path] : undefined;
-  if (remembered)
-    return { scale: remembered.scale, zoomMode: remembered.zoomMode, page: remembered.page };
-  return { scale: settings.scale, zoomMode: settings.zoomMode, page: 0 };
-}
-
 /** Ouvre un fichier ; en cas de mot de passe requis, affiche le dialogue dédié. */
 export async function openPath(path: string, password?: string): Promise<boolean> {
   docsState.error = null;
@@ -194,7 +189,7 @@ export async function openPath(path: string, password?: string): Promise<boolean
   docsState.busy = true;
   try {
     const summary = await openDocument(path, password);
-    const initial = initialScaleFor(summary.path);
+    const initial = initialPosition(settings, summary.path);
     docsState.docs.push({
       summary,
       scale: clampScale(initial.scale),
@@ -234,7 +229,7 @@ export async function openPath(path: string, password?: string): Promise<boolean
         docsState.passwordPrompt = { path, error: t.wrongPassword };
       } else {
         if (e.kind === 'io') forgetRecent(path);
-        docsState.error = t.openError(e.message);
+        docsState.error = openErrorMessage(e);
       }
     } else {
       docsState.error = t.openError(String(e));

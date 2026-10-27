@@ -4,6 +4,17 @@
 // création que le backend applique. Logique pure, sans DOM.
 
 import type { Geometry, NewAnnotation, Style } from '$lib/api';
+import { t } from '$lib/strings';
+
+/** Tampons prédéfinis : identifiants stables, libellés dans la langue de l'interface. */
+export const STAMP_IDS = ['approved', 'draft', 'confidential', 'rejected', 'seen'] as const;
+/** Identifiant d'un tampon prédéfini. */
+export type StampId = (typeof STAMP_IDS)[number];
+
+/** Libellé d'un tampon dans la langue courante (c'est ce texte qui est écrit dans le PDF). */
+export function stampLabel(id: StampId): string {
+  return t.stamps[id];
+}
 
 export type Tool =
   | 'select'

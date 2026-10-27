@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import type { AnnotationPatch, Annotation, Color } from '$lib/api';
   import { updateAnnotation, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
@@ -83,7 +84,7 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="ann-title">
+  <div class="dialog" role="dialog" aria-modal="true" use:trapFocus aria-labelledby="ann-title">
     <form onsubmit={submit}>
       <h2 id="ann-title">
         {t.editAnnotation} — {t.annotationKind[annotation.kind] ?? annotation.kind}

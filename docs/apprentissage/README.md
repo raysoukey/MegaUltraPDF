@@ -30,3 +30,4 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [Flux de contenu PDF : lire et écrire le programme d'une page](concepts/flux-de-contenu-pdf.md)
 - [`Read`, `Write` et `Cursor` : des octets sans se soucier d'où ils viennent](concepts/read-write-et-cursor.md)
 - [Features Cargo et dépendances : n'embarquer que ce qui sert](concepts/features-cargo-et-dependances.md)
+- [Profils Cargo et distribution : du `cargo run` au paquet installé](concepts/profils-cargo-et-distribution.md)

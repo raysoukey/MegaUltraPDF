@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { setLanguage } from '$lib/strings';
 import type { Style } from '$lib/api';
-import { beginDraft, extendDraft, finishDraft, isDrawingTool } from './tools';
+import {
+  beginDraft,
+  extendDraft,
+  finishDraft,
+  isDrawingTool,
+  STAMP_IDS,
+  stampLabel,
+} from './tools';
 
 const style: Style = {
   color: { r: 229, g: 57, b: 53 },
@@ -113,5 +121,16 @@ describe('finishDraft', () => {
     expect(finishDraft(t, style, '   ', '')).toBeNull();
     expect(finishDraft(beginDraft('note', { x: 1, y: 1 })!, style, '', '')).toBeNull();
     expect(finishDraft(beginDraft('stamp', { x: 1, y: 1 })!, style, '', '')).toBeNull();
+  });
+});
+
+describe('stamps', () => {
+  afterEach(() => setLanguage('fr'));
+  it('stamp labels follow the interface language (the label is written into the PDF)', () => {
+    expect(STAMP_IDS).toContain('approved');
+    expect(stampLabel('approved')).toBe('APPROUVÉ');
+    setLanguage('en');
+    expect(stampLabel('approved')).toBe('APPROVED');
+    expect(STAMP_IDS.map(stampLabel).every((l) => l.length > 0)).toBe(true);
   });
 });

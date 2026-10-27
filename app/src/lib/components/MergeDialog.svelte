@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { pickPdfFiles } from '$lib/api';
   import { fileName } from '$lib/logic/labels';
   import { mergeAndOpen } from '$lib/state/documents.svelte';
@@ -38,7 +39,7 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="merge-title">
+  <div class="dialog" role="dialog" aria-modal="true" use:trapFocus aria-labelledby="merge-title">
     <h2 id="merge-title">{t.mergeTitle}</h2>
     <p class="muted">{t.mergeHint}</p>
     {#if files.length === 0}
@@ -48,16 +49,23 @@
         {#each files as path, i (path)}
           <li>
             <span class="name" title={path}>{fileName(path)}</span>
-            <button type="button" title={t.moveUp} disabled={i === 0} onclick={() => move(i, -1)}
-              >▲</button
+            <button
+              aria-label={t.moveUp}
+              type="button"
+              title={t.moveUp}
+              disabled={i === 0}
+              onclick={() => move(i, -1)}>▲</button
             >
             <button
+              aria-label={t.moveDown}
               type="button"
               title={t.moveDown}
               disabled={i === files.length - 1}
               onclick={() => move(i, 1)}>▼</button
             >
-            <button type="button" title={t.remove} onclick={() => remove(i)}>×</button>
+            <button type="button" aria-label={t.remove} title={t.remove} onclick={() => remove(i)}
+              >×</button
+            >
           </li>
         {/each}
       </ol>

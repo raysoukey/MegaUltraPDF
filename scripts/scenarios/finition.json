@@ -1,0 +1,326 @@
+[
+  {
+    "wait": 1800
+  },
+  {
+    "eval": "(() => { const v = document.querySelector('.viewer'); const p = document.querySelectorAll('.page')[1]; const top = p.getBoundingClientRect().top - v.getBoundingClientRect().top + v.scrollTop; window.__target = Math.round(top + p.offsetHeight / 2); v.scrollTop = window.__target; return window.__target; })()",
+    "label": "défilement : milieu de la page 2"
+  },
+  {
+    "wait": 700
+  },
+  {
+    "assert": "Math.abs(document.querySelector('.viewer').scrollTop - window.__target) < 3 || 'ERREUR saut vers ' + document.querySelector('.viewer').scrollTop",
+    "label": "le défilement continu ne saute pas au haut de la page (régression revue Lot 7)"
+  },
+  {
+    "eval": "(() => { const v = document.querySelector('.viewer'); window.__target = window.__target - 200; v.scrollTop = window.__target; return window.__target; })()",
+    "label": "défilement vers le haut"
+  },
+  {
+    "wait": 700
+  },
+  {
+    "assert": "Math.abs(document.querySelector('.viewer').scrollTop - window.__target) < 3 || 'ERREUR saut vers ' + document.querySelector('.viewer').scrollTop",
+    "label": "remonter ne saute pas"
+  },
+  {
+    "eval": "(() => { document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]').focus(); return document.activeElement.title; })()",
+    "label": "focus sur le bouton Fichier"
+  },
+  {
+    "key": "ArrowDown"
+  },
+  {
+    "wait": 250
+  },
+  {
+    "assert": "document.activeElement.getAttribute('role') === 'menuitem' && document.activeElement.textContent.includes('Ouvrir')",
+    "label": "↓ ouvre le menu et sélectionne le premier élément"
+  },
+  {
+    "key": "ArrowDown"
+  },
+  {
+    "key": "ArrowDown"
+  },
+  {
+    "eval": "document.activeElement.textContent.trim()",
+    "label": "élément après ↓ ↓"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 250
+  },
+  {
+    "assert": "!document.querySelector('[role=menu]') && document.activeElement.title === 'Fichier'",
+    "label": "Échap ferme le menu et rend le focus au bouton"
+  },
+  {
+    "key": "i",
+    "ctrl": true
+  },
+  {
+    "wait": 900
+  },
+  {
+    "assert": "(() => { const d = document.querySelector('[role=dialog][aria-modal=true]'); return d && d.contains(document.activeElement); })()",
+    "label": "Propriétés : dialogue annoncé, focus à l'intérieur"
+  },
+  {
+    "eval": "(() => { const d = document.querySelector('[role=dialog]'); const els = [...d.querySelectorAll('button, input, select, textarea')].filter((e) => !e.disabled && e.getClientRects().length); window.__first = els[0]; els.at(-1).focus(); return els.length; })()",
+    "label": "focus sur le dernier contrôle (nombre de contrôles)"
+  },
+  {
+    "key": "Tab"
+  },
+  {
+    "assert": "document.activeElement === window.__first",
+    "label": "Tab depuis le dernier contrôle revient au premier"
+  },
+  {
+    "key": "Tab",
+    "shift": true
+  },
+  {
+    "assert": "document.querySelector('[role=dialog]').contains(document.activeElement) && document.activeElement !== window.__first",
+    "label": "Maj+Tab depuis le premier reste dans le dialogue"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 400
+  },
+  {
+    "assert": "!document.querySelector('[role=dialog]') && document.activeElement.title === 'Fichier'",
+    "label": "Échap ferme le dialogue et rend le focus au déclencheur"
+  },
+  {
+    "assert": "(() => { const bad = [...document.querySelectorAll('button')].filter((b) => !b.getAttribute('aria-label') && !b.getAttribute('aria-labelledby') && !/[A-Za-z0-9À-ÿ]{2,}/.test(b.textContent)); return bad.length === 0 || 'ERREUR ' + bad.map((b) => b.outerHTML.slice(0, 80)).join(' | '); })()",
+    "label": "tous les boutons à glyphe ont un nom accessible"
+  },
+  {
+    "key": "f",
+    "ctrl": true
+  },
+  {
+    "wait": 400
+  },
+  {
+    "assert": "!!document.querySelector('[role=search]')",
+    "label": "recherche ouverte"
+  },
+  {
+    "eval": "(() => { document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]').focus(); return true; })()",
+    "label": "focus sur Fichier"
+  },
+  {
+    "key": "ArrowDown"
+  },
+  {
+    "wait": 250
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 250
+  },
+  {
+    "assert": "!document.querySelector('[role=menu]') && !!document.querySelector('[role=search]') && document.activeElement.title === 'Fichier'",
+    "label": "Échap dans le menu ne ferme pas la recherche en dessous"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 250
+  },
+  {
+    "shot": "01-clavier.png"
+  },
+  {
+    "key": "End"
+  },
+  {
+    "wait": 700
+  },
+  {
+    "key": ",",
+    "ctrl": true
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent === 'Préférences'",
+    "label": "Ctrl+, ouvre les préférences"
+  },
+  {
+    "eval": "(() => { const s = document.getElementById('pref-language'); s.value = 'en'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "langue : anglais"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "!!document.querySelector('button[aria-haspopup=menu][title=\"File\"]') && document.documentElement.lang === 'en'",
+    "label": "barre d'outils et menus en anglais"
+  },
+  {
+    "assert": "document.querySelectorAll('.tabs-bar [role=tab], nav [role=tab], [role=tablist] [role=tab]').length >= 1 && document.querySelectorAll('.page img').length >= 1",
+    "label": "le document reste ouvert"
+  },
+  {
+    "assert": "document.querySelector('.toolbar form input').value === '3' || 'ERREUR page ' + document.querySelector('.toolbar form input').value",
+    "label": "la page courante est conservée après la bascule de langue"
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent === 'Preferences'",
+    "label": "le dialogue reste ouvert, traduit"
+  },
+  {
+    "shot": "02-anglais.png"
+  },
+  {
+    "eval": "(() => { const s = document.getElementById('pref-language'); s.value = 'fr'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "langue : français"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "!!document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]') && document.documentElement.lang === 'fr'",
+    "label": "retour au français"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "!document.querySelector('[role=dialog]')",
+    "label": "Échap ferme les préférences"
+  },
+  {
+    "eval": "(() => { window.__w = document.querySelector('.page').getBoundingClientRect().width; return window.__w; })()",
+    "label": "largeur de page avant"
+  },
+  {
+    "key": "F1"
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelectorAll('[role=dialog] [role=tab]').length === 3",
+    "label": "F1 : aide avec trois onglets"
+  },
+  {
+    "key": "r"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "document.querySelector('.page').getBoundingClientRect().width === window.__w",
+    "label": "une touche simple dans l'aide ne pivote pas le document"
+  },
+  {
+    "click": "#help-tab-about"
+  },
+  {
+    "wait": 600
+  },
+  {
+    "assert": "(() => { const p = document.getElementById('help-panel').textContent; return /Version \\d+\\.\\d+\\.\\d+/.test(p) && p.includes('PDFium'); })()",
+    "label": "À propos : version et PDFium"
+  },
+  {
+    "assert": "/\\d+ crates Rust, \\d+ paquets npm/.test(document.querySelector('#help-panel summary').textContent)",
+    "label": "À propos : inventaire des licences tierces"
+  },
+  {
+    "shot": "03-a-propos.png"
+  },
+  {
+    "eval": "(() => { document.getElementById('help-tab-about').focus(); return true; })()",
+    "label": "focus sur l'onglet À propos"
+  },
+  {
+    "key": "Tab"
+  },
+  {
+    "key": "Tab"
+  },
+  {
+    "assert": "document.activeElement.tagName === 'SUMMARY' || 'ERREUR focus sur ' + document.activeElement.tagName + ' ' + document.activeElement.textContent.slice(0, 30)",
+    "label": "Tab atteint la liste des licences (summary)"
+  },
+  {
+    "drag": "#help-title",
+    "from": [
+      4,
+      4
+    ],
+    "to": [
+      4,
+      4
+    ]
+  },
+  {
+    "key": "Tab",
+    "shift": true
+  },
+  {
+    "assert": "document.querySelector('[role=dialog]').contains(document.activeElement) || 'ERREUR focus hors du dialogue : ' + document.activeElement.tagName",
+    "label": "après un clic sur du texte, Maj+Tab reste dans le dialogue"
+  },
+  {
+    "key": "F1"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "!document.querySelector('[role=dialog]')",
+    "label": "F1 referme l'aide"
+  },
+  {
+    "eval": "(() => { document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]').focus(); return true; })()",
+    "label": "focus sur Fichier (fin)"
+  },
+  {
+    "key": "ArrowDown"
+  },
+  {
+    "wait": 250
+  },
+  {
+    "key": "End"
+  },
+  {
+    "key": "Enter"
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent === 'Préférences'",
+    "label": "Préférences ouvertes depuis le menu au clavier"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "document.activeElement.title === 'Fichier' || 'ERREUR focus sur ' + document.activeElement.tagName",
+    "label": "fermer un dialogue ouvert depuis le menu rend le focus au bouton du menu"
+  }
+]

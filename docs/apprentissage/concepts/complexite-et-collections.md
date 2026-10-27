@@ -89,7 +89,7 @@ invisible sur les petits fichiers de test.
 - **Clé qui n'implémente pas le trait voulu.** Un `f32` n'implémente ni `Eq`, ni `Hash`, ni
   `Ord` (à cause de `NaN`) : `HashMap<f32, _>` ne compile pas (« the trait bound `f32: Eq` is
   not satisfied »). Le projet stocke l'échelle multipliée par 100 en entier
-  (`crates/mega-core/src/service/cache.rs:16-21`, `scale_x100`).
+  (`crates/mega-core/src/service/cache.rs:20`, `scale_x100`).
 - **Modifier une collection pendant qu'on la parcourt.** `for (k, v) in map.iter() {
   map.remove(k) }` ne compile pas (emprunt partagé puis exclusif). On collecte d'abord les clés
   à retirer, puis on retire (`invalidate_doc`, même fichier).
@@ -102,6 +102,6 @@ invisible sur les petits fichiers de test.
 
 ## Exercice de lecture
 
-Relisez `crates/mega-core/src/service/cache.rs:66-80` (`insert`). Pourquoi faut-il retirer
+Relisez `crates/mega-core/src/service/cache.rs:70-85` (`insert`). Pourquoi faut-il retirer
 l'ancien tic de `order` quand une page déjà présente est remplacée ? Que verrait-on, plus tard,
 au moment de l'éviction, si on l'oubliait ?

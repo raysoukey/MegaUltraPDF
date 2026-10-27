@@ -315,3 +315,26 @@ fn split_refuses_to_overwrite_without_force_and_rejects_every_zero() {
         .failure()
         .stderr(predicate::str::contains("1"));
 }
+
+// ---- Lot 3 : annotations ----
+
+#[test]
+fn annots_lists_annotations() {
+    mega()
+        .args(["annots", &fixture("annotated.pdf")])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("p1 #0 note"))
+        .stdout(predicate::str::contains("auteur=\"Alice\""))
+        .stdout(predicate::str::contains("Note de test"))
+        .stdout(predicate::str::contains("p1 #3 underline"));
+    mega()
+        .args(["annots", &fixture("annotated.pdf"), "--page", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("4 annotation"));
+    mega()
+        .args(["annots", &fixture("annotated.pdf"), "--page", "2"])
+        .assert()
+        .code(1);
+}

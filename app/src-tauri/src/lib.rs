@@ -46,6 +46,7 @@ pub fn run() {
             commands::text_layer,
             commands::search_document,
             commands::outline,
+            commands::annotations,
             commands::page_links,
             commands::document_properties,
             commands::file_size,

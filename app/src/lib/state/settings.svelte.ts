@@ -24,6 +24,8 @@ export interface Settings {
   sidebarOpen: boolean;
   recent: string[];
   positions: Record<string, ReadingPosition>;
+  /** Auteur inscrit dans les annotations créées. */
+  author: string;
 }
 
 const DEFAULTS: Settings = {
@@ -34,6 +36,7 @@ const DEFAULTS: Settings = {
   sidebarOpen: true,
   recent: [],
   positions: {},
+  author: '',
 };
 
 const STORE_FILE = 'settings.json';

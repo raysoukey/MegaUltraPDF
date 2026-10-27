@@ -11,6 +11,7 @@
 //! plutôt que de garder des index en mémoire — la même discipline que pour `/Annots`.
 
 pub mod image;
+pub mod redact;
 
 use pdfium_render::prelude::{
     PdfPageContentRegenerationStrategy, PdfPageObject, PdfPageObjectCommon, PdfPageObjectType,

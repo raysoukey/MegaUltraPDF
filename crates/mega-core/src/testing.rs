@@ -304,6 +304,43 @@ endstream",
     )
 }
 
+/// Une page A4 « riche » pour le caviardage : deux lignes de texte (« Secret 123 » en
+/// (72, 700), « Public » en (72, 650)), une image 2 × 2 posée en (300, 680) sur 100 × 50,
+/// un chemin bleu en (72, 500) et une annotation `Square` tierce qui couvre la première ligne.
+pub fn rich_pdf() -> Vec<u8> {
+    let content = "BT /Helv 24 Tf 72 700 Td (Secret 123) Tj ET                    BT /Helv 24 Tf 72 650 Td (Public) Tj ET                    q 100 0 0 50 300 680 cm /Im1 Do Q                    0 0 1 rg 72 500 100 40 re f";
+    let pixels = "00FF FF00>";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842]          /Resources << /Font << /Helv 4 0 R >> /XObject << /Im1 6 0 R >> >>          /Contents 5 0 R /Annots [7 0 R] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        format!(
+            "<< /Length {} >>
+stream
+{content}
+endstream",
+            content.len()
+        ),
+        format!(
+            "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray              /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length {} >>
+stream
+{pixels}
+endstream",
+            pixels.len()
+        ),
+        "<< /Type /Annot /Subtype /Square /Rect [60 690 250 730] /F 4 /C [1 0 0] >>".to_string(),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Document riche")
+        ),
+    )
+}
+
 /// Un champ texte **séparé de son widget** (dictionnaire de champ parent + widget enfant),
 /// comme en produisent iText ou LibreOffice : `/V` vit sur le parent.
 pub fn form_parent_kid_pdf() -> Vec<u8> {

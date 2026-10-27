@@ -163,6 +163,14 @@ pub enum EditCommand {
         /// Chemin du fichier PNG ou JPEG.
         path: String,
     },
+    /// Caviarde une zone : retire textes, images et annotations qui la touchent, puis la
+    /// recouvre de noir.
+    Redact {
+        /// Page.
+        page: u16,
+        /// Zone (points, espace affiché).
+        rect: Rect,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -227,6 +235,7 @@ impl Command for EditCommand {
             EditCommand::SetObjectText { .. } => "Modifier le texte".to_string(),
             EditCommand::InsertText { .. } => "Insérer du texte".to_string(),
             EditCommand::InsertImage { .. } => "Insérer une image".to_string(),
+            EditCommand::Redact { .. } => "Caviarder".to_string(),
         }
     }
 
@@ -311,6 +320,7 @@ impl Command for EditCommand {
                 style,
             } => doc.insert_text(*page, *at, text, style),
             EditCommand::InsertImage { page, rect, path } => doc.insert_image(*page, *rect, path),
+            EditCommand::Redact { page, rect } => doc.redact(*page, *rect).map(|_| ()),
         }
     }
 }

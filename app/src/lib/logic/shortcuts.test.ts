@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { SHORTCUT_HELP, actionFor } from './shortcuts';
+import { actionFor, shortcutHelp } from './shortcuts';
 
 const key = (k: string, mods: Partial<{ ctrl: boolean; shift: boolean; alt: boolean }> = {}) => ({
   key: k,
@@ -56,11 +56,11 @@ describe('actionFor', () => {
   });
 });
 
-describe('SHORTCUT_HELP', () => {
+describe('shortcutHelp', () => {
   it('describes every action once, with a label', () => {
-    const actions = SHORTCUT_HELP.map((h) => h.action);
+    const actions = shortcutHelp().map((h) => h.action);
     expect(new Set(actions).size).toBe(actions.length);
-    expect(SHORTCUT_HELP.find((h) => h.action === 'open')?.keys).toContain('Ctrl+O');
-    expect(SHORTCUT_HELP.every((h) => h.label.length > 0)).toBe(true);
+    expect(shortcutHelp().find((h) => h.action === 'open')?.keys).toContain('Ctrl+O');
+    expect(shortcutHelp().every((h) => h.label.length > 0)).toBe(true);
   });
 });

@@ -3,7 +3,9 @@
 // Stockées dans `settings.json` via le plugin store de Tauri ; hors Tauri (tests),
 // les accès sont silencieusement ignorés.
 
+import { resolveLanguage, type Language, type LanguagePreference } from '$lib/logic/i18n';
 import { pushRecent } from '$lib/logic/recent';
+import { currentLanguage, LANGUAGE_STORAGE_KEY, setLanguage } from '$lib/strings';
 
 export type Theme = 'system' | 'light' | 'dark';
 export type ZoomMode = 'custom' | 'fitWidth' | 'fitPage';
@@ -26,6 +28,10 @@ export interface Settings {
   positions: Record<string, ReadingPosition>;
   /** Auteur inscrit dans les annotations créées. */
   author: string;
+  /** Langue de l'interface (Lot 7). */
+  language: LanguagePreference;
+  /** Rouvrir un fichier à la page et au zoom où on l'avait laissé. */
+  restorePositions: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -37,6 +43,8 @@ const DEFAULTS: Settings = {
   recent: [],
   positions: {},
   author: '',
+  language: 'system',
+  restorePositions: true,
 };
 
 const STORE_FILE = 'settings.json';
@@ -44,6 +52,33 @@ const KEY = 'settings';
 
 /** L'état réactif des préférences (runes Svelte 5). */
 export const settings = $state<Settings>({ ...DEFAULTS });
+
+/**
+ * Langue effectivement affichée. `+page.svelte` remonte l'interface quand elle change
+ * (bloc `{#key}`), ce qui relit toutes les chaînes de `t` sans fermer les documents.
+ */
+export const ui = $state<{ language: Language }>({ language: currentLanguage() });
+
+/** Applique la préférence de langue : `t`, l'attribut `lang` du document, le miroir local. */
+export function applyLanguage(): void {
+  const system = typeof navigator === 'undefined' ? 'fr' : navigator.language;
+  const language = resolveLanguage(settings.language, system);
+  setLanguage(language);
+  ui.language = language;
+  try {
+    globalThis.localStorage?.setItem(LANGUAGE_STORAGE_KEY, settings.language);
+  } catch {
+    // stockage indisponible : la langue sera recalculée au prochain démarrage
+  }
+  if (typeof document !== 'undefined') document.documentElement.lang = language;
+}
+
+/** Change la langue de l'interface et l'enregistre. */
+export function setLanguagePreference(pref: LanguagePreference): void {
+  settings.language = pref;
+  saveSettings();
+  applyLanguage();
+}
 
 type Store = {
   get<T>(key: string): Promise<T | undefined>;

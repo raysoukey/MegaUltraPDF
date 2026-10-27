@@ -110,8 +110,11 @@ function label(b: Binding): string {
   return parts.join('+');
 }
 
-/** Aide des raccourcis : une ligne par action, toutes ses touches, un libellé. */
-export const SHORTCUT_HELP: { action: Action; keys: string[]; label: string }[] = (() => {
+/**
+ * Aide des raccourcis : une ligne par action, toutes ses touches, un libellé dans la langue
+ * **courante** (calculée à l'appel, pas une fois pour toutes à l'import du module).
+ */
+export function shortcutHelp(): { action: Action; keys: string[]; label: string }[] {
   const byAction = new Map<Action, string[]>();
   for (const b of BINDINGS) {
     const keys = byAction.get(b.action) ?? [];
@@ -123,4 +126,4 @@ export const SHORTCUT_HELP: { action: Action; keys: string[]; label: string }[] 
     keys,
     label: t.actions[action],
   }));
-})();
+}

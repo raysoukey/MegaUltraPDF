@@ -64,7 +64,13 @@
     stepSearch,
     undo,
   } from '$lib/state/documents.svelte';
-  import { flushSettings, loadSettings, settings } from '$lib/state/settings.svelte';
+  import {
+    applyLanguage,
+    flushSettings,
+    loadSettings,
+    settings,
+    ui,
+  } from '$lib/state/settings.svelte';
   import { currentStyle, setTool, toolState } from '$lib/state/tools.svelte';
   import { t } from '$lib/strings';
   import { applyTheme } from '$lib/theme';
@@ -117,6 +123,13 @@
     applyTheme(settings.theme);
   });
 
+  // Après un changement de langue, l'interface est remontée : chaque visionneuse doit revenir
+  // à la page où l'on était (et non en haut du document).
+  $effect(() => {
+    void ui.language;
+    for (const d of docsState.docs) d.scrollRequest = d.page;
+  });
+
   // Nature du formulaire du document actif (onglet « Formulaire », bandeau XFA).
   $effect(() => {
     if (doc && !doc.formInfo) void ensureFormInfo(doc);
@@ -127,6 +140,7 @@
     let unlistenClose: (() => void) | undefined;
     (async () => {
       await loadSettings();
+      applyLanguage();
       const path = await startupFile().catch(() => null);
       if (path) await openPath(path);
       try {
@@ -340,134 +354,136 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<main>
-  <Toolbar
-    {doc}
-    onopen={onOpen}
-    onopenrecent={(p) => openPath(p)}
-    onfitwidth={() => viewer?.fitWidth()}
-    onfitpage={() => viewer?.fitPage()}
-    ontogglesearch={() => (searchOpen = !searchOpen)}
-    onproperties={() => (propertiesOpen = true)}
-    onhelp={() => (helpOpen = true)}
-    onmerge={() => (mergeOpen = true)}
-    onsplit={() => doc && (splitOpen = true)}
-    onexport={() => doc && (exportOpen = true)}
-    onprint={() => doc && (printOpen = true)}
-    onprotect={() => doc && (protectOpen = true)}
-    onoptimize={() => doc && (optimizeOpen = true)}
-    oncompare={() => doc && (compareOpen = true)}
-  />
-  <Tabs />
-  {#if doc}
-    <AnnotationToolbar
+{#key ui.language}
+  <main>
+    <Toolbar
       {doc}
-      onedit={editSelected}
-      onwatermark={() => (watermarkOpen = true)}
-      onnumbering={() => (numberingOpen = true)}
-      oncrop={() => (cropOpen = true)}
+      onopen={onOpen}
+      onopenrecent={(p) => openPath(p)}
+      onfitwidth={() => viewer?.fitWidth()}
+      onfitpage={() => viewer?.fitPage()}
+      ontogglesearch={() => (searchOpen = !searchOpen)}
+      onproperties={() => (propertiesOpen = true)}
+      onhelp={() => (helpOpen = true)}
+      onmerge={() => (mergeOpen = true)}
+      onsplit={() => doc && (splitOpen = true)}
+      onexport={() => doc && (exportOpen = true)}
+      onprint={() => doc && (printOpen = true)}
+      onprotect={() => doc && (protectOpen = true)}
+      onoptimize={() => doc && (optimizeOpen = true)}
+      oncompare={() => doc && (compareOpen = true)}
     />
-  {/if}
-  {#if doc && searchOpen}
-    <SearchBar {doc} onclose={() => (searchOpen = false)} />
-  {/if}
-  {#if docsState.error}
-    <p class="error" role="alert">{docsState.error}</p>
-  {/if}
-  {#if doc?.formInfo?.form_type === 'xfa'}
-    <p class="error" role="status">{t.formXfa}</p>
-  {/if}
-
-  <section class="body">
+    <Tabs />
     {#if doc}
-      {#if settings.sidebarOpen}
-        <Sidebar {doc} oneditannotation={(a, page) => (editing = { annotation: a, page })} />
-      {/if}
-      {#key doc.summary.id}
-        <Viewer bind:this={viewer} {doc} />
-      {/key}
-    {:else}
-      <div class="empty">
-        <p>{t.noDocument}</p>
-        <p class="muted">{t.dropHint}</p>
-      </div>
-    {/if}
-  </section>
-
-  {#if docsState.passwordPrompt}
-    <PasswordDialog
-      path={docsState.passwordPrompt.path}
-      error={docsState.passwordPrompt.error}
-      onsubmit={(pwd) => docsState.passwordPrompt && openPath(docsState.passwordPrompt.path, pwd)}
-      oncancel={cancelPassword}
-    />
-  {/if}
-  {#if doc && propertiesOpen}
-    <PropertiesDialog {doc} onclose={() => (propertiesOpen = false)} />
-  {/if}
-  {#if helpOpen}
-    <ShortcutsHelp onclose={() => (helpOpen = false)} />
-  {/if}
-  {#if mergeOpen}
-    <MergeDialog onclose={() => (mergeOpen = false)} />
-  {/if}
-  {#if doc && splitOpen}
-    <SplitDialog {doc} onclose={() => (splitOpen = false)} />
-  {/if}
-  {#if doc && doc.signatureRequest}
-    <SignatureDialog {doc} page={doc.signatureRequest.page} rect={doc.signatureRequest.rect} />
-  {/if}
-  {#if doc && doc.textInsertRequest}
-    <TextInsertDialog {doc} page={doc.textInsertRequest.page} at={doc.textInsertRequest.at} />
-  {/if}
-  {#if doc && doc.redactRequest}
-    <RedactConfirmDialog {doc} />
-  {/if}
-  {#if doc && watermarkOpen}
-    <WatermarkDialog {doc} onclose={() => (watermarkOpen = false)} />
-  {/if}
-  {#if doc && numberingOpen}
-    <NumberingDialog {doc} onclose={() => (numberingOpen = false)} />
-  {/if}
-  {#if doc && cropOpen}
-    <CropDialog {doc} onclose={() => (cropOpen = false)} />
-  {/if}
-  {#if doc && exportOpen}
-    <ExportDialog {doc} onclose={() => (exportOpen = false)} />
-  {/if}
-  {#if doc && protectOpen}
-    <ProtectDialog {doc} onclose={() => (protectOpen = false)} />
-  {/if}
-  {#if doc && optimizeOpen}
-    <OptimizeDialog {doc} onclose={() => (optimizeOpen = false)} />
-  {/if}
-  {#if doc && compareOpen}
-    <CompareDialog {doc} onclose={() => (compareOpen = false)} />
-  {/if}
-  {#if doc && printOpen}
-    <PrintView {doc} onclose={() => (printOpen = false)} />
-  {/if}
-  {#if doc && editing}
-    {#key editing.annotation.index}
-      <AnnotationEditor
+      <AnnotationToolbar
         {doc}
-        page={editing.page}
-        annotation={editing.annotation}
-        onclose={() => (editing = null)}
+        onedit={editSelected}
+        onwatermark={() => (watermarkOpen = true)}
+        onnumbering={() => (numberingOpen = true)}
+        oncrop={() => (cropOpen = true)}
       />
-    {/key}
-  {/if}
-  {#if docsState.closePrompt}
-    {@const closing = docById(docsState.closePrompt.id)}
-    <CloseConfirmDialog
-      name={closing ? displayName(closing) : t.untitled}
-      onchoice={(choice) => resolveClosePrompt(choice)}
-    />
-  {/if}
-  {#if docsState.notice}
-    <div class="toast" role="status">{docsState.notice}</div>
-  {/if}
-</main>
+    {/if}
+    {#if doc && searchOpen}
+      <SearchBar {doc} onclose={() => (searchOpen = false)} />
+    {/if}
+    {#if docsState.error}
+      <p class="error" role="alert">{docsState.error}</p>
+    {/if}
+    {#if doc?.formInfo?.form_type === 'xfa'}
+      <p class="error" role="status">{t.formXfa}</p>
+    {/if}
+
+    <section class="body">
+      {#if doc}
+        {#if settings.sidebarOpen}
+          <Sidebar {doc} oneditannotation={(a, page) => (editing = { annotation: a, page })} />
+        {/if}
+        {#key doc.summary.id}
+          <Viewer bind:this={viewer} {doc} />
+        {/key}
+      {:else}
+        <div class="empty">
+          <p>{t.noDocument}</p>
+          <p class="muted">{t.dropHint}</p>
+        </div>
+      {/if}
+    </section>
+
+    {#if docsState.passwordPrompt}
+      <PasswordDialog
+        path={docsState.passwordPrompt.path}
+        error={docsState.passwordPrompt.error}
+        onsubmit={(pwd) => docsState.passwordPrompt && openPath(docsState.passwordPrompt.path, pwd)}
+        oncancel={cancelPassword}
+      />
+    {/if}
+    {#if doc && propertiesOpen}
+      <PropertiesDialog {doc} onclose={() => (propertiesOpen = false)} />
+    {/if}
+    {#if helpOpen}
+      <ShortcutsHelp onclose={() => (helpOpen = false)} />
+    {/if}
+    {#if mergeOpen}
+      <MergeDialog onclose={() => (mergeOpen = false)} />
+    {/if}
+    {#if doc && splitOpen}
+      <SplitDialog {doc} onclose={() => (splitOpen = false)} />
+    {/if}
+    {#if doc && doc.signatureRequest}
+      <SignatureDialog {doc} page={doc.signatureRequest.page} rect={doc.signatureRequest.rect} />
+    {/if}
+    {#if doc && doc.textInsertRequest}
+      <TextInsertDialog {doc} page={doc.textInsertRequest.page} at={doc.textInsertRequest.at} />
+    {/if}
+    {#if doc && doc.redactRequest}
+      <RedactConfirmDialog {doc} />
+    {/if}
+    {#if doc && watermarkOpen}
+      <WatermarkDialog {doc} onclose={() => (watermarkOpen = false)} />
+    {/if}
+    {#if doc && numberingOpen}
+      <NumberingDialog {doc} onclose={() => (numberingOpen = false)} />
+    {/if}
+    {#if doc && cropOpen}
+      <CropDialog {doc} onclose={() => (cropOpen = false)} />
+    {/if}
+    {#if doc && exportOpen}
+      <ExportDialog {doc} onclose={() => (exportOpen = false)} />
+    {/if}
+    {#if doc && protectOpen}
+      <ProtectDialog {doc} onclose={() => (protectOpen = false)} />
+    {/if}
+    {#if doc && optimizeOpen}
+      <OptimizeDialog {doc} onclose={() => (optimizeOpen = false)} />
+    {/if}
+    {#if doc && compareOpen}
+      <CompareDialog {doc} onclose={() => (compareOpen = false)} />
+    {/if}
+    {#if doc && printOpen}
+      <PrintView {doc} onclose={() => (printOpen = false)} />
+    {/if}
+    {#if doc && editing}
+      {#key editing.annotation.index}
+        <AnnotationEditor
+          {doc}
+          page={editing.page}
+          annotation={editing.annotation}
+          onclose={() => (editing = null)}
+        />
+      {/key}
+    {/if}
+    {#if docsState.closePrompt}
+      {@const closing = docById(docsState.closePrompt.id)}
+      <CloseConfirmDialog
+        name={closing ? displayName(closing) : t.untitled}
+        onchoice={(choice) => resolveClosePrompt(choice)}
+      />
+    {/if}
+    {#if docsState.notice}
+      <div class="toast" role="status">{docsState.notice}</div>
+    {/if}
+  </main>
+{/key}
 
 <style>
   main {

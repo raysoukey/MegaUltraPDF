@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import { SHORTCUT_HELP } from '$lib/logic/shortcuts';
+  import { shortcutHelp } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
 
   let { onclose }: { onclose: () => void } = $props();
@@ -15,7 +15,7 @@
     <h2 id="help-title">{t.shortcutsHelp}</h2>
     <table>
       <tbody>
-        {#each SHORTCUT_HELP as row (row.action)}
+        {#each shortcutHelp() as row (row.action)}
           <tr>
             <td class="keys"
               >{#each row.keys as k, i (k)}{#if i > 0},
@@ -24,7 +24,7 @@
             <td>{row.label}</td>
           </tr>
         {/each}
-        <tr><td class="keys"><kbd>Ctrl+molette</kbd></td><td>{t.zoomIn} / {t.zoomOut}</td></tr>
+        <tr><td class="keys"><kbd>{t.ctrlWheel}</kbd></td><td>{t.zoomIn} / {t.zoomOut}</td></tr>
         <tr><td class="keys"><kbd>Ctrl+C</kbd></td><td>{t.copy}</td></tr>
       </tbody>
     </table>

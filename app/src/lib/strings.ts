@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Toutes les chaînes visibles de l'interface, en un seul endroit.
-// Aucun composant ne contient de texte en dur : le Lot 7 branchera ici la traduction FR/EN.
+// Toutes les chaînes visibles de l'interface, en un seul endroit, en français et en anglais.
+// Aucun composant ne contient de texte en dur. `fr` est la référence ; `en` a exactement la
+// même forme (le type `Strings` le vérifie à la compilation). Les composants lisent l'objet
+// partagé `t`, que `setLanguage` remplit avec l'un ou l'autre dictionnaire.
 
+import { resolveLanguage, type Language, type LanguagePreference } from './logic/i18n';
+
+/** Le dictionnaire français : la référence dont tous les autres reprennent la forme. */
 export const fr = {
   appName: 'MegaUltraPDF',
   openFile: 'Ouvrir un PDF…',
@@ -74,6 +79,7 @@ export const fr = {
   copy: 'Copier',
   copied: 'Texte copié.',
   loading: 'Chargement…',
+  ctrlWheel: 'Ctrl+molette',
   // Édition (Lot 2)
   modifiedMarker: '•',
   editGroup: 'Édition',
@@ -408,6 +414,450 @@ export const fr = {
     deleteAnnotation: 'Supprimer l’annotation ou l’objet sélectionné',
     print: 'Imprimer',
   },
-} as const;
+};
 
-export const t = fr;
+/** Forme commune des dictionnaires : celle de `fr`. */
+export type Strings = typeof fr;
+
+/** Le dictionnaire anglais : même forme que `fr`, vérifiée par le type `Strings`. */
+export const en: Strings = {
+  appName: 'MegaUltraPDF',
+  openFile: 'Open a PDF…',
+  noDocument: 'No document open.',
+  dropHint: 'Drop a PDF file here, or use Open (Ctrl+O).',
+  untitled: '(untitled)',
+  pages: (n: number) => `${n} page${n > 1 ? 's' : ''}`,
+  pageOf: (n: number, total: number) => `Page ${n} of ${total}`,
+  openError: (message: string) => `Cannot open the document: ${message}`,
+  passwordRequired: 'This document is password-protected.',
+  wrongPassword: 'Wrong password.',
+  passwordPrompt: 'Document password',
+  passwordPlaceholder: 'Password',
+  ok: 'OK',
+  cancel: 'Cancel',
+  close: 'Close',
+  closeTab: 'Close tab',
+  recentFiles: 'Recent files',
+  noRecentFiles: 'No recent files',
+  clearRecent: 'Clear list',
+  zoomIn: 'Zoom in',
+  zoomOut: 'Zoom out',
+  zoomPercent: (pct: number) => `${pct}%`,
+  fitWidth: 'Fit width',
+  fitPage: 'Fit page',
+  rotate: 'Rotate 90°',
+  viewContinuous: 'Continuous scrolling',
+  viewSingle: 'Single page',
+  previousPage: 'Previous page',
+  nextPage: 'Next page',
+  pageInputLabel: 'Page number',
+  sidebar: 'Side panel',
+  thumbnails: 'Thumbnails',
+  bookmarks: 'Bookmarks',
+  noBookmarks: 'This document has no bookmarks.',
+  search: 'Search',
+  searchPlaceholder: 'Search the document…',
+  searchMatchCase: 'Match case',
+  searchWholeWord: 'Whole words',
+  searchCount: (current: number, total: number) =>
+    total === 0 ? 'No results' : `${current} of ${total}`,
+  searchNext: 'Next result',
+  searchPrev: 'Previous result',
+  properties: 'Document properties',
+  propTitle: 'Title',
+  propAuthor: 'Author',
+  propSubject: 'Subject',
+  propKeywords: 'Keywords',
+  propCreator: 'Application',
+  propProducer: 'Producer',
+  propCreated: 'Created',
+  propModified: 'Modified',
+  propVersion: 'PDF version',
+  propPages: 'Pages',
+  propFile: 'File',
+  propSize: 'Size',
+  unknown: '—',
+  bytes: (n: number) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  },
+  theme: 'Theme',
+  themeSystem: 'System',
+  themeLight: 'Light',
+  themeDark: 'Dark',
+  shortcutsHelp: 'Keyboard shortcuts',
+  externalLinkConfirm: (uri: string) => `Open this link in your browser?\n\n${uri}`,
+  externalLinkBlocked: 'This kind of link is blocked for your safety.',
+  copy: 'Copy',
+  copied: 'Text copied.',
+  loading: 'Loading…',
+  ctrlWheel: 'Ctrl+wheel',
+  // Editing (Lot 2)
+  modifiedMarker: '•',
+  editGroup: 'Editing',
+  undo: 'Undo',
+  redo: 'Redo',
+  undoLabel: (label: string) => `Undo: ${label}`,
+  redoLabel: (label: string) => `Redo: ${label}`,
+  save: 'Save',
+  saveAs: 'Save as…',
+  saved: 'Document saved.',
+  editError: (message: string) => `Cannot apply the change: ${message}`,
+  saveError: (message: string) => `Cannot save: ${message}`,
+  closeModifiedTitle: 'Unsaved changes',
+  closeModifiedQuestion: (name: string) =>
+    `Do you want to save the changes to “${name}” before closing?`,
+  dontSave: 'Don’t save',
+  // Annotations (Lot 3)
+  annotations: 'Annotations',
+  annotationTools: 'Annotation tools',
+  tool: {
+    select: 'Select',
+    note: 'Note',
+    highlight: 'Highlight selection',
+    underline: 'Underline selection',
+    strikeout: 'Strike out selection',
+    text: 'Text',
+    ink: 'Draw',
+    rect: 'Rectangle',
+    ellipse: 'Ellipse',
+    line: 'Line',
+    arrow: 'Arrow',
+    stamp: 'Stamp',
+    signature: 'Signature',
+    objects: 'Page objects',
+    'text-content': 'Text in the page',
+    image: 'Image',
+    redact: 'Redact',
+  } as Record<string, string>,
+  annotationKind: {
+    note: 'Note',
+    highlight: 'Highlight',
+    underline: 'Underline',
+    strike_out: 'Strikeout',
+    squiggly: 'Squiggly',
+    rect: 'Rectangle',
+    ellipse: 'Ellipse',
+    line: 'Line',
+    arrow: 'Arrow',
+    ink: 'Ink',
+    text: 'Text',
+    stamp: 'Stamp',
+    link: 'Link',
+    widget: 'Field',
+    other: 'Annotation',
+  } as Record<string, string>,
+  color: 'Colour',
+  customColor: 'Custom colour',
+  fillColor: 'Fill',
+  noFill: 'No fill',
+  opacity: 'Opacity',
+  strokeWidth: 'Thickness',
+  fontSize: 'Text size',
+  stampLabel: 'Stamp label',
+  author: 'Author',
+  authorPlaceholder: 'Your name (written into annotations)',
+  annotationContents: 'Contents',
+  annotationContentsPlaceholder: 'Type the text, Ctrl+Enter to confirm, Esc to cancel',
+  noAnnotations: 'No annotations in this document.',
+  deleteAnnotation: 'Delete annotation',
+  editAnnotation: 'Edit annotation',
+  annotationOnPage: (n: number) => `Page ${n}`,
+  selectTextFirst: 'Select some text in the page first.',
+  noAuthor: '(anonymous)',
+  annotationNotEditable: 'This annotation cannot be edited here.',
+  // Forms (Lot 4)
+  formTab: 'Form',
+  formFields: 'Form fields',
+  formFieldCount: (n: number) => `${n} field${n > 1 ? 's' : ''}`,
+  formMissingRequired: (n: number) => `${n} required field${n > 1 ? 's' : ''} empty`,
+  formRequired: 'required',
+  formReadOnly: 'Read-only field',
+  formXfa: 'XFA form: not supported (display only).',
+  formChecked: 'checked',
+  formUnchecked: 'unchecked',
+  formEmpty: '(empty)',
+  flatten: 'Flatten',
+  flattenConfirm: 'Flattening makes fields and annotations permanent (undo with Ctrl+Z).',
+  fieldKind: {
+    text: 'Text',
+    checkbox: 'Checkbox',
+    radio: 'Radio',
+    combo: 'Drop-down list',
+    list: 'List',
+    button: 'Button',
+    signature: 'Signature',
+    unknown: 'Field',
+  } as Record<string, string>,
+  signatureTitle: 'Add a signature',
+  signatureDraw: 'Draw',
+  signatureImage: 'Image',
+  signatureClear: 'Clear',
+  signatureHint: 'Draw with the mouse, then Apply.',
+  signatureChooseImage: 'Choose an image…',
+  signatureNoImage: 'No image chosen',
+  signatureApply: 'Apply',
+  // Content (Lot 5)
+  contentTools: 'Content tools',
+  contentMenu: 'Content',
+  objectKind: {
+    text: 'Text',
+    image: 'Image',
+    path: 'Path',
+    form: 'Group',
+    shading: 'Shading',
+    other: 'Object',
+  } as Record<string, string>,
+  deleteObject: 'Delete object',
+  objectHint: 'Hover to locate, click to select, drag to move, double-click a text to edit it.',
+  objectTextPlaceholder: 'New text, Ctrl+Enter to confirm, Esc to cancel',
+  textInsertTitle: 'Insert text',
+  textInsertText: 'Text',
+  fontFamily: 'Font',
+  fontFamilies: {
+    helvetica: 'Helvetica (sans serif)',
+    times: 'Times (serif)',
+    courier: 'Courier (monospace)',
+  } as Record<string, string>,
+  bold: 'Bold',
+  italic: 'Italic',
+  insert: 'Insert',
+  imageTool: 'Draw a rectangle, then choose an image.',
+  redactTitle: 'Redact the area',
+  redactConfirm:
+    'Text, images and annotations touching the area will be removed from the file and covered in black (undo with Ctrl+Z).',
+  redact: 'Redact',
+  redacted: 'Area redacted.',
+  watermarkTitle: 'Watermark',
+  watermarkDefaultText: 'DRAFT',
+  watermarkText: 'Text',
+  watermarkSize: 'Size (pt)',
+  watermarkAngle: 'Angle (°)',
+  apply: 'Apply',
+  numberingTitle: 'Page numbering',
+  numberingTemplate: 'Template',
+  numberingTemplateHint: '{n} page number, {total} page count, {titre} document title',
+  numberingCorner: 'Position',
+  corners: {
+    top_left: 'Header, left',
+    top_center: 'Header, centre',
+    top_right: 'Header, right',
+    bottom_left: 'Footer, left',
+    bottom_center: 'Footer, centre',
+    bottom_right: 'Footer, right',
+  } as Record<string, string>,
+  numberingMargin: 'Margin (pt)',
+  numberingStart: 'First number',
+  numberingPreview: (s: string) => `Preview: ${s}`,
+  cropTitle: 'Crop pages',
+  cropMargins: 'Margins (points, from the full page)',
+  cropLeft: 'Left',
+  cropBottom: 'Bottom',
+  cropRight: 'Right',
+  cropTop: 'Top',
+  cropReset: 'Full page',
+  cropInvalid: 'The margins leave no page.',
+  crop: 'Crop',
+  pageScope: 'Pages',
+  scopeAll: 'All pages',
+  scopeCurrent: (n: number) => `Current page (${n})`,
+  scopeSelected: (n: number) => `Selected pages (${n})`,
+  // Export, printing, security (Lot 6)
+  fileMenu: 'File',
+  exportTitle: 'Export…',
+  exportImages: 'Images',
+  exportText: 'Text',
+  exportFormat: 'Format',
+  exportQuality: 'JPEG quality',
+  exportDpi: 'Resolution (dpi)',
+  exportPrefix: 'File prefix',
+  exportWithAnnotations: 'Include annotations and fields',
+  exportOverwrite: 'Overwrite existing files',
+  exportSeparators: 'A “===== Page N =====” line between pages',
+  exportTextHint: 'Text is extracted in reading order; a UTF-8 .txt file is written.',
+  exportAction: 'Export',
+  exportedImages: (n: number) => `${n} image${n > 1 ? 's' : ''} written.`,
+  exportedText: 'Text exported.',
+  exportError: (message: string) => `Cannot export: ${message}`,
+  printTitle: 'Print…',
+  printResolution: 'Resolution',
+  printAction: 'Print',
+  printReady: (n: number) => `${n} page${n > 1 ? 's' : ''} ready`,
+  printLoading: (done: number, total: number) => `Preparing ${done} of ${total}…`,
+  metadataReadOnlyEncrypted: 'Protected document: metadata cannot be edited.',
+  securityTitle: 'Security',
+  securityProtected: 'Password-protected',
+  securityOpen: 'Not protected',
+  securityPermissions: (p: { print: boolean; copy: boolean; modify: boolean; annotate: boolean }) =>
+    [
+      p.print ? 'printing' : 'printing denied',
+      p.copy ? 'copying' : 'copying denied',
+      p.modify ? 'editing' : 'editing denied',
+      p.annotate ? 'annotating' : 'annotating denied',
+    ].join(', '),
+  protectTitle: 'Protect…',
+  protectHint:
+    'AES-256. Protecting is the last step: a protected document can no longer receive a watermark, page numbers or new metadata until its protection is removed.',
+  protectAlready: 'This document is password-protected.',
+  protectUserPassword: 'Open password',
+  protectConfirm: 'Confirm',
+  protectOwnerPassword: 'Owner password (optional)',
+  protectMismatch: 'The two open passwords differ.',
+  protectPermissions: 'Allow without the owner password',
+  permissionPrint: 'Print',
+  permissionCopy: 'Copy text',
+  permissionModify: 'Edit',
+  permissionAnnotate: 'Annotate and fill in',
+  protectAction: 'Protect',
+  unprotectAction: 'Remove protection',
+  unprotectOwnerPassword: 'Owner password',
+  unprotectOwnerHint:
+    'This document opens without a password but keeps restrictions: enter the owner password to remove the protection.',
+  protectNoOwnerWarning:
+    'Without an owner password, anyone who knows the open password can lift the restrictions.',
+  protected: 'Document protected.',
+  unprotected: 'Protection removed.',
+  optimizeTitle: 'Optimize…',
+  optimizeHint:
+    'Unused objects removed, streams compressed, images recompressed when it shrinks the file.',
+  optimizeCurrentSize: (size: string) => `current size: ${size}`,
+  optimizeRecompress: 'Recompress images as JPEG',
+  optimizeQuality: 'JPEG quality',
+  optimizeDownsample: 'Shrink large images',
+  optimizeMaxPx: 'Maximum dimension (px)',
+  optimizeCompressStreams: 'Compress uncompressed streams',
+  optimizeAction: 'Optimize',
+  optimizeAnalyze: 'Analyze',
+  optimizeReport: (before: string, after: string, pct: number, images: number) =>
+    `${before} → ${after} (−${pct}%), ${images} image${images > 1 ? 's' : ''} recompressed`,
+  optimizeNothing: 'Nothing to gain: the document is already optimized.',
+  optimizeDone: 'Optimization applied (undo with Ctrl+Z).',
+  optimizeSaveHint:
+    'Save to write the smaller file; the size shown in Properties is the size of the file on disk.',
+  attachmentsTab: 'Attachments',
+  attachmentCount: (n: number) => `${n} attachment${n > 1 ? 's' : ''}`,
+  noAttachments: 'No attachments.',
+  attachmentExtract: 'Save attachment…',
+  attachmentDelete: 'Remove attachment',
+  attachmentAdd: 'Attach a file…',
+  attachmentSaved: 'Attachment saved.',
+  compareTitle: 'Compare…',
+  compareWith: 'Compare with',
+  compareNoOther: 'No other document open',
+  compareOpenFile: 'Open a file…',
+  compareAction: 'Compare',
+  compareResult: (differing: number, total: number) =>
+    differing === 0
+      ? 'Identical pages'
+      : `${differing.toLocaleString('en-US')} differing pixels (${((100 * differing) / Math.max(1, total)).toFixed(1)}%)`,
+  compareImageAlt: 'Differences between the two pages (in red)',
+  compareHint: 'Identical pixels are faded, differences appear in red.',
+  // Pages (thumbnails)
+  pageActions: 'Page actions',
+  selectedPages: (n: number) => `${n} page${n > 1 ? 's' : ''} selected`,
+  currentPageTarget: 'Current page (Ctrl/Shift+click to choose several)',
+  rotateLeft: 'Rotate left',
+  rotateRight: 'Rotate right',
+  deletePages: 'Delete',
+  insertBlankBefore: 'Insert a blank page before',
+  insertBlankAfter: 'Insert a blank page after',
+  insertFromFile: 'Insert pages from a file after…',
+  extractPages: 'Extract to a new file…',
+  extracted: (n: number) => `${n} page${n > 1 ? 's' : ''} extracted.`,
+  // Merge
+  mergeTitle: 'Merge PDFs',
+  mergeHint: 'Files are joined in list order; the result opens in a new tab.',
+  mergeEmpty: 'No files. Add at least two.',
+  addFiles: 'Add files…',
+  moveUp: 'Move up',
+  moveDown: 'Move down',
+  remove: 'Remove',
+  merge: 'Merge',
+  mergeError: (message: string) => `Cannot merge: ${message}`,
+  // Split
+  splitTitle: 'Split the document',
+  splitMode: 'Split',
+  splitEvery: 'Every',
+  splitEveryLabel: 'Pages per part',
+  splitRanges: 'Ranges',
+  splitRangesPlaceholder: 'e.g. 1-3,4-6,7-',
+  splitBookmarks: 'At top-level bookmarks',
+  splitPreview: (n: number) => `${n} file${n > 1 ? 's' : ''} will be produced.`,
+  splitPrefix: 'File prefix',
+  splitDefaultPrefix: 'part',
+  chooseFolder: 'Output folder…',
+  noFolderChosen: 'No folder chosen',
+  split: 'Split',
+  splitDone: (n: number) => `${n} file${n > 1 ? 's' : ''} written.`,
+  actions: {
+    open: 'Open a file',
+    close: 'Close tab',
+    find: 'Search',
+    findNext: 'Next result',
+    findPrev: 'Previous result',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    zoomReset: 'Zoom 100%',
+    fitWidth: 'Fit width',
+    fitPage: 'Fit page',
+    rotate: 'Rotate',
+    firstPage: 'First page',
+    lastPage: 'Last page',
+    nextPage: 'Next page',
+    prevPage: 'Previous page',
+    help: 'Help',
+    escape: 'Close the dialog / search',
+    properties: 'Document properties',
+    undo: 'Undo the last change',
+    redo: 'Redo',
+    save: 'Save',
+    saveAs: 'Save as',
+    merge: 'Merge PDFs',
+    split: 'Split the document',
+    toolNote: 'Note tool',
+    toolHighlight: 'Highlight selection',
+    toolUnderline: 'Underline selection',
+    toolStrikeout: 'Strike out selection',
+    toolText: 'Text tool',
+    toolInk: 'Draw tool',
+    deleteAnnotation: 'Delete the selected annotation or object',
+    print: 'Print',
+  },
+};
+
+/** Clé du réglage de langue recopiée dans `localStorage`, lue de façon synchrone au démarrage. */
+export const LANGUAGE_STORAGE_KEY = 'mega.language';
+
+/** Langue choisie avant tout affichage : préférence mémorisée, sinon langue du système. */
+function initialLanguage(): Language {
+  let pref: LanguagePreference = 'system';
+  try {
+    const stored = globalThis.localStorage?.getItem(LANGUAGE_STORAGE_KEY);
+    if (stored === 'fr' || stored === 'en' || stored === 'system') pref = stored;
+  } catch {
+    // stockage indisponible (aperçu, navigation privée) : préférence par défaut
+  }
+  // Hors navigateur (tests), le français reste la langue par défaut.
+  const system = typeof navigator === 'undefined' ? 'fr' : navigator.language;
+  return resolveLanguage(pref, system);
+}
+
+let current: Language = initialLanguage();
+
+/**
+ * Les chaînes de la langue courante. C'est **un seul objet partagé**, rempli par
+ * `setLanguage` : les modules qui l'ont importé voient le changement sans rien réimporter.
+ */
+export const t: Strings = { ...(current === 'en' ? en : fr) };
+
+/** Langue actuellement appliquée à `t`. */
+export function currentLanguage(): Language {
+  return current;
+}
+
+/** Applique une langue à `t` (l'interface est ensuite remontée par `+page.svelte`). */
+export function setLanguage(language: Language): void {
+  current = language;
+  Object.assign(t, language === 'en' ? en : fr);
+}

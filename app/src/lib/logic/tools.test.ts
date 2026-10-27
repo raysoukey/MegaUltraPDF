@@ -101,9 +101,11 @@ describe('finishDraft', () => {
       expect(s.geometry.rect.h).toBeGreaterThan(30);
     }
   });
-  it('requires text for text and stamp drafts', () => {
+  it('requires text for note, text and stamp drafts', () => {
     let t = beginDraft('text', { x: 10, y: 100 })!;
     t = extendDraft(t, { x: 110, y: 60 });
     expect(finishDraft(t, style, '   ', '')).toBeNull();
+    expect(finishDraft(beginDraft('note', { x: 1, y: 1 })!, style, '', '')).toBeNull();
+    expect(finishDraft(beginDraft('stamp', { x: 1, y: 1 })!, style, '', '')).toBeNull();
   });
 });

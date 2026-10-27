@@ -99,3 +99,8 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
 - PDFium rapporte la taille d'une page **après** `/Rotate` : ne pas réappliquer la rotation
   enregistrée côté interface (seule la rotation d'affichage `doc.rotation` est appliquée).
 - `pdfium-render` 0.9 n'expose pas `FPDF_MovePages` : `move_pages` copie puis supprime.
+- Annotations (ADR-0008) : **jamais `stroke_color()`/`fill_color()` sur une annotation**
+  (pdfium-render 0.9.4 transtype le handle dès qu'un `/AP` existe → comportement indéfini,
+  et PDFium génère un `/AP` au premier rendu) : la couleur se lit dans les objets ; couleurs
+  posées **avant** toute apparence (`FPDFAnnot_SetColor` refuse ensuite) ; apparences
+  personnalisées seulement sur `Ink` et `Stamp` ; aucun binding brut (`forbid(unsafe_code)`).

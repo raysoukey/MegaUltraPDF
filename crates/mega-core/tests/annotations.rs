@@ -192,13 +192,39 @@ fn note_round_trip() {
     assert_eq!(a.contents.as_deref(), Some("Bonjour"));
     assert!(close(a.rect.w, 20.0, 0.5) && close(a.rect.h, 20.0, 0.5));
     assert!(close(a.rect.x, 100.0, 0.5));
-    assert_eq!(
-        a.color,
-        Some(Color {
-            r: 255,
-            g: 200,
-            b: 0
-        })
+    // Pas de lecture directe de `/C` (voir `color_of`) : inconnue avant rendu…
+    assert_eq!(a.color, None);
+    // …puis lue dans le symbole de note que PDFium génère au premier rendu.
+    let doc = Document::from_bytes(
+        {
+            let mut d = Document::from_bytes(sample_pdf(1, "n"), None).unwrap();
+            d.add_annotation(
+                0,
+                &new(
+                    AnnotationKind::Note,
+                    Geometry::Rect {
+                        rect: rect(100.0, 700.0, 0.0, 0.0),
+                    },
+                    style((255, 200, 0)),
+                    "Bonjour",
+                ),
+            )
+            .unwrap();
+            d.to_bytes().unwrap()
+        },
+        None,
+    )
+    .unwrap();
+    doc.render_page(0, 1.0).unwrap();
+    let rendered = &doc.annotations(0).unwrap()[0];
+    assert!(
+        rendered.color.is_some(),
+        "couleur lue dans l'apparence générée"
+    );
+    assert_ne!(
+        rendered.color,
+        Some(Color { r: 0, g: 0, b: 0 }),
+        "pas le noir du contour"
     );
 }
 

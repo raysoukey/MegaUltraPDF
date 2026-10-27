@@ -618,35 +618,37 @@ fn kind_of(ann: &PdfPageAnnotation) -> AnnotationKind {
     }
 }
 
-/// Couleur et opacité de l'annotation.
+/// Couleur et opacité de l'annotation, lues dans ses objets d'apparence.
 ///
-/// **Piège réel** (pdfium-render 0.9.4) : `stroke_color()` sur une annotation qui possède
-/// un flux d'apparence `/AP` retombe sur `FPDFPageObj_GetStrokeColor` avec le handle de
-/// l'annotation transtypé en objet de page : violation d'accès (plantage du processus).
-/// La couleur vient donc d'abord des objets de l'apparence. `/C` n'est lu directement que
-/// pour une **note** sans objet d'apparence (seul genre où cette couleur compte et où une
-/// apparence est rare) ; le cas « `/AP` présent mais vide » reste un risque résiduel connu.
-/// Sans `/C`, PDFium répond noir (valeur par défaut de la norme).
+/// **Piège réel** (pdfium-render 0.9.4) : `stroke_color()` / `fill_color()` sur une
+/// annotation qui possède un flux d'apparence `/AP` retombent sur
+/// `FPDFPageObj_GetStrokeColor` avec le handle de l'annotation transtypé en objet de page :
+/// comportement indéfini (violation d'accès observée, ou noir renvoyé au hasard). Et PDFium
+/// génère un `/AP` pour presque tout dès le premier rendu (y compris le symbole d'une
+/// note). On ne lit donc **jamais** `/C` directement : avant le premier rendu la couleur
+/// est inconnue (`None`), après elle vient de l'apparence.
+///
+/// Pour nos formes (`Ink`/`Stamp`), la couleur principale est celle du trait ; pour les
+/// autres sous-types (symbole de note, surlignage, carré tiers), celle du remplissage si
+/// l'objet est rempli (le symbole de note est rempli en couleur et cerné de noir).
 fn color_of(ann: &PdfPageAnnotation, kind: AnnotationKind) -> (Option<Color>, f32) {
+    let stroke_first =
+        kind.is_drawn_shape() || matches!(kind, AnnotationKind::Text | AnnotationKind::Stamp);
     for obj in ann.objects().iter() {
-        let stroked = obj
-            .as_path_object()
-            .and_then(|p| p.is_stroked().ok())
-            .unwrap_or(false);
-        let color = if stroked {
-            obj.stroke_color().ok()
-        } else {
-            obj.fill_color().ok()
+        let path = obj.as_path_object();
+        let stroked = path.and_then(|p| p.is_stroked().ok()).unwrap_or(false);
+        let filled = path
+            .and_then(|p| p.fill_mode().ok())
+            .map(|m| m != pdfium_render::prelude::PdfPathFillMode::None)
+            .unwrap_or(path.is_none());
+        let color = match (stroke_first, stroked, filled) {
+            (true, true, _) | (false, true, false) => obj.stroke_color().ok(),
+            (_, _, true) => obj.fill_color().ok(),
+            _ => None,
         };
         if let Some(c) = color {
             return (Some(c.into()), f32::from(c.alpha()) / 255.0);
         }
-    }
-    if kind == AnnotationKind::Note
-        && ann.objects().is_empty()
-        && let Ok(c) = ann.stroke_color()
-    {
-        return (Some(c.into()), f32::from(c.alpha()) / 255.0);
     }
     (None, 1.0)
 }

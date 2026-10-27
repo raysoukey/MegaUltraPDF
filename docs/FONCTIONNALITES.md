@@ -45,14 +45,14 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 
 ## Annotations
 
-- [ ] Surligner, souligner, barrer du texte [3]
-- [ ] Note (commentaire), texte libre [3]
-- [ ] Encre (dessin à main levée) [3]
-- [ ] Formes : rectangle, ellipse, ligne, flèche [3]
-- [ ] Tampons prédéfinis [3]
-- [ ] Propriétés : couleur, opacité, épaisseur, auteur, date [3]
-- [ ] Déplacer, redimensionner, supprimer ; panneau liste des annotations [3]
-- [ ] Enregistrement conforme (lisible dans Acrobat, PDF.js, SumatraPDF, Aperçu) [3]
+- [x] Surligner, souligner, barrer du texte [3]
+- [x] Note (commentaire), texte libre [3]
+- [x] Encre (dessin à main levée) [3]
+- [x] Formes : rectangle, ellipse, ligne, flèche [3]
+- [x] Tampons prédéfinis [3]
+- [x] Propriétés : couleur, opacité, épaisseur, auteur, date [3]
+- [x] Déplacer, redimensionner, supprimer ; panneau liste des annotations [3]
+- [x] Enregistrement conforme : apparences explicites, sous-types natifs pour les marquages (ADR-0008) ; vérifié par relecture PDFium et revue `pdf-expert`, à confirmer manuellement dans Acrobat / PDF.js [3]
 
 ## Formulaires et signature
 

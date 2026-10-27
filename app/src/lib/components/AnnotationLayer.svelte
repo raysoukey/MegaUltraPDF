@@ -140,14 +140,12 @@
     if (drawing) {
       const d = beginDraft(tool, p);
       if (!d) return;
-      if (tool === 'note') {
-        openEntry(d, null);
-        return;
-      }
       if (tool === 'stamp') {
         commit(d, toolState.stamp);
         return;
       }
+      // Note et texte : la saisie s'ouvre au relâchement (un champ ouvert pendant le
+      // geste perdrait le focus, donc se validerait, avant la première frappe).
       draft = d;
       root?.setPointerCapture(e.pointerId);
       e.preventDefault();
@@ -200,7 +198,7 @@
     if (draft) {
       const d = draft;
       draft = null;
-      if (d.tool === 'text') openEntry(d, null);
+      if (d.tool === 'text' || d.tool === 'note') openEntry(d, null);
       else commit(d, '');
       return;
     }
@@ -272,37 +270,9 @@
     {#each annotations as a (a.index)}
       {#if a.kind === 'note'}
         {@const c = css(noteIconRect(a))}
-        <g class="note" transform="translate({c.left} {c.top})">
-          <rect
-            width={c.width}
-            height={c.height}
-            rx={c.width * 0.15}
-            fill={rgb(a.color)}
-            fill-opacity={a.opacity}
-            stroke="rgba(0,0,0,0.5)"
-          />
-          <line
-            x1={c.width * 0.25}
-            y1={c.height * 0.35}
-            x2={c.width * 0.75}
-            y2={c.height * 0.35}
-            stroke="#333"
-          />
-          <line
-            x1={c.width * 0.25}
-            y1={c.height * 0.55}
-            x2={c.width * 0.75}
-            y2={c.height * 0.55}
-            stroke="#333"
-          />
-          <line
-            x1={c.width * 0.25}
-            y1={c.height * 0.75}
-            x2={c.width * 0.6}
-            y2={c.height * 0.75}
-            stroke="#333"
-          />
-        </g>
+        <!-- Le symbole lui-même est dessiné par PDFium dans l'image de la page ; ici,
+             seulement la zone de saisie (repère pour le clic et les tests). -->
+        <rect class="note" x={c.left} y={c.top} width={c.width} height={c.height} />
       {/if}
       {#if movable(a)}
         {@const c = css(grabRect(a))}
@@ -402,6 +372,7 @@
     fill: transparent;
   }
   .note {
+    fill: transparent;
     pointer-events: none;
   }
   .outline {

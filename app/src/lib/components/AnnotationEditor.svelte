@@ -72,57 +72,53 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <form
-    class="dialog"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="ann-title"
-    onsubmit={submit}
-  >
-    <h2 id="ann-title">
-      {t.editAnnotation} — {t.annotationKind[annotation.kind] ?? annotation.kind}
-    </h2>
-    {#if !base}
-      <p>{t.annotationNotEditable}</p>
-    {:else}
-      {#if hasContents}
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="ann-title">
+    <form onsubmit={submit}>
+      <h2 id="ann-title">
+        {t.editAnnotation} — {t.annotationKind[annotation.kind] ?? annotation.kind}
+      </h2>
+      {#if !base}
+        <p>{t.annotationNotEditable}</p>
+      {:else}
+        {#if hasContents}
+          <label>
+            {t.annotationContents}
+            <textarea bind:this={first} bind:value={contents} rows="4"></textarea>
+          </label>
+        {/if}
+        <div class="row">
+          <label>
+            {t.color}
+            <input type="color" bind:value={color} />
+          </label>
+          <label>
+            {t.opacity}
+            <input type="range" min="0.1" max="1" step="0.1" bind:value={opacity} />
+          </label>
+          {#if isShape}
+            <label>
+              {t.strokeWidth}
+              <input type="number" min="1" max="24" bind:value={strokeWidth} />
+            </label>
+          {/if}
+          {#if isText}
+            <label>
+              {t.fontSize}
+              <input type="number" min="6" max="72" bind:value={fontSize} />
+            </label>
+          {/if}
+        </div>
         <label>
-          {t.annotationContents}
-          <textarea bind:this={first} bind:value={contents} rows="4"></textarea>
+          {t.author}
+          <input type="text" bind:value={author} />
         </label>
       {/if}
-      <div class="row">
-        <label>
-          {t.color}
-          <input type="color" bind:value={color} />
-        </label>
-        <label>
-          {t.opacity}
-          <input type="range" min="0.1" max="1" step="0.1" bind:value={opacity} />
-        </label>
-        {#if isShape}
-          <label>
-            {t.strokeWidth}
-            <input type="number" min="1" max="24" bind:value={strokeWidth} />
-          </label>
-        {/if}
-        {#if isText}
-          <label>
-            {t.fontSize}
-            <input type="number" min="6" max="72" bind:value={fontSize} />
-          </label>
-        {/if}
+      <div class="actions">
+        <button type="button" onclick={onclose}>{t.cancel}</button>
+        <button type="submit" class="primary" disabled={!base || busy}>{t.ok}</button>
       </div>
-      <label>
-        {t.author}
-        <input type="text" bind:value={author} />
-      </label>
-    {/if}
-    <div class="actions">
-      <button type="button" onclick={onclose}>{t.cancel}</button>
-      <button type="submit" class="primary" disabled={!base || busy}>{t.ok}</button>
-    </div>
-  </form>
+    </form>
+  </div>
 </div>
 
 <style>

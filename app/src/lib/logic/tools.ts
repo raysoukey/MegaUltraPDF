@@ -74,6 +74,7 @@ export function finishDraft(
   let geometry: Geometry;
   switch (draft.tool) {
     case 'note':
+      if (contents.trim() === '') return null;
       geometry = { kind: 'rect', rect: { x: first.x, y: first.y, w: 0, h: 0 } };
       break;
     case 'stamp': {

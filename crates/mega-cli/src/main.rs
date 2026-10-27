@@ -25,7 +25,26 @@ use clap::Parser;
 
 use crate::cli::{Cli, Command};
 
+/// Taille de pile du thread qui exécute la commande.
+const STACK_SIZE: usize = 8 * 1024 * 1024;
+
 fn main() {
+    // [Apprentissage] Sous Windows, le thread principal n'a que 1 Mo de pile ; en mode debug,
+    // l'analyse des arguments par `clap` (une grosse `enum` de sous-commandes) la dépasse.
+    // On exécute donc le programme dans un thread créé avec une pile de 8 Mo (celle de
+    // Linux et macOS), et on attend sa fin avec `join`.
+    let worker = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(run);
+    match worker.map(|handle| handle.join()) {
+        Ok(Ok(())) => {}
+        // Une panique a déjà été affichée par le thread ; un échec de création est rare.
+        Ok(Err(_)) | Err(_) => std::process::exit(101),
+    }
+}
+
+/// Le programme proprement dit : analyse des arguments, puis une sous-commande.
+fn run() {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Info { file, password } => commands::info::run(&file, password.as_deref()),
@@ -244,6 +263,44 @@ fn main() {
             out,
             password,
         } => commands::tools::attachments(&file, extract, out.as_deref(), password.as_deref()),
+        #[cfg(feature = "ocr")]
+        Command::Ocr {
+            file,
+            lang,
+            pages,
+            tesseract,
+            out,
+            password,
+        } => commands::ocr::run(
+            &file,
+            &out,
+            &lang,
+            pages.as_deref(),
+            tesseract,
+            password.as_deref(),
+        ),
+        #[cfg(feature = "signature")]
+        Command::Sign {
+            file,
+            p12,
+            reason,
+            location,
+            contact,
+            out,
+            password,
+        } => commands::sign::sign(
+            &file,
+            &p12,
+            &out,
+            mega_core::digital_signature::SignOptions {
+                reason,
+                location,
+                contact,
+            },
+            password.as_deref(),
+        ),
+        #[cfg(feature = "signature")]
+        Command::Signatures { file, password } => commands::sign::list(&file, password.as_deref()),
         Command::Compare {
             a,
             b,

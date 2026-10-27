@@ -6,6 +6,7 @@
   import AnnotationPanel from './AnnotationPanel.svelte';
   import AttachmentsPanel from './AttachmentsPanel.svelte';
   import FormPanel from './FormPanel.svelte';
+  import SignaturesPanel from './SignaturesPanel.svelte';
   import Outline from './Outline.svelte';
   import Thumbnails from './Thumbnails.svelte';
 
@@ -13,9 +14,9 @@
     doc,
     oneditannotation,
   }: { doc: OpenDoc; oneditannotation: (a: Annotation, page: number) => void } = $props();
-  let tab = $state<'thumbnails' | 'bookmarks' | 'annotations' | 'form' | 'attachments'>(
-    'thumbnails',
-  );
+  let tab = $state<
+    'thumbnails' | 'bookmarks' | 'annotations' | 'form' | 'attachments' | 'signatures'
+  >('thumbnails');
   const hasForm = $derived(
     (doc.formInfo?.field_count ?? 0) > 0 || doc.formInfo?.form_type === 'xfa',
   );
@@ -62,6 +63,15 @@
       title={t.attachmentsTab}
       onclick={() => (tab = 'attachments')}>📎</button
     >
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === 'signatures'}
+      class:active={tab === 'signatures'}
+      aria-label={t.signaturesTab}
+      title={t.signaturesTab}
+      onclick={() => (tab = 'signatures')}>🔏</button
+    >
   </div>
   <div class="content">
     {#if tab === 'thumbnails'}
@@ -72,6 +82,8 @@
       <AnnotationPanel {doc} onedit={oneditannotation} />
     {:else if tab === 'attachments'}
       <AttachmentsPanel {doc} />
+    {:else if tab === 'signatures'}
+      <SignaturesPanel {doc} />
     {:else}
       <FormPanel {doc} />
     {/if}

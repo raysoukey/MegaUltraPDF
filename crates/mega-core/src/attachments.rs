@@ -112,6 +112,7 @@ impl Document {
 
     /// Joint le fichier `path` sous son nom de fichier (dédoublonné si besoin).
     pub fn add_attachment(&mut self, path: &Path) -> CoreResult<()> {
+        self.mark_changed();
         let size = std::fs::metadata(path)?.len();
         if size > MAX_ATTACHMENT_BYTES {
             return Err(invalid(format!(
@@ -137,6 +138,7 @@ impl Document {
 
     /// Supprime la pièce jointe `index`.
     pub fn delete_attachment(&mut self, index: u16) -> CoreResult<()> {
+        self.mark_changed();
         let _guard = engine::guard();
         let attachments = self.inner_mut().attachments_mut();
         if index >= attachments.len() {

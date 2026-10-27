@@ -25,6 +25,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev
+          # Tesseract (avec l'anglais) : le test OCR réel de mega-core s'exécute ici (Lot 8).
+          sudo apt-get install -y tesseract-ocr
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -49,6 +51,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Rust — tests
         run: cargo test --workspace
+      - name: Rust — cœur sans les options (features désactivées)
+        run: cargo check -p mega-core --no-default-features
       - name: Rust — rustdoc
         run: cargo doc -p mega-core --no-deps
         env:

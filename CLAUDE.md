@@ -102,6 +102,20 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   cherché (`cfg!(debug_assertions)`) : l'application installée trouve PDFium dans ses
   ressources (`resources/pdfium/`, réglé par `engine::set_library_dir` dans `run()` avant
   l'acteur), la version portable à côté de l'exécutable, sinon `MEGA_PDFIUM_DIR`.
+- Octets du fichier (Lot 8) : `Document` garde les octets chargés ou enregistrés
+  (`file_bytes`) et un drapeau `changed` ; `save_as` écrit ces octets tels quels tant que
+  rien n'a changé (signatures préservées), et les signatures se vérifient toujours sur eux. **Toute nouvelle
+  méthode publique qui modifie le document appelle `self.mark_changed()` en tête** (en plus
+  de `apply`), sinon une modification directe (chemin du CLI) serait perdue à l'enregistrement.
+- OCR et signature (ADR-0013) : modules derrière les features `ocr` / `signature` de
+  `mega-core` (le CLI les active par défaut, l'app toujours). Tesseract est un processus
+  externe (`ocr::find_tesseract`, jamais de shell). Une signature s'ajoute par **mise à jour
+  incrémentale** (`lopdf::IncrementalDocument`) et se vérifie sur `file_bytes`, jamais sur
+  `to_bytes()` (réécriture PDFium). `SignatureStatus::Intact` = intégrité, **pas** identité
+  certifiée. Les tests qui datent une signature doivent tomber dans la validité des
+  certificats de test (`fixtures/test-signer*.p12`, mot de passe `test`). Ne jamais vérifier
+  une signature CMS sur des attributs réencodés (`der` trie un `SET OF`) : octets d'origine
+  (`cms::signed_attrs_span`). Tout parcours d'un graphe PDF garde un ensemble des nœuds visités.
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
   produirait un paquet sans PDFium). Les ressources sont dans la surcouche
   `tauri.release.conf.json` car `tauri-build` les exige à chaque compilation.

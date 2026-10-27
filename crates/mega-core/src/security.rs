@@ -221,6 +221,7 @@ impl Document {
     /// reste utilisable ; les passes `lopdf` ultérieures (métadonnées, filigrane…) le
     /// refuseront : protéger est la **dernière** étape. Refusé si déjà chiffré.
     pub fn protect(&mut self, p: &Protection) -> CoreResult<()> {
+        self.mark_changed();
         if p.user_password.is_empty() && p.owner_password.is_empty() {
             return Err(invalid("indiquez au moins un mot de passe"));
         }
@@ -278,6 +279,7 @@ impl Document {
     /// propriétaire). Un document chiffré ouvert sans mot de passe (protection propriétaire
     /// seule) ne peut pas prouver le droit de le faire : `WrongPassword`.
     pub fn unprotect(&mut self) -> CoreResult<()> {
+        self.mark_changed();
         self.unprotect_with(None)
     }
 
@@ -285,6 +287,7 @@ impl Document {
     /// de l'ouverture) : c'est ainsi qu'on déprotège un fichier à mot de passe propriétaire
     /// seul, qui s'ouvre sans rien demander. Un mot de passe faux donne `WrongPassword`.
     pub fn unprotect_with(&mut self, typed: Option<&str>) -> CoreResult<()> {
+        self.mark_changed();
         if !self.security()?.encrypted {
             return Err(invalid("le document n'est pas protégé"));
         }

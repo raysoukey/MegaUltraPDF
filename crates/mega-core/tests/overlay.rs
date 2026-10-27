@@ -253,3 +253,84 @@ fn overlays_and_crop_on_rotated_page_follow_the_screen() {
         "{size:?}"
     );
 }
+
+// --- Couche de texte invisible (Lot 8, OCR) ---------------------------------------------
+
+use mega_core::overlay::InvisibleWord;
+use mega_core::testing::blank_pdf;
+use mega_core::text::SearchOptions;
+
+fn word(text: &str, x: f32, y: f32, w: f32, h: f32) -> InvisibleWord {
+    InvisibleWord {
+        text: text.to_string(),
+        rect: mega_core::Rect { x, y, w, h },
+    }
+}
+
+#[test]
+fn invisible_words_are_extracted_and_searchable() {
+    let mut doc = Document::from_bytes(blank_pdf(612.0, 792.0), None).unwrap();
+    doc.add_invisible_words(
+        0,
+        &[
+            word("Bonjour", 100.0, 600.0, 120.0, 20.0),
+            word("monde", 240.0, 600.0, 90.0, 20.0),
+        ],
+    )
+    .unwrap();
+    let text = doc.page_text(0).unwrap();
+    assert!(
+        text.contains("Bonjour") && text.contains("monde"),
+        "{text:?}"
+    );
+    let hits = doc
+        .search_page(0, "monde", &SearchOptions::default())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    let r = hits[0].rects[0];
+    // Le mot occupe sa boîte : début et fin à quelques points près, hauteur dans la ligne.
+    assert!(close(r.x, 240.0, 3.0), "{r:?}");
+    assert!(close(r.x + r.w, 330.0, 4.0), "{r:?}");
+    assert!(r.y >= 595.0 && r.y + r.h <= 625.0, "{r:?}");
+}
+
+#[test]
+fn invisible_words_are_not_rendered() {
+    let mut doc = Document::from_bytes(blank_pdf(300.0, 200.0), None).unwrap();
+    let before = doc.render_page(0, 1.0).unwrap().rgba;
+    doc.add_invisible_words(0, &[word("Caché", 20.0, 100.0, 200.0, 40.0)])
+        .unwrap();
+    assert!(doc.page_text(0).unwrap().contains("Caché"));
+    assert_eq!(doc.render_page(0, 1.0).unwrap().rgba, before);
+}
+
+#[test]
+fn invisible_words_follow_a_rotated_page() {
+    // Page affichée 600 × 400 (`/Rotate 90`) : le mot doit être là où on le voit à l'écran.
+    let mut doc = Document::from_bytes(rotated_pdf(), None).unwrap();
+    doc.add_invisible_words(0, &[word("Tourné", 300.0, 100.0, 150.0, 30.0)])
+        .unwrap();
+    let hits = doc
+        .search_page(0, "Tourné", &SearchOptions::default())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    let r = hits[0].rects[0];
+    assert!(close(r.x, 300.0, 4.0), "{r:?}");
+    assert!(close(r.x + r.w, 450.0, 5.0), "{r:?}");
+    assert!(r.w > r.h, "mot horizontal à l'écran : {r:?}");
+}
+
+#[test]
+fn non_win_ansi_letters_become_question_marks() {
+    let mut doc = Document::from_bytes(blank_pdf(300.0, 200.0), None).unwrap();
+    doc.add_invisible_words(
+        0,
+        &[
+            word("Ωmega", 20.0, 100.0, 100.0, 20.0),
+            word("été", 150.0, 100.0, 60.0, 20.0),
+        ],
+    )
+    .unwrap();
+    let text = doc.page_text(0).unwrap();
+    assert!(text.contains("?mega") && text.contains("été"), "{text:?}");
+}

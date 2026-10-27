@@ -12,6 +12,20 @@ unsafe_code = "forbid"
 [features]
 # Génération de PDF d'exemple pour les tests (utilisée aussi par xtask et l'app en tests).
 testing = []
+# Options désactivées par défaut (Lot 8) : la bibliothèque n'embarque ce code que sur demande.
+# OCR par la commande externe `tesseract`, en couche de texte invisible.
+ocr = []
+# Signature numérique cryptographique (PKCS#12, CMS) et vérification des signatures.
+signature = [
+    "dep:cms",
+    "dep:x509-cert",
+    "dep:der",
+    "dep:spki",
+    "dep:rsa",
+    "dep:p256",
+    "dep:sha2",
+    "dep:p12-keystore",
+]
 
 [dependencies]
 pdfium-render = "0.9.4"
@@ -27,6 +41,19 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 lopdf = "0.46.0"
 # Clé de fichier AES-256 de la protection par mot de passe (Lot 6) ; déjà dans l'arbre via lopdf.
 rand = "0.10"
+# Signature numérique (feature `signature`, Lot 8) : génération RustCrypto stable « der 0.7 »
+# (CMS détaché avec `builder`, certificats X.509, RSA PKCS#1 v1.5, ECDSA P-256, SHA-256) ;
+# lecture des fichiers PKCS#12 par `p12-keystore` (seule bibliothèque complète pour PBES2 et
+# l'ancien PBES1 ; elle apporte la génération « der 0.8 », seuls des octets DER passent de
+# l'une à l'autre).
+cms = { version = "0.2.3", features = ["builder"], optional = true }
+x509-cert = { version = "0.2.5", optional = true }
+der = { version = "0.7", features = ["alloc", "oid"], optional = true }
+spki = { version = "0.7", optional = true }
+rsa = { version = "0.9", features = ["sha2"], optional = true }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"], optional = true }
+sha2 = { version = "0.10", optional = true }
+p12-keystore = { version = "0.4.1", optional = true }
 
 [dev-dependencies]
-mega-core = { path = ".", features = ["testing"] }
+mega-core = { path = ".", features = ["testing", "ocr", "signature"] }

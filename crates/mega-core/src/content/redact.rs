@@ -61,6 +61,7 @@ impl Document {
     /// formulaire XObject, hors de portée du retrait par objets) : le document est alors
     /// remis dans son état d'avant.
     pub fn redact(&mut self, page: u16, rect: Rect) -> CoreResult<RedactReport> {
+        self.mark_changed();
         if !(rect.w > 0.0 && rect.h > 0.0 && rect.w.is_finite() && rect.h.is_finite()) {
             return Err(CoreError::InvalidOperation(
                 "la zone à caviarder est vide".to_string(),

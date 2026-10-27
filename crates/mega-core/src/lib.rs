@@ -40,6 +40,8 @@ pub mod attachments;
 pub mod cleanup;
 pub mod compare;
 pub mod content;
+#[cfg(feature = "signature")]
+pub mod digital_signature;
 pub mod document;
 pub mod edit;
 pub mod engine;
@@ -48,6 +50,8 @@ pub mod export;
 pub mod forms;
 pub mod geometry;
 pub mod links;
+#[cfg(feature = "ocr")]
+pub mod ocr;
 pub mod optimize;
 pub mod outline;
 pub mod overlay;

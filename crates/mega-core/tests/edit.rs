@@ -319,6 +319,24 @@ fn never_saved_document_stays_modified_through_undo() {
     assert!(!doc.is_modified());
 }
 
+/// Un document jamais enregistré (fusion) est réécrit et nettoyé à l'enregistrement, pas
+/// recopié tel que la fusion l'a produit.
+#[test]
+fn never_saved_document_is_rewritten_on_save() {
+    let mut bytes = three().to_bytes().unwrap();
+    bytes.extend_from_slice(b"%MARQUEUR-DE-FUSION\n");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    doc.mark_never_saved();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fusion.pdf");
+    doc.save_as(&path).unwrap();
+    let written = std::fs::read(&path).unwrap();
+    assert!(
+        !written.windows(19).any(|w| w == b"%MARQUEUR-DE-FUSION"),
+        "le fichier doit être réécrit"
+    );
+}
+
 // ---- Lot 3 : annotations ----
 
 #[test]
@@ -435,4 +453,84 @@ fn form_commands_are_undoable() {
         doc.form_fields(0).unwrap()[0].value.as_deref(),
         Some("Dupont")
     );
+}
+
+// --- Octets intacts (Lot 8) : un document non modifié s'enregistre tel quel, ce qui garde
+// valides ses signatures numériques (PDFium réécrirait tout le fichier).
+
+fn rotate_first() -> EditCommand {
+    EditCommand::RotatePages {
+        pages: vec![0],
+        quarter_turns: 1,
+    }
+}
+
+#[test]
+fn untouched_save_writes_the_loaded_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = sample_pdf(3, "intact");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    let path = dir.path().join("intact.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    // Et encore après un premier enregistrement, tant que rien n'a changé.
+    let again = dir.path().join("encore.pdf");
+    doc.save_as(&again).unwrap();
+    assert_eq!(std::fs::read(&again).unwrap(), bytes);
+}
+
+#[test]
+fn save_after_an_edit_rewrites_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = sample_pdf(3, "édité");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    doc.apply(&rotate_first()).unwrap();
+    let path = dir.path().join("edite.pdf");
+    doc.save_as(&path).unwrap();
+    assert_ne!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(Document::open(&path, None).unwrap().page_count(), 3);
+}
+
+#[test]
+fn undo_back_to_the_saved_state_writes_the_file_bytes() {
+    // Revenir par « annuler » à l'état du fichier rend le document de nouveau intact : un
+    // PDF signé, modifié puis remis en l'état, garde sa signature à l'enregistrement.
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = sample_pdf(2, "annulé");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    doc.apply(&rotate_first()).unwrap();
+    doc.undo().unwrap();
+    let path = dir.path().join("annule.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    // Rétablir : de nouveau modifié, donc réécrit.
+    doc.redo().unwrap();
+    let again = dir.path().join("retabli.pdf");
+    doc.save_as(&again).unwrap();
+    assert_ne!(std::fs::read(&again).unwrap(), bytes);
+}
+
+#[test]
+fn file_bytes_survive_an_edit() {
+    // La vérification des signatures lit le fichier, pas une réécriture PDFium.
+    let bytes = sample_pdf(1, "fichier");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    doc.apply(&rotate_first()).unwrap();
+    assert_eq!(doc.file_bytes(), bytes.as_slice());
+}
+
+#[test]
+fn direct_mutation_then_save_writes_the_change() {
+    // Chemin du CLI (`mega rotate`, `mega redact`, `mega optimize`…) : appel direct, sans
+    // historique, puis `save_as`. Le fichier écrit doit contenir la modification.
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = sample_pdf(2, "direct");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let path = dir.path().join("direct.pdf");
+    doc.save_as(&path).unwrap();
+    assert_ne!(std::fs::read(&path).unwrap(), bytes);
+    let reopened = Document::open(&path, None).unwrap();
+    let size = reopened.page_size(0).unwrap();
+    assert!(size.width_pt > size.height_pt, "page 1 tournée en paysage");
 }

@@ -9,8 +9,12 @@ pub mod fields;
 pub mod flatten;
 pub mod info;
 pub mod merge;
+#[cfg(feature = "ocr")]
+pub mod ocr;
 pub mod render;
 pub mod rotate;
 pub mod security;
+#[cfg(feature = "signature")]
+pub mod sign;
 pub mod split;
 pub mod tools;

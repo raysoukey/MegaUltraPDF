@@ -217,6 +217,14 @@ pub enum EditCommand {
         /// Position dans la liste des pièces jointes.
         index: u16,
     },
+    /// Reconnaît le texte d'une page numérisée (Tesseract) et l'ajoute en couche invisible.
+    #[cfg(feature = "ocr")]
+    OcrPage {
+        /// Index de la page (à partir de 0).
+        page: u16,
+        /// Langues Tesseract (`eng`, `fra`…), dans l'ordre de préférence.
+        languages: Vec<String>,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -297,6 +305,10 @@ impl Command for EditCommand {
                     .unwrap_or_else(|| path.clone())
             ),
             EditCommand::DeleteAttachment { .. } => "Retirer la pièce jointe".to_string(),
+            #[cfg(feature = "ocr")]
+            EditCommand::OcrPage { page, .. } => {
+                format!("Reconnaître le texte (page {})", u32::from(*page) + 1)
+            }
         }
     }
 
@@ -409,6 +421,8 @@ impl Command for EditCommand {
             }
             EditCommand::AddAttachment { path } => doc.add_attachment(Path::new(path)),
             EditCommand::DeleteAttachment { index } => doc.delete_attachment(*index),
+            #[cfg(feature = "ocr")]
+            EditCommand::OcrPage { page, languages } => doc.ocr_page(*page, languages),
         }
     }
 }
@@ -515,12 +529,16 @@ impl Document {
         let label = self.label_for(command);
         let before = self.to_bytes()?;
         let password_before = self.password().map(str::to_string);
+        let changed_before = self.changed;
         if let Err(e) = command.apply(self) {
             // Une commande peut échouer après avoir commencé à modifier le document
             // (plusieurs appels PDFium) : on revient à l'instantané pris juste avant,
             // ce qui rend le contrat « inchangé en cas d'erreur » vrai pour toute commande.
+            // Le drapeau `changed` aussi (posé en tête par la méthode refusée) : sinon
+            // l'enregistrement suivant réécrirait un fichier intact, signatures comprises.
             self.set_password(password_before);
             self.reload_from_bytes(before)?;
+            self.changed = changed_before;
             return Err(e);
         }
         if !self.history.redo.is_empty() {
@@ -536,6 +554,8 @@ impl Document {
             password: password_before,
         });
         self.history.position += 1;
+        // Le document n'est plus celui du fichier : le prochain enregistrement le réécrit.
+        self.changed = true;
         Ok(())
     }
 
@@ -564,6 +584,8 @@ impl Document {
             password,
         });
         self.history.position -= 1;
+        // De retour à l'état enregistré : de nouveau identique au fichier.
+        self.changed = self.is_modified();
         Ok(())
     }
 
@@ -598,6 +620,7 @@ impl Document {
             password,
         });
         self.history.position += 1;
+        self.changed = self.is_modified();
         Ok(())
     }
 
@@ -605,6 +628,8 @@ impl Document {
     /// « modifié » tant qu'un « Enregistrer sous » n'a pas eu lieu, quoi qu'on annule.
     pub fn mark_never_saved(&mut self) {
         self.history.saved_position = None;
+        // Ses octets sont ceux de la fusion, jamais nettoyés : « Enregistrer » les réécrit.
+        self.changed = true;
     }
 
     /// Vrai si une étape peut être annulée.
@@ -662,6 +687,33 @@ impl Document {
     /// l'original est intact.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> CoreResult<()> {
         let path = path.as_ref();
+        // Document intact : les octets du fichier, tels quels (signatures préservées).
+        if !self.changed {
+            write_atomically(path, &self.file_bytes)?;
+            // Les octets du fichier restent les mêmes : on les reprend sans copie.
+            let bytes = std::mem::take(&mut self.file_bytes);
+            self.mark_saved(path, bytes);
+            return Ok(());
+        }
+        let bytes = self.rewritten_bytes()?;
+        write_atomically(path, &bytes)?;
+        // Ce qui vient d'être écrit est désormais l'état du fichier.
+        self.mark_saved(path, bytes);
+        Ok(())
+    }
+
+    /// Le document vient d'être écrit dans `path` avec les octets `bytes` (enregistrement ou
+    /// signature) : ce fichier devient son état de référence.
+    pub(crate) fn mark_saved(&mut self, path: &Path, bytes: Vec<u8>) {
+        self.set_path(Some(path.to_path_buf()));
+        self.history.saved_position = Some(self.history.position);
+        self.file_bytes = bytes;
+        self.changed = false;
+    }
+
+    /// Le document réécrit tel que « Enregistrer » l'écrirait (sans l'écrire) : PDFium, puis
+    /// passe de nettoyage `lopdf`. Sert aussi de base à une signature d'un document modifié.
+    pub(crate) fn rewritten_bytes(&mut self) -> CoreResult<Vec<u8>> {
         // Chaque rendu avec annotations laisse dans le document PDFium des objets orphelins
         // (apparences de popup) que `save_to_bytes` écrirait. Recharger depuis les octets
         // courants ne garde que les objets atteignables : le fichier enregistré est propre,
@@ -675,11 +727,7 @@ impl Document {
             bytes
         };
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
-        let bytes = crate::cleanup::before_save(&bytes)?;
-        write_atomically(path, &bytes)?;
-        self.set_path(Some(path.to_path_buf()));
-        self.history.saved_position = Some(self.history.position);
-        Ok(())
+        crate::cleanup::before_save(&bytes)
     }
 
     /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.

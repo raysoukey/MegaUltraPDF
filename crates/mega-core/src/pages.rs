@@ -33,6 +33,7 @@ impl Document {
     /// Ajoute `quarter_turns` quarts de tour (positifs = horaire, négatifs = antihoraire)
     /// à la rotation enregistrée des pages `pages`.
     pub fn rotate_pages(&mut self, pages: &[u16], quarter_turns: i32) -> CoreResult<()> {
+        self.mark_changed();
         let _guard = engine::guard();
         let indices = self.unique_indices_unlocked(pages)?;
         for i in indices {
@@ -46,6 +47,7 @@ impl Document {
 
     /// Supprime les pages `pages`. Refuse de supprimer la dernière page du document.
     pub fn delete_pages(&mut self, pages: &[u16]) -> CoreResult<()> {
+        self.mark_changed();
         let _guard = engine::guard();
         let indices = self.unique_indices_unlocked(pages)?;
         if indices.len() >= self.count_unlocked() as usize {
@@ -62,6 +64,7 @@ impl Document {
 
     /// Insère une page vide de dimensions `size` à l'index `at` (`at == page_count` = à la fin).
     pub fn insert_blank_page(&mut self, at: u16, size: PageSize) -> CoreResult<()> {
+        self.mark_changed();
         let _guard = engine::guard();
         let at = self.insertion_index_unlocked(at)?;
         let paper = PdfPagePaperSize::Custom(
@@ -81,6 +84,7 @@ impl Document {
         pages: &[u16],
         at: u16,
     ) -> CoreResult<()> {
+        self.mark_changed();
         let _guard = engine::guard();
         let at = self.insertion_index_unlocked(at)?;
         // `other` est validé sans reprendre le jeton (le `Mutex` n'est pas réentrant).
@@ -98,6 +102,7 @@ impl Document {
     /// chargée des mêmes octets, puis on supprime les originales. Les signets qui visaient
     /// une page déplacée peuvent être perdus (limite connue, voir la spec du Lot 2).
     pub fn move_pages(&mut self, pages: &[u16], to: u16) -> CoreResult<()> {
+        self.mark_changed();
         let guard = engine::guard();
         let moved = self.unique_indices_unlocked(pages)?;
         let remaining = self.count_unlocked() as usize - moved.len();

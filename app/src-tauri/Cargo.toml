@@ -20,7 +20,9 @@ unsafe_code = "forbid"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-mega-core = { path = "../../crates/mega-core" }
+# L'application livrée contient les options OCR et signature (désactivées par défaut dans
+# la bibliothèque) : ses commandes Tauri les utilisent directement.
+mega-core = { path = "../../crates/mega-core", features = ["ocr", "signature"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"

@@ -125,7 +125,8 @@ pub struct FormInfo {
 }
 
 impl Document {
-    /// Nature du formulaire et nombre de champs (toutes pages).
+    /// Nature du formulaire et nombre de champs **remplissables** (toutes pages ; les champs de
+    /// signature numérique ne comptent pas).
     pub fn form_info(&self) -> CoreResult<FormInfo> {
         let _guard = engine::guard();
         let form_type = match self.inner().form().map(|f| f.form_type()) {
@@ -139,7 +140,12 @@ impl Document {
                 .annotations()
                 .iter()
                 .take(MAX_ANNOTATIONS_PER_PAGE)
-                .filter(|a| a.as_form_field().is_some())
+                // Les champs de signature numérique ne se remplissent pas : ils ont leur
+                // propre onglet (Lot 8) et ne font pas apparaître « Formulaire ».
+                .filter(|a| {
+                    a.as_form_field()
+                        .is_some_and(|f| !matches!(f, PdfFormField::Signature(_)))
+                })
                 .count() as u32;
         }
         Ok(FormInfo {
@@ -156,6 +162,7 @@ impl Document {
     /// `/NeedAppearances true`), puis le document est **rechargé** dans PDFium, qui régénère
     /// les apparences.
     pub fn set_field_value(&mut self, page: u16, index: u16, value: &FieldValue) -> CoreResult<()> {
+        self.mark_changed();
         let patch = {
             let _guard = engine::guard();
             let pdf_page = self
@@ -238,6 +245,7 @@ impl Document {
     /// que les apparences. Le dictionnaire `/AcroForm` est ensuite retiré (`lopdf`) pour ne
     /// pas laisser de champs orphelins aux autres lecteurs.
     pub fn flatten_all(&mut self) -> CoreResult<()> {
+        self.mark_changed();
         let had_form = self.form_info()?.form_type != FormType::None;
         {
             let _guard = engine::guard();

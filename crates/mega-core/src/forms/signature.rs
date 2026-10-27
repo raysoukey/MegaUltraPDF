@@ -54,6 +54,7 @@ impl Document {
         rect: Rect,
         source: &SignatureSource,
     ) -> CoreResult<()> {
+        self.mark_changed();
         if !(rect.w > 0.0 && rect.h > 0.0 && rect.w.is_finite() && rect.h.is_finite()) {
             return Err(invalid("la zone de signature est vide".to_string()));
         }

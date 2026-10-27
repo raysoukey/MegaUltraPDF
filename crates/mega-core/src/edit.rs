@@ -143,6 +143,26 @@ pub enum EditCommand {
         /// Nouveau texte.
         text: String,
     },
+    /// Insère un bloc de texte dans le contenu d'une page.
+    InsertText {
+        /// Page.
+        page: u16,
+        /// Coin haut-gauche du bloc (points, espace affiché).
+        at: [f32; 2],
+        /// Le texte (une ligne par `\n`).
+        text: String,
+        /// Police, taille, couleur.
+        style: crate::content::TextStyle,
+    },
+    /// Insère une image dans le contenu d'une page.
+    InsertImage {
+        /// Page.
+        page: u16,
+        /// Zone d'accueil (l'image y est ajustée et centrée).
+        rect: Rect,
+        /// Chemin du fichier PNG ou JPEG.
+        path: String,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -205,6 +225,8 @@ impl Command for EditCommand {
             EditCommand::DeleteObject { .. } => "Supprimer : Objet".to_string(),
             EditCommand::MoveObject { .. } => "Déplacer : Objet".to_string(),
             EditCommand::SetObjectText { .. } => "Modifier le texte".to_string(),
+            EditCommand::InsertText { .. } => "Insérer du texte".to_string(),
+            EditCommand::InsertImage { .. } => "Insérer une image".to_string(),
         }
     }
 
@@ -282,6 +304,13 @@ impl Command for EditCommand {
             EditCommand::SetObjectText { page, index, text } => {
                 doc.set_object_text(*page, *index, text)
             }
+            EditCommand::InsertText {
+                page,
+                at,
+                text,
+                style,
+            } => doc.insert_text(*page, *at, text, style),
+            EditCommand::InsertImage { page, rect, path } => doc.insert_image(*page, *rect, path),
         }
     }
 }

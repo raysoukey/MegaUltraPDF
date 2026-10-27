@@ -129,7 +129,7 @@ pub struct Color {
 
 impl Color {
     /// Couleur PDFium avec l'opacité donnée (0-1).
-    fn with_opacity(self, opacity: f32) -> PdfColor {
+    pub(crate) fn with_opacity(self, opacity: f32) -> PdfColor {
         PdfColor::new(
             self.r,
             self.g,

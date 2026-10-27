@@ -3,7 +3,9 @@
 
 use mega_core::edit::EditCommand;
 use mega_core::testing::{rotated_pdf, sample_pdf};
-use mega_core::{CoreError, Document, ObjectKind, Rect, SignatureSource};
+use mega_core::{
+    Color, CoreError, Document, FontFamily, ObjectKind, Rect, SignatureSource, TextStyle,
+};
 
 fn one_page() -> Document {
     Document::from_bytes(sample_pdf(1, "objets"), None).unwrap()
@@ -168,4 +170,201 @@ fn set_object_text_validates_text_and_kind() {
         Err(CoreError::InvalidOperation(_))
     ));
     assert_eq!(page_text(&doc, 0), "Page1");
+}
+
+fn text_style(family: FontFamily, bold: bool, italic: bool, size: f32) -> TextStyle {
+    TextStyle {
+        family,
+        bold,
+        italic,
+        size,
+        color: Color { r: 0, g: 0, b: 0 },
+    }
+}
+
+fn insert_text(page: u16, at: [f32; 2], text: &str, style: TextStyle) -> EditCommand {
+    EditCommand::InsertText {
+        page,
+        at,
+        text: text.to_string(),
+        style,
+    }
+}
+
+#[test]
+fn insert_text_is_extractable_and_undoable() {
+    let mut doc = one_page();
+    let before = doc.render_page(0, 0.5).unwrap();
+    doc.apply(&insert_text(
+        0,
+        [100.0, 500.0],
+        "Bonjour\nmonde",
+        text_style(FontFamily::Helvetica, false, false, 18.0),
+    ))
+    .unwrap();
+    assert_eq!(doc.undo_label().as_deref(), Some("Insérer du texte"));
+    let text = page_text(&doc, 0);
+    assert!(text.contains("Bonjour") && text.contains("monde"), "{text}");
+    let objects = doc.page_objects(0).unwrap();
+    assert_eq!(objects.len(), 3, "une ligne = un objet texte");
+    let (first, second) = (&objects[1], &objects[2]);
+    assert_eq!(first.kind, ObjectKind::Text);
+    assert_eq!(first.text.as_deref(), Some("Bonjour"));
+    assert!(close(first.font_size.unwrap(), 18.0, 0.1));
+    assert_eq!(first.font.as_deref(), Some("Helvetica"));
+    // Le point donné est le coin haut-gauche du bloc : la première ligne commence là et
+    // tient sous 500 ; la seconde est plus bas d'environ 1,2 × 18.
+    assert!(close(first.bounds.x, 100.0, 2.0), "{:?}", first.bounds);
+    let top = first.bounds.y + first.bounds.h;
+    assert!(top <= 500.5 && top > 480.0, "{:?}", first.bounds);
+    // (les bas des emprises dépendent des jambages : on compare les hauts, « B » et « d »
+    // montant tous deux jusqu'à la hauteur d'ascendante.)
+    let second_top = second.bounds.y + second.bounds.h;
+    assert!(
+        close(second_top, top - 21.6, 2.0),
+        "{:?} / {:?}",
+        first.bounds,
+        second.bounds
+    );
+    assert_ne!(doc.render_page(0, 0.5).unwrap().rgba, before.rgba);
+    let reopened = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    assert!(page_text(&reopened, 0).contains("Bonjour"));
+    doc.undo().unwrap();
+    assert_eq!(page_text(&doc, 0), "Page1");
+    assert_eq!(doc.render_page(0, 0.5).unwrap().rgba, before.rgba);
+}
+
+#[test]
+fn insert_text_rejects_non_winansi() {
+    let mut doc = one_page();
+    let style = text_style(FontFamily::Helvetica, false, false, 12.0);
+    let err = doc
+        .insert_text(0, [100.0, 500.0], "Bonjour 🙂", &style)
+        .unwrap_err();
+    match err {
+        CoreError::InvalidOperation(m) => assert!(m.contains("non pris en charge"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(doc.insert_text(0, [100.0, 500.0], "Σ", &style).is_err());
+    // L'alphabet latin étendu de WinAnsi passe (é, —, «, », €, œ).
+    doc.insert_text(0, [100.0, 500.0], "élève — « ok » 5 € œuf", &style)
+        .unwrap();
+    assert!(page_text(&doc, 0).contains("élève"));
+    // Autres refus : texte vide, taille absurde, point hors page.
+    assert!(doc.insert_text(0, [100.0, 500.0], "  \n ", &style).is_err());
+    let tiny = text_style(FontFamily::Helvetica, false, false, 2.0);
+    assert!(doc.insert_text(0, [100.0, 500.0], "x", &tiny).is_err());
+    assert!(doc.insert_text(0, [700.0, 500.0], "x", &style).is_err());
+    assert_eq!(
+        doc.page_objects(0).unwrap().len(),
+        2,
+        "rien d'autre n'a été ajouté"
+    );
+}
+
+#[test]
+fn insert_text_style_bold_italic() {
+    let mut doc = one_page();
+    let cases = [
+        (FontFamily::Helvetica, true, true, "Helvetica-BoldOblique"),
+        (FontFamily::Times, true, false, "Times-Bold"),
+        (FontFamily::Courier, false, true, "Courier-Oblique"),
+        (FontFamily::Times, false, false, "Times-Roman"),
+    ];
+    for (i, (family, bold, italic, _)) in cases.iter().enumerate() {
+        doc.insert_text(
+            0,
+            [72.0, 600.0 - 30.0 * i as f32],
+            "Style",
+            &text_style(*family, *bold, *italic, 14.0),
+        )
+        .unwrap();
+    }
+    let reopened = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    let objects = reopened.page_objects(0).unwrap();
+    let fonts: Vec<&str> = objects[1..]
+        .iter()
+        .map(|o| o.font.as_deref().unwrap_or(""))
+        .collect();
+    let expected: Vec<&str> = cases.iter().map(|c| c.3).collect();
+    assert_eq!(fonts, expected);
+}
+
+#[test]
+fn insert_text_on_rotated_page_is_upright() {
+    let mut doc = Document::from_bytes(rotated_pdf(), None).unwrap();
+    doc.insert_text(
+        0,
+        [300.0, 300.0],
+        "Bonjour",
+        &text_style(FontFamily::Helvetica, false, false, 24.0),
+    )
+    .unwrap();
+    let objects = doc.page_objects(0).unwrap();
+    let o = objects.last().unwrap();
+    assert_eq!(o.text.as_deref(), Some("Bonjour"));
+    assert!(close(o.font_size.unwrap(), 24.0, 0.1), "{:?}", o.font_size);
+    // Horizontal à l'écran : plus large que haut, posé au point demandé (espace affiché).
+    assert!(o.bounds.w > o.bounds.h, "{:?}", o.bounds);
+    assert!(close(o.bounds.x, 300.0, 2.0), "{:?}", o.bounds);
+    assert!(o.bounds.y + o.bounds.h <= 300.5, "{:?}", o.bounds);
+}
+
+#[test]
+fn insert_image_fits_rect() {
+    let mut doc = one_page();
+    let before = doc.render_page(0, 0.5).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("logo.png");
+    image::RgbaImage::from_pixel(200, 100, image::Rgba([0, 0, 255, 255]))
+        .save(&path)
+        .unwrap();
+    doc.apply(&EditCommand::InsertImage {
+        page: 0,
+        rect: Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 100.0,
+            h: 100.0,
+        },
+        path: path.to_string_lossy().into_owned(),
+    })
+    .unwrap();
+    assert_eq!(doc.undo_label().as_deref(), Some("Insérer une image"));
+    // 200 × 100 dans 100 × 100 → 100 × 50, centré verticalement.
+    let placed = doc.last_image_bounds(0).unwrap().unwrap();
+    assert!(
+        close(placed.x, 100.0, 0.5)
+            && close(placed.y, 125.0, 0.5)
+            && close(placed.w, 100.0, 0.5)
+            && close(placed.h, 50.0, 0.5),
+        "{placed:?}"
+    );
+    let objects = doc.page_objects(0).unwrap();
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[1].kind, ObjectKind::Image);
+    assert!(close(objects[1].bounds.y, 125.0, 0.5));
+    assert_ne!(doc.render_page(0, 0.5).unwrap().rgba, before.rgba);
+    doc.undo().unwrap();
+    assert_eq!(doc.page_objects(0).unwrap().len(), 1);
+    // Refus : fichier absent, zone vide, image trop grande en pixels.
+    let missing = dir.path().join("absent.png").to_string_lossy().into_owned();
+    assert!(matches!(
+        doc.insert_image(0, placed, &missing),
+        Err(CoreError::Io(_))
+    ));
+    let empty = Rect {
+        x: 100.0,
+        y: 100.0,
+        w: 0.0,
+        h: 10.0,
+    };
+    let path = path.to_string_lossy().into_owned();
+    assert!(doc.insert_image(0, empty, &path).is_err());
+    let huge = dir.path().join("huge.png");
+    image::GrayImage::new(8193, 1).save(&huge).unwrap();
+    assert!(matches!(
+        doc.insert_image(0, placed, &huge.to_string_lossy()),
+        Err(CoreError::InvalidOperation(_))
+    ));
 }

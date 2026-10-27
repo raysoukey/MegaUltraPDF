@@ -58,7 +58,7 @@ pub mod text;
 pub use annotations::{
     Annotation, AnnotationKind, AnnotationPatch, Color, Geometry, NewAnnotation, Style,
 };
-pub use content::{ObjectKind, PageObject};
+pub use content::{FontFamily, ObjectKind, PageObject, TextStyle};
 pub use document::{Document, PageSize};
 pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};

@@ -4,17 +4,12 @@
 //! Ce n'est pas un champ `/Sig` (signature cryptographique, Lot 7) : c'est un dessin
 //! permanent, visible dans tous les lecteurs, que personne ne pourra « décocher ».
 //!
-//! \[Apprentissage\] **Entrée non fiable** : le fichier image vient de l'utilisateur, mais
-//! un PNG peut être piégé (dimensions énormes, données corrompues). On borne la taille du
-//! fichier et des pixels **avant** de décoder, et le décodage faillible (`image::load_from_memory`)
-//! est traduit en erreur métier plutôt qu'en panique.
-
-use std::io::Cursor;
+//! Le chargement borné de l'image (entrée non fiable) et son placement sont partagés avec
+//! l'insertion d'images du Lot 5 : voir `crate::content::image`.
 
 use pdfium_render::prelude::{
-    PdfColor, PdfMatrix, PdfPageContentRegenerationStrategy, PdfPageObjectCommon,
-    PdfPageObjectLineCap, PdfPageObjectLineJoin, PdfPageObjectsCommon, PdfPagePathObject,
-    PdfPoints,
+    PdfColor, PdfPageContentRegenerationStrategy, PdfPageObjectCommon, PdfPageObjectLineCap,
+    PdfPageObjectLineJoin, PdfPageObjectsCommon, PdfPagePathObject, PdfPoints,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,10 +18,6 @@ use crate::engine;
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::{Rect, frame_of};
 
-/// Taille maximale d'un fichier image de signature (octets).
-pub const MAX_SIGNATURE_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
-/// Dimension maximale (pixels) d'une image de signature.
-pub const MAX_SIGNATURE_IMAGE_PX: u32 = 8192;
 /// Épaisseur du trait d'une signature dessinée (points).
 const STROKE_WIDTH: f32 = 2.0;
 
@@ -50,18 +41,8 @@ fn invalid(msg: String) -> CoreError {
     CoreError::InvalidOperation(msg)
 }
 
-/// Ajuste `(w, h)` dans `rect` en gardant les proportions, centré : `(x, y, w, h)`.
-pub(crate) fn fit(image_w: f32, image_h: f32, rect: &Rect) -> Rect {
-    let scale = (rect.w / image_w).min(rect.h / image_h);
-    let w = image_w * scale;
-    let h = image_h * scale;
-    Rect {
-        x: rect.x + (rect.w - w) / 2.0,
-        y: rect.y + (rect.h - h) / 2.0,
-        w,
-        h,
-    }
-}
+/// Ajuste `(w, h)` dans `rect` en gardant les proportions, centré (voir `content::image`).
+pub(crate) use crate::content::image::fit;
 
 impl Document {
     /// Appose une signature visuelle dans `rect` (points PDF, espace **affiché**) sur la
@@ -94,29 +75,7 @@ impl Document {
         };
         match source {
             SignatureSource::Image { path } => {
-                let size = std::fs::metadata(path)?.len();
-                if size > MAX_SIGNATURE_IMAGE_BYTES {
-                    return Err(invalid(format!(
-                        "image trop volumineuse ({} Mo, maximum 20 Mo)",
-                        size / (1024 * 1024)
-                    )));
-                }
-                let bytes = std::fs::read(path)?;
-                // Les dimensions sont lues dans l'en-tête **avant** de décoder les pixels :
-                // un PNG de quelques Ko peut annoncer des dizaines de milliers de pixels.
-                let reader = image::ImageReader::new(Cursor::new(&bytes))
-                    .with_guessed_format()
-                    .map_err(|e| invalid(format!("image illisible : {e}")))?;
-                let (w, h) = reader
-                    .into_dimensions()
-                    .map_err(|e| invalid(format!("image illisible : {e}")))?;
-                if w > MAX_SIGNATURE_IMAGE_PX || h > MAX_SIGNATURE_IMAGE_PX {
-                    return Err(invalid(format!(
-                        "image trop grande ({w}×{h} px, maximum {MAX_SIGNATURE_IMAGE_PX})"
-                    )));
-                }
-                let image = image::load_from_memory(&bytes)
-                    .map_err(|e| invalid(format!("image illisible : {e}")))?;
+                let image = crate::content::image::load_bounded(path)?;
                 let placed = fit(image.width() as f32, image.height() as f32, &rect);
                 let _guard = engine::guard();
                 let mut pdf_page = self
@@ -124,21 +83,7 @@ impl Document {
                     .pages()
                     .get(self.checked_index_unlocked(page)?)?;
                 let frame = frame_of(&pdf_page);
-                // L'image est placée en coordonnées affichées, puis la matrice du repère
-                // l'emmène (tournée) dans l'espace utilisateur.
-                let mut obj = pdf_page.objects_mut().create_image_object(
-                    PdfPoints::new(placed.x),
-                    PdfPoints::new(placed.y),
-                    &image,
-                    Some(PdfPoints::new(placed.w)),
-                    Some(PdfPoints::new(placed.h)),
-                )?;
-                if !frame.is_identity() {
-                    let m = frame.matrix_to_user_space();
-                    obj.apply_matrix(PdfMatrix::new(m[0], m[1], m[2], m[3], m[4], m[5]))?;
-                }
-                pdf_page.regenerate_content()?;
-                Ok(())
+                crate::content::image::place(&mut pdf_page, &frame, &image, &placed)
             }
             SignatureSource::Strokes { strokes } => {
                 let valid: Vec<&Vec<[f32; 2]>> = strokes.iter().filter(|s| s.len() >= 2).collect();

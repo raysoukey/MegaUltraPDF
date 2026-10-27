@@ -378,6 +378,46 @@ pub fn cmyk_pdf(cmyk: &str) -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Un document avec une signature de **droits d'utilisation** (`/Perms /UR3`, Adobe Reader
+/// Extensions) : elle n'est pas dans l'arbre des champs, et ce lot ne la vérifie pas.
+pub fn usage_rights_pdf() -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Perms << /UR3 4 0 R >> >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached \
+         /ByteRange [0 0 0 0] /Contents <00> /Reference [<< /Type /SigRef \
+         /TransformMethod /UR3 >>] >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Un champ texte **avec** son apparence et `/NeedAppearances true` : signer peut retirer
+/// la demande de régénération sans laisser le champ vide ailleurs.
+pub fn form_with_appearances_pdf() -> Vec<u8> {
+    let ap = "BT /Helv 12 Tf 2 6 Td (Bonjour) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /NeedAppearances true \
+         /DR << /Font << /Helv 6 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << >> /Annots [4 0 R] >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (nom) /V (Bonjour) /F 4 \
+         /Rect [20 200 200 220] /P 3 0 R /AP << /N 5 0 R >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 180 20] /Resources << /Font << /Helv 6 0 R >> >> \
+             /Length {} >>\nstream\n{ap}\nendstream",
+            ap.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un formulaire AcroForm écrit à la main (`/NeedAppearances true`) : texte « nom » (vide),
 /// texte multiligne « adresse », case « ok », groupe radio « choix » (A coché, B), combo
 /// « ville » (Paris, Lyon ; Paris choisi), texte lecture seule « ref », texte requis « email ».

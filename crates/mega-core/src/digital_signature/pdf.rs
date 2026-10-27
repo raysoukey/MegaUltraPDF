@@ -231,7 +231,12 @@ fn checked_byte_range(
         .get(b"ByteRange")
         .and_then(Object::as_array)
         .map_err(|_| "/ByteRange absent")?;
-    let numbers: Vec<i64> = range.iter().filter_map(|o| o.as_i64().ok()).collect();
+    // Exactement quatre entiers : un élément d'un autre type n'est pas ignoré (C34).
+    let numbers: Vec<i64> = range
+        .iter()
+        .map(Object::as_i64)
+        .collect::<Result<_, _>>()
+        .map_err(|_| "/ByteRange mal formé")?;
     let [r0, a, b, c] = numbers[..] else {
         return Err("/ByteRange mal formé");
     };
@@ -362,10 +367,52 @@ fn signatures_with(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<Signa
     }
     .map_err(structure)?;
     let mut digests = DigestCache::new();
-    Ok(signature_fields(&doc)
+    let mut list: Vec<SignatureInfo> = signature_fields(&doc)
         .iter()
         .map(|field| check_one(bytes, field, &mut digests))
-        .collect())
+        .collect();
+    list.extend(usage_rights(&doc));
+    Ok(list)
+}
+
+/// Signature de **droits d'utilisation** (`/Perms /UR3`, « Reader Extensions » d'Adobe) :
+/// hors de l'arbre des champs, et non vérifiée par cette version — signalée comme telle
+/// plutôt que passée sous silence (C35).
+fn usage_rights(doc: &LoDocument) -> Option<SignatureInfo> {
+    let ur3 = doc
+        .catalog()
+        .ok()?
+        .get(b"Perms")
+        .ok()
+        .and_then(|p| dict(doc, p))?
+        .get(b"UR3")
+        .ok()
+        .and_then(|s| dict(doc, s))?;
+    Some(SignatureInfo {
+        field: "UR3".to_string(),
+        signer: None,
+        signed_at: None,
+        reason: None,
+        location: None,
+        sub_filter: ur3
+            .get(b"SubFilter")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .map(|n| String::from_utf8_lossy(n).into_owned())
+            .unwrap_or_default(),
+        status: SignatureStatus::Unsupported(SigIssue::UsageRights),
+        covers_whole_document: false,
+    })
+}
+
+/// Vrai si chaque widget du document a déjà son apparence (`/AP`) : on peut alors retirer
+/// `/NeedAppearances` sans laisser de champ vide chez les autres lecteurs.
+fn all_widgets_have_appearances(doc: &LoDocument) -> bool {
+    doc.objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter(|d| d.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Widget".as_slice()))
+        .all(|d| d.has(b"AP"))
 }
 
 /// Noms (`/T`) des champs de premier niveau, pour choisir un nom libre.
@@ -478,6 +525,17 @@ fn push_to_array(
     Ok(())
 }
 
+/// Version mineure de l'en-tête `%PDF-1.x` (`None` si l'en-tête est illisible).
+fn header_minor(bytes: &[u8]) -> Option<u8> {
+    match bytes.get(..7)? {
+        b"%PDF-1." => bytes
+            .get(7)
+            .filter(|c| c.is_ascii_digit())
+            .map(|c| c - b'0'),
+        _ => None,
+    }
+}
+
 /// Position unique de `needle` dans `haystack` à partir de `from` ; `None` si absente ou
 /// présente plusieurs fois (un espace réservé ambigu ne doit jamais être réécrit).
 fn find_unique(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -517,6 +575,7 @@ pub(crate) fn sign_bytes(
         .get(&1)
         .ok_or_else(|| structure("document sans page"))?;
     let names = top_level_names(&prev);
+    let all_appearances = all_widgets_have_appearances(&prev);
     let field_name = (1..)
         .map(|n| format!("Signature{n}"))
         .find(|n| !names.contains(n))
@@ -560,6 +619,17 @@ pub(crate) fn sign_bytes(
         }
     }
     let sig_id = inc.new_document.add_object(Object::Dictionary(sig));
+    // Apparence vide (cadre nul) : la norme veut une `/AP` sur tout widget, PDF/A aussi.
+    let empty_ap = inc
+        .new_document
+        .add_object(Object::Stream(lopdf::Stream::new(
+            Dictionary::from_iter(vec![
+                ("Type", Object::Name(b"XObject".to_vec())),
+                ("Subtype", Object::Name(b"Form".to_vec())),
+                ("BBox", Object::Array(vec![Object::Integer(0); 4])),
+            ]),
+            Vec::new(),
+        )));
 
     // Champ de signature invisible, fusionné avec son widget, sur la première page.
     let widget_id = inc
@@ -574,6 +644,13 @@ pub(crate) fn sign_bytes(
             ("F", Object::Integer(132)),
             ("Rect", Object::Array(vec![Object::Integer(0); 4])),
             ("P", Object::Reference(first_page)),
+            (
+                "AP",
+                Object::Dictionary(Dictionary::from_iter(vec![(
+                    "N",
+                    Object::Reference(empty_ap),
+                )])),
+            ),
         ])));
     push_to_array(
         &mut inc,
@@ -615,10 +692,45 @@ pub(crate) fn sign_bytes(
         b"Fields",
         Object::Reference(widget_id),
     )?;
-    inc.new_document
+    let form = inc
+        .new_document
         .get_dictionary_mut(form_owner)
-        .map_err(structure)?
-        .set("SigFlags", Object::Integer(3));
+        .map_err(structure)?;
+    form.set("SigFlags", Object::Integer(3));
+    // Un lecteur qui régénère les apparences modifierait le document signé : on retire la
+    // demande dès que tous les champs ont déjà la leur (sinon ils s'afficheraient vides).
+    if all_appearances && form.get(b"NeedAppearances").ok() == Some(&Object::Boolean(true)) {
+        form.set("NeedAppearances", Object::Boolean(false));
+    }
+
+    // Révision PDF 1.6 au moins (SHA-256 avec `adbe.pkcs7.detached`, §12.8.3.3).
+    if header_minor(base).is_some_and(|minor| minor < 6) {
+        inc.opt_clone_object_to_new_document(root_id)
+            .map_err(structure)?;
+        inc.new_document
+            .get_dictionary_mut(root_id)
+            .map_err(structure)?
+            .set("Version", Object::Name(b"1.6".to_vec()));
+    }
+    // §14.4 : le second identifiant change à chaque révision ; le premier reste.
+    let first_id = inc
+        .new_document
+        .trailer
+        .get(b"ID")
+        .and_then(Object::as_array)
+        .ok()
+        .and_then(|ids| ids.first().cloned());
+    let fresh = sha256(format!("{now}-{}", base.len()).as_bytes());
+    let fresh = Object::String(fresh[..16].to_vec(), StringFormat::Hexadecimal);
+    let trailer = &mut inc.new_document.trailer;
+    trailer.set(
+        "ID",
+        Object::Array(vec![first_id.unwrap_or_else(|| fresh.clone()), fresh]),
+    );
+    // Clés propres à l'ancien flux de références, recopiées par lopdf : la nouvelle section
+    // n'a ni filtre ni prédicteur (C38).
+    trailer.remove(b"DecodeParms");
+    trailer.remove(b"Filter");
 
     let mut out = Vec::new();
     inc.save_to(&mut out).map_err(structure)?;

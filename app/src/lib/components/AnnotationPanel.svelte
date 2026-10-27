@@ -4,7 +4,7 @@
   import { formatPdfDate } from '$lib/logic/labels';
   import {
     deleteAnnotation,
-    ensureAnnotations,
+    ensureAllAnnotations,
     goToPage,
     selectAnnotation,
     type OpenDoc,
@@ -24,13 +24,13 @@
     let cancelled = false;
     loading = true;
     (async () => {
+      // Une requête pour tout le document (et non une par page après chaque édition).
+      const all = await ensureAllAnnotations(doc);
+      if (cancelled) return;
       const out: { page: number; items: Annotation[] }[] = [];
-      for (let p = 0; p < count; p++) {
-        const items = (await ensureAnnotations(doc, p)).filter(
-          (a) => a.kind !== 'link' && a.kind !== 'widget',
-        );
+      for (let p = 0; p < Math.min(count, all.length); p++) {
+        const items = all[p].filter((a) => a.kind !== 'link' && a.kind !== 'widget');
         if (items.length > 0) out.push({ page: p, items });
-        if (cancelled) return;
       }
       pages = out;
       loading = false;

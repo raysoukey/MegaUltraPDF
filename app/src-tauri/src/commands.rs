@@ -108,6 +108,26 @@ pub async fn annotations(
     blocking(handle, move |h| h.annotations(id, page)).await
 }
 
+/// Annotations de toutes les pages, en une requête (Lot 9).
+#[tauri::command]
+pub async fn all_annotations(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<Vec<Vec<mega_core::Annotation>>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.all_annotations(id)).await
+}
+
+/// Champs de formulaire de toutes les pages, en une requête (Lot 9).
+#[tauri::command]
+pub async fn all_form_fields(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<Vec<Vec<mega_core::FormField>>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.all_form_fields(id)).await
+}
+
 /// Objets du contenu d'une page (Lot 5).
 #[tauri::command]
 pub async fn page_objects(

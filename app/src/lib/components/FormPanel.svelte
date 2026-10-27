@@ -3,7 +3,7 @@
   import type { FormField } from '$lib/api';
   import { missingRequired } from '$lib/logic/forms';
   import {
-    ensureFormFields,
+    ensureAllFormFields,
     flattenForm,
     goToPage,
     type OpenDoc,
@@ -20,12 +20,9 @@
     void doc.formFields; // relance après une édition (cache remplacé)
     let cancelled = false;
     (async () => {
-      const out: FormField[] = [];
-      for (let p = 0; p < count; p++) {
-        out.push(...(await ensureFormFields(doc, p)));
-        if (cancelled) return;
-      }
-      fields = out;
+      const all = await ensureAllFormFields(doc);
+      if (cancelled) return;
+      fields = all.slice(0, count).flat();
     })();
     return () => {
       cancelled = true;

@@ -421,6 +421,14 @@ impl Document {
             .collect()
     }
 
+    /// Les annotations de **toutes** les pages (une liste par page) : le panneau des
+    /// annotations les obtient en une requête au lieu d'une par page (B11, Lot 9).
+    pub fn all_annotations(&self) -> CoreResult<Vec<Vec<Annotation>>> {
+        (0..self.page_count())
+            .map(|p| self.annotations(p))
+            .collect()
+    }
+
     /// Modifie une annotation ; retourne son index après modification.
     ///
     /// Une note change **sur place** (contenu, auteur : sa couleur `/C` est conservée, PDFium

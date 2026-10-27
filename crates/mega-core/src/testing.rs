@@ -1150,7 +1150,29 @@ fn try_sample_pdf(pages: u16, title: &str) -> Result<Vec<u8>, PdfiumError> {
         text.translate(PdfPoints::new(72.0), PdfPoints::new(760.0))?;
         page.objects_mut().add_text_object(text)?;
     }
-    doc.save_to_bytes()
+    Ok(fixed_id(doc.save_to_bytes()?))
+}
+
+/// Remplace par des zéros, **à la même largeur**, les chiffres de l'`/ID` que PDFium tire au
+/// hasard à chaque enregistrement : deux générations d'une fixture sont alors identiques
+/// (diffs binaires lisibles dans git), sans décaler aucun octet de la table de références.
+fn fixed_id(mut bytes: Vec<u8>) -> Vec<u8> {
+    let Some(at) = bytes.windows(3).rposition(|w| w == b"/ID") else {
+        return bytes;
+    };
+    let Some(end) = bytes[at..].iter().position(|&c| c == b']').map(|e| at + e) else {
+        return bytes;
+    };
+    let mut inside = false;
+    for byte in &mut bytes[at..end] {
+        match *byte {
+            b'<' => inside = true,
+            b'>' => inside = false,
+            c if inside && c.is_ascii_hexdigit() => *byte = b'0',
+            _ => {}
+        }
+    }
+    bytes
 }
 
 /// Un PDF « numérisé » de 3 pages A4 : chaque page n'est qu'une image en niveaux de gris

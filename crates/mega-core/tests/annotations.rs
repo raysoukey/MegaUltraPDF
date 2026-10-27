@@ -931,3 +931,30 @@ fn nan_and_infinite_values_are_refused() {
         );
     }
 }
+
+/// B11 : les annotations de **tout** le document en un appel (une entrée par page).
+#[test]
+fn all_annotations_lists_every_page() {
+    let mut doc = Document::from_bytes(sample_pdf(3, "toutes"), None).unwrap();
+    for page in [0, 2] {
+        doc.add_annotation(
+            page,
+            &new(
+                AnnotationKind::Note,
+                Geometry::Rect {
+                    rect: rect(50.0, 700.0, 20.0, 20.0),
+                },
+                style((255, 204, 0)),
+                "note",
+            ),
+        )
+        .unwrap();
+    }
+    let all = doc.all_annotations().unwrap();
+    assert_eq!(all.len(), 3);
+    assert_eq!((all[0].len(), all[1].len(), all[2].len()), (1, 0, 1));
+    let form = Document::from_bytes(mega_core::testing::form_pdf(), None).unwrap();
+    let fields = form.all_form_fields().unwrap();
+    assert_eq!(fields.len(), usize::from(form.page_count()));
+    assert_eq!(fields[0], form.form_fields(0).unwrap());
+}

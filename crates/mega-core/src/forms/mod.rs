@@ -265,6 +265,13 @@ impl Document {
         self.reload_from_bytes(bytes)
     }
 
+    /// Les champs de **toutes** les pages (une liste par page), en une requête (B12, Lot 9).
+    pub fn all_form_fields(&self) -> CoreResult<Vec<Vec<FormField>>> {
+        (0..self.page_count())
+            .map(|p| self.form_fields(p))
+            .collect()
+    }
+
     /// Les champs de la page `page`, dans l'ordre de `/Annots`.
     pub fn form_fields(&self, page: u16) -> CoreResult<Vec<FormField>> {
         let _guard = engine::guard();

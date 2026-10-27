@@ -491,6 +491,16 @@ export async function outline(id: number): Promise<OutlineNode[]> {
   return invoke<OutlineNode[]>('outline', { id });
 }
 
+/** Annotations de toutes les pages, une liste par page (une seule requête). */
+export async function allAnnotations(id: number): Promise<Annotation[][]> {
+  return invoke<Annotation[][]>('all_annotations', { id });
+}
+
+/** Champs de formulaire de toutes les pages, une liste par page (une seule requête). */
+export async function allFormFields(id: number): Promise<FormField[][]> {
+  return invoke<FormField[][]>('all_form_fields', { id });
+}
+
 export async function annotations(id: number, page: number): Promise<Annotation[]> {
   return invoke<Annotation[]>('annotations', { id, page });
 }

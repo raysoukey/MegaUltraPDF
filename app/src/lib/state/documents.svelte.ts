@@ -3,6 +3,8 @@
 // document passe par le backend ; ici on ne garde que ce qu'il faut pour l'afficher.
 
 import {
+  allAnnotations as fetchAllAnnotations,
+  allFormFields as fetchAllFormFields,
   annotations as fetchAnnotations,
   attachments as fetchAttachments,
   signatures as fetchSignatures,
@@ -657,6 +659,24 @@ export async function ensureAnnotations(doc: OpenDoc, page: number): Promise<Ann
   return list;
 }
 
+/**
+ * Annotations de toutes les pages (panneau des annotations) : une seule requête, qui remplit
+ * le cache par page. En cas d'erreur, rien n'est mis en cache (l'erreur est affichée).
+ */
+export async function ensureAllAnnotations(doc: OpenDoc): Promise<Annotation[][]> {
+  const count = doc.summary.page_count;
+  const cached = Array.from({ length: count }, (_, p) => doc.annotations[p]);
+  if (cached.every((list) => list !== undefined)) return cached as Annotation[][];
+  try {
+    const all = await fetchAllAnnotations(doc.summary.id);
+    all.forEach((list, p) => (doc.annotations[p] = list));
+    return all;
+  } catch (e) {
+    reportError(t.editError, e);
+    return [];
+  }
+}
+
 export function selectAnnotation(
   doc: OpenDoc,
   target: { page: number; index: number } | null,
@@ -761,6 +781,21 @@ export async function ensureFormFields(doc: OpenDoc, page: number): Promise<Form
   const list = await fetchFormFields(doc.summary.id, page).catch(() => []);
   doc.formFields[page] = list;
   return list;
+}
+
+/** Champs de toutes les pages (panneau du formulaire) : une seule requête, sans cache d'erreur. */
+export async function ensureAllFormFields(doc: OpenDoc): Promise<FormField[][]> {
+  const count = doc.summary.page_count;
+  const cached = Array.from({ length: count }, (_, p) => doc.formFields[p]);
+  if (cached.every((list) => list !== undefined)) return cached as FormField[][];
+  try {
+    const all = await fetchAllFormFields(doc.summary.id);
+    all.forEach((list, p) => (doc.formFields[p] = list));
+    return all;
+  } catch (e) {
+    reportError(t.editError, e);
+    return [];
+  }
 }
 
 export async function setFieldValue(

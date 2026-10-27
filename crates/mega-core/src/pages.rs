@@ -66,6 +66,7 @@ impl Document {
     pub fn insert_blank_page(&mut self, at: u16, size: PageSize) -> CoreResult<()> {
         self.mark_changed();
         let _guard = engine::guard();
+        ensure_room(self.count_unlocked(), 1)?;
         let at = self.insertion_index_unlocked(at)?;
         let paper = PdfPagePaperSize::Custom(
             PdfPoints::new(size.width_pt),
@@ -86,6 +87,7 @@ impl Document {
     ) -> CoreResult<()> {
         self.mark_changed();
         let _guard = engine::guard();
+        ensure_room(self.count_unlocked(), pages.len())?;
         let at = self.insertion_index_unlocked(at)?;
         // `other` est validé sans reprendre le jeton (le `Mutex` n'est pas réentrant).
         let source: Vec<PdfPageIndex> = pages
@@ -157,6 +159,18 @@ impl Document {
         }
         Ok(PdfPageIndex::from(at))
     }
+}
+
+/// Refuse d'ajouter `added` pages à un document qui en a `count` si le total dépasse
+/// 65 535 : l'index de page est un `u16` partout (A4, Lot 9 ; l'ouverture refuse déjà un
+/// fichier plus long).
+pub(crate) fn ensure_room(count: u16, added: usize) -> CoreResult<()> {
+    if usize::from(count).saturating_add(added) > usize::from(u16::MAX) {
+        return Err(CoreError::InvalidOperation(
+            "un document ne peut pas dépasser 65 535 pages".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Copie `source_pages` de `source` dans `target` à partir de `at`, dans l'ordre donné.
@@ -288,4 +302,20 @@ pub fn split_to_dir(
         crate::edit::write_atomically(path, bytes)?;
     }
     Ok(paths)
+}
+
+#[cfg(test)]
+mod room_tests {
+    use super::*;
+
+    /// Un document ne dépasse jamais 65 535 pages : l'index de page est un `u16` (A4).
+    #[test]
+    fn inserting_beyond_65535_pages_is_refused() {
+        assert!(ensure_room(65_534, 1).is_ok());
+        assert!(matches!(
+            ensure_room(65_535, 1),
+            Err(CoreError::InvalidOperation(_))
+        ));
+        assert!(ensure_room(10, 65_530).is_err());
+    }
 }

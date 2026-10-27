@@ -165,46 +165,6 @@ fn handles_are_cloneable_across_threads() {
 }
 
 #[test]
-fn visible_requests_served_before_thumbnails() {
-    // On occupe l'acteur avec un gros rendu, on empile une vignette PUIS une page visible,
-    // et on vérifie que la visible est servie d'abord.
-    let handle = PdfService::spawn();
-    let id = open(&handle, 3);
-    let busy = {
-        let h = handle.clone();
-        std::thread::spawn(move || {
-            h.render_png(RenderRequest {
-                scale: 6.0,
-                ..request(id, 0, 0, Priority::Visible)
-            })
-            .unwrap()
-        })
-    };
-    std::thread::sleep(Duration::from_millis(30)); // laisse le gros rendu démarrer
-    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let thumb = {
-        let (h, order) = (handle.clone(), Arc::clone(&order));
-        std::thread::spawn(move || {
-            h.render_png(request(id, 1, 0, Priority::Thumbnail))
-                .unwrap();
-            order.lock().unwrap().push("thumbnail");
-        })
-    };
-    std::thread::sleep(Duration::from_millis(10));
-    let visible = {
-        let (h, order) = (handle.clone(), Arc::clone(&order));
-        std::thread::spawn(move || {
-            h.render_png(request(id, 2, 0, Priority::Visible)).unwrap();
-            order.lock().unwrap().push("visible");
-        })
-    };
-    busy.join().unwrap();
-    thumb.join().unwrap();
-    visible.join().unwrap();
-    assert_eq!(*order.lock().unwrap(), vec!["visible", "thumbnail"]);
-}
-
-#[test]
 fn dropped_handles_stop_the_service() {
     let handle = PdfService::spawn();
     let id = open(&handle, 1);

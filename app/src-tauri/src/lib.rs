@@ -80,6 +80,8 @@ pub fn run() {
             commands::save_attachment,
             commands::compare_pages,
             commands::ocr_status,
+            commands::all_annotations,
+            commands::all_form_fields,
             commands::set_tesseract_path,
             commands::pages_with_text,
             commands::signatures,

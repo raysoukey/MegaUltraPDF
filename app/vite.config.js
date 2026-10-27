@@ -13,6 +13,7 @@ export default defineConfig(() => ({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    setupFiles: ['src/test-setup.ts'],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

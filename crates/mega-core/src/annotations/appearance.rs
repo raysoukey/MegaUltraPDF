@@ -305,14 +305,8 @@ pub(crate) fn inspect(ann: &PdfPageAnnotation, subtype: AnnotationKind) -> Inspe
         } else if let Some(t) = obj.as_text_object() {
             text_count += 1;
             if out.font_size.is_none() {
-                // `scaled_font_size()` ne lit que le coefficient `d` de la matrice : nul
-                // pour un texte tourné d'un quart de tour. L'échelle verticale vraie est la
-                // norme de la seconde colonne (b, d), invariante par rotation.
-                let scale = t
-                    .matrix()
-                    .map(|m| (m.b() * m.b() + m.d() * m.d()).sqrt())
-                    .unwrap_or(1.0);
-                out.font_size = Some(t.unscaled_font_size().value * scale);
+                // Pas `scaled_font_size()` : nul pour un texte tourné d'un quart de tour.
+                out.font_size = Some(crate::content::effective_font_size(t));
             }
         }
     }

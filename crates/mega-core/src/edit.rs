@@ -116,6 +116,33 @@ pub enum EditCommand {
         /// Image ou traits.
         source: SignatureSource,
     },
+    /// Supprime un objet du contenu d'une page (Lot 5).
+    DeleteObject {
+        /// Page.
+        page: u16,
+        /// Position de l'objet dans le flux de contenu.
+        index: u16,
+    },
+    /// Déplace un objet du contenu, en axes affichés.
+    MoveObject {
+        /// Page.
+        page: u16,
+        /// Position de l'objet.
+        index: u16,
+        /// Déplacement horizontal (points).
+        dx: f32,
+        /// Déplacement vertical (points, positif vers le haut).
+        dy: f32,
+    },
+    /// Remplace le texte d'un objet texte.
+    SetObjectText {
+        /// Page.
+        page: u16,
+        /// Position de l'objet.
+        index: u16,
+        /// Nouveau texte.
+        text: String,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -175,6 +202,9 @@ impl Command for EditCommand {
             EditCommand::SetFieldValue { .. } => "Remplir un champ".to_string(),
             EditCommand::FlattenForm => "Aplatir le formulaire".to_string(),
             EditCommand::InsertSignature { .. } => "Apposer une signature".to_string(),
+            EditCommand::DeleteObject { .. } => "Supprimer : Objet".to_string(),
+            EditCommand::MoveObject { .. } => "Déplacer : Objet".to_string(),
+            EditCommand::SetObjectText { .. } => "Modifier le texte".to_string(),
         }
     }
 
@@ -184,6 +214,12 @@ impl Command for EditCommand {
                 .ok()
                 .and_then(|a| a.into_iter().find(|a| a.index == index))
                 .map(|a| format!("{verb} : {}", a.kind.label_fr()))
+        };
+        let object = |verb: &str, page: u16, index: u16| {
+            doc.page_objects(page)
+                .ok()
+                .and_then(|o| o.into_iter().find(|o| o.index == index))
+                .map(|o| format!("{verb} : {}", o.kind.label_fr()))
         };
         let label = match self {
             EditCommand::DeleteAnnotation { page, index } => annotation("Supprimer", *page, *index),
@@ -198,6 +234,8 @@ impl Command for EditCommand {
                 .ok()
                 .and_then(|f| f.into_iter().find(|f| f.index == *index))
                 .map(|f| format!("Remplir : {}", f.name)),
+            EditCommand::DeleteObject { page, index } => object("Supprimer", *page, *index),
+            EditCommand::MoveObject { page, index, .. } => object("Déplacer", *page, *index),
             _ => None,
         };
         label.unwrap_or_else(|| self.label())
@@ -233,6 +271,16 @@ impl Command for EditCommand {
             EditCommand::FlattenForm => doc.flatten_all(),
             EditCommand::InsertSignature { page, rect, source } => {
                 doc.insert_signature(*page, *rect, source)
+            }
+            EditCommand::DeleteObject { page, index } => doc.delete_object(*page, *index),
+            EditCommand::MoveObject {
+                page,
+                index,
+                dx,
+                dy,
+            } => doc.move_object(*page, *index, *dx, *dy),
+            EditCommand::SetObjectText { page, index, text } => {
+                doc.set_object_text(*page, *index, text)
             }
         }
     }

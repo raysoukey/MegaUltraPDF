@@ -93,6 +93,14 @@ impl PageFrame {
         [u + self.bbox.x, v + self.bbox.y]
     }
 
+    /// Un **déplacement** `(dx, dy)` de l'espace affiché vers l'espace utilisateur : la
+    /// rotation s'applique, pas l'origine de la boîte (un vecteur n'a pas de position).
+    pub fn vector_to_user_space(&self, v: [f32; 2]) -> [f32; 2] {
+        let origin = self.point_to_user_space([0.0, 0.0]);
+        let tip = self.point_to_user_space(v);
+        [tip[0] - origin[0], tip[1] - origin[1]]
+    }
+
     /// Un rectangle de l'espace utilisateur vers l'espace affiché.
     pub fn from_user_space(&self, r: Rect) -> Rect {
         Self::rect_from_corners(
@@ -265,6 +273,27 @@ mod tests {
         assert!(same(frame(270).point_from_user_space(origin), [600.0, 0.0]));
         assert_eq!(frame(90).displayed_size(), (600.0, 400.0));
         assert_eq!(frame(180).displayed_size(), (400.0, 600.0));
+    }
+
+    #[test]
+    fn page_frame_rotates_vectors_without_translating_them() {
+        assert!(same(
+            frame(0).vector_to_user_space([10.0, 0.0]),
+            [10.0, 0.0]
+        ));
+        // Vers la droite à l'écran = vers le haut de la page utilisateur tournée de 90°.
+        assert!(same(
+            frame(90).vector_to_user_space([10.0, 0.0]),
+            [0.0, 10.0]
+        ));
+        assert!(same(
+            frame(180).vector_to_user_space([10.0, 5.0]),
+            [-10.0, -5.0]
+        ));
+        assert!(same(
+            frame(270).vector_to_user_space([10.0, 0.0]),
+            [0.0, -10.0]
+        ));
     }
 
     #[test]

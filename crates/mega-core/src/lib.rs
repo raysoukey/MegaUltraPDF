@@ -37,6 +37,7 @@
 
 pub mod annotations;
 pub mod cleanup;
+pub mod content;
 pub mod document;
 pub mod edit;
 pub mod engine;
@@ -57,6 +58,7 @@ pub mod text;
 pub use annotations::{
     Annotation, AnnotationKind, AnnotationPatch, Color, Geometry, NewAnnotation, Style,
 };
+pub use content::{ObjectKind, PageObject};
 pub use document::{Document, PageSize};
 pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};

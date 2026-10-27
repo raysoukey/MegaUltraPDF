@@ -20,7 +20,7 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | 5 | Édition de contenu (objets de page, texte et images, caviardage réel, filigrane, numérotation, recadrage, pages tournées) | ✅ |
 | 6 | Export (images, texte), impression, métadonnées, protection AES-256, optimisation, pièces jointes, comparaison | ✅ |
 | 7 | Finition et distribution (interface FR/EN, accessibilité, préférences, aide, licences, installeurs) | ✅ |
-| 8 | Options avancées : OCR, signature numérique cryptographique | ⬜ |
+| 8 | Options avancées : OCR (Tesseract), signature numérique cryptographique et vérification | ✅ |
 
 ## Installation
 
@@ -44,6 +44,19 @@ pnpm --dir app release --bundles nsis  # seulement l'installeur NSIS
 `release` prépare PDFium (`cargo xtask stage-pdfium`) et l'embarque ; un `pnpm tauri build`
 direct produirait un paquet sans PDFium. Les licences tierces sont regénérées par
 `cargo xtask licenses` (`THIRD_PARTY_LICENSES.md`).
+
+## OCR et signature numérique
+
+- **OCR** : installez [Tesseract](https://github.com/tesseract-ocr/tesseract) avec les
+  langues voulues (par exemple `fra` et `eng`). L'application le trouve dans le `PATH`, dans
+  son dossier d'installation usuel, ou via la variable `MEGA_TESSERACT`. Menu Contenu ▸
+  « Reconnaître le texte (OCR)… », ou en ligne de commande :
+  `mega ocr numerise.pdf --lang fra+eng -o cherchable.pdf`.
+- **Signature** : un certificat personnel au format PKCS#12 (`.p12` / `.pfx`). Menu Fichier
+  ▸ « Signer numériquement… », ou `mega sign doc.pdf --p12 moi.p12 -o signe.pdf` (mot de
+  passe lu dans `MEGA_P12_PASSWORD` ou sur l'entrée standard). `mega signatures doc.pdf`
+  vérifie les signatures d'un fichier. « Intègre » signifie que le contenu signé n'a pas
+  changé ; l'identité du signataire n'est pas certifiée (aucune autorité n'est consultée).
 
 ## Prérequis (développement)
 

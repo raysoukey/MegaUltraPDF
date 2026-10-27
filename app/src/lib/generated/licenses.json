@@ -360,9 +360,27 @@
     "source": "crate"
   },
   {
+    "name": "aead",
+    "version": "0.6.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "aes",
+    "version": "0.8.4",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "aes",
     "version": "0.9.3",
     "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "aes-gcm",
+    "version": "0.11.1",
+    "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
   {
@@ -460,6 +478,24 @@
     "version": "5.3.1",
     "license": "Apache-2.0",
     "source": "npm"
+  },
+  {
+    "name": "asn1-rs",
+    "version": "0.7.2",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "asn1-rs-derive",
+    "version": "0.6.0",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "asn1-rs-impl",
+    "version": "0.2.0",
+    "license": "MIT/Apache-2.0",
+    "source": "crate"
   },
   {
     "name": "assert_cmd",
@@ -576,6 +612,12 @@
     "source": "npm"
   },
   {
+    "name": "base16ct",
+    "version": "0.2.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "base64",
     "version": "0.21.7",
     "license": "MIT OR Apache-2.0",
@@ -591,6 +633,12 @@
     "name": "base64",
     "version": "0.23.1",
     "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "base64ct",
+    "version": "1.8.3",
+    "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
   {
@@ -626,6 +674,12 @@
   {
     "name": "block-buffer",
     "version": "0.12.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "block-padding",
+    "version": "0.3.3",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
   },
@@ -757,6 +811,12 @@
   },
   {
     "name": "cbc",
+    "version": "0.1.2",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "cbc",
     "version": "0.2.1",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
@@ -823,6 +883,12 @@
   },
   {
     "name": "cipher",
+    "version": "0.4.4",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "cipher",
     "version": "0.5.2",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
@@ -856,6 +922,24 @@
     "version": "2.1.1",
     "license": "MIT",
     "source": "npm"
+  },
+  {
+    "name": "cmov",
+    "version": "0.5.4",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "cms",
+    "version": "0.2.3",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "cms",
+    "version": "0.3.0-pre.1",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
   },
   {
     "name": "color-convert",
@@ -908,6 +992,12 @@
   {
     "name": "const-oid",
     "version": "0.10.2",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "const-oid",
+    "version": "0.9.6",
     "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
@@ -1014,6 +1104,12 @@
     "source": "crate"
   },
   {
+    "name": "crypto-bigint",
+    "version": "0.5.5",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "crypto-common",
     "version": "0.1.7",
     "license": "MIT OR Apache-2.0",
@@ -1050,6 +1146,18 @@
     "source": "crate"
   },
   {
+    "name": "ctr",
+    "version": "0.10.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "ctutils",
+    "version": "0.4.6",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "darling",
     "version": "0.21.3",
     "license": "MIT",
@@ -1064,6 +1172,12 @@
   {
     "name": "darling_macro",
     "version": "0.21.3",
+    "license": "MIT",
+    "source": "crate"
+  },
+  {
+    "name": "data-encoding",
+    "version": "2.11.1",
     "license": "MIT",
     "source": "crate"
   },
@@ -1092,6 +1206,36 @@
     "source": "npm"
   },
   {
+    "name": "der",
+    "version": "0.7.10",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "der",
+    "version": "0.8.3",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "der-parser",
+    "version": "10.0.0",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "der_derive",
+    "version": "0.7.3",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "der_derive",
+    "version": "0.8.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "deranged",
     "version": "0.5.9",
     "license": "MIT OR Apache-2.0",
@@ -1107,6 +1251,12 @@
     "name": "derive_more-impl",
     "version": "2.1.1",
     "license": "MIT",
+    "source": "crate"
+  },
+  {
+    "name": "des",
+    "version": "0.9.0",
+    "license": "MIT OR Apache-2.0",
     "source": "crate"
   },
   {
@@ -1218,9 +1368,21 @@
     "source": "crate"
   },
   {
+    "name": "ecdsa",
+    "version": "0.16.9",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "either",
     "version": "1.19.0",
     "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "elliptic-curve",
+    "version": "0.13.8",
+    "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
   {
@@ -1428,6 +1590,12 @@
     "source": "npm"
   },
   {
+    "name": "ff",
+    "version": "0.13.1",
+    "license": "MIT/Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "field-offset",
     "version": "0.3.6",
     "license": "MIT OR Apache-2.0",
@@ -1456,6 +1624,12 @@
     "version": "5.0.0",
     "license": "MIT",
     "source": "npm"
+  },
+  {
+    "name": "flagset",
+    "version": "0.4.7",
+    "license": "Apache-2.0",
+    "source": "crate"
   },
   {
     "name": "flat-cache",
@@ -1638,6 +1812,12 @@
     "source": "crate"
   },
   {
+    "name": "ghash",
+    "version": "0.6.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "gio",
     "version": "0.18.4",
     "license": "MIT",
@@ -1698,6 +1878,12 @@
     "source": "crate"
   },
   {
+    "name": "group",
+    "version": "0.13.0",
+    "license": "MIT/Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "gtk",
     "version": "0.18.2",
     "license": "MIT",
@@ -1754,6 +1940,18 @@
   {
     "name": "hex",
     "version": "0.4.3",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "hmac",
+    "version": "0.12.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "hmac",
+    "version": "0.13.0",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
   },
@@ -1933,6 +2131,12 @@
   },
   {
     "name": "inout",
+    "version": "0.1.4",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "inout",
     "version": "0.2.5",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
@@ -2076,6 +2280,12 @@
     "source": "crate"
   },
   {
+    "name": "keccak",
+    "version": "0.1.6",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "keyboard-types",
     "version": "0.8.3",
     "license": "MIT OR Apache-2.0",
@@ -2098,6 +2308,12 @@
     "version": "0.37.0",
     "license": "MIT",
     "source": "npm"
+  },
+  {
+    "name": "lazy_static",
+    "version": "1.5.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
   },
   {
     "name": "levn",
@@ -2139,6 +2355,12 @@
     "name": "libloading",
     "version": "0.8.9",
     "license": "ISC",
+    "source": "crate"
+  },
+  {
+    "name": "libm",
+    "version": "0.2.16",
+    "license": "MIT",
     "source": "crate"
   },
   {
@@ -2262,6 +2484,12 @@
     "source": "crate"
   },
   {
+    "name": "minimal-lexical",
+    "version": "0.2.1",
+    "license": "MIT/Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "minimatch",
     "version": "10.2.6",
     "license": "BlueOak-1.0.0",
@@ -2365,6 +2593,12 @@
   },
   {
     "name": "nom",
+    "version": "7.1.3",
+    "license": "MIT",
+    "source": "crate"
+  },
+  {
+    "name": "nom",
     "version": "8.0.0",
     "license": "MIT",
     "source": "crate"
@@ -2376,8 +2610,32 @@
     "source": "crate"
   },
   {
+    "name": "num-bigint",
+    "version": "0.4.8",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "num-bigint-dig",
+    "version": "0.8.6",
+    "license": "MIT/Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "num-conv",
     "version": "0.1.0",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "num-integer",
+    "version": "0.1.47",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "num-iter",
+    "version": "0.1.46",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
   },
@@ -2508,6 +2766,12 @@
     "source": "npm"
   },
   {
+    "name": "oid-registry",
+    "version": "0.8.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "once_cell",
     "version": "1.21.4",
     "license": "MIT OR Apache-2.0",
@@ -2554,6 +2818,18 @@
     "version": "5.0.0",
     "license": "MIT",
     "source": "npm"
+  },
+  {
+    "name": "p12-keystore",
+    "version": "0.4.1",
+    "license": "MIT/Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "p256",
+    "version": "0.13.2",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
   },
   {
     "name": "pango",
@@ -2610,9 +2886,27 @@
     "source": "npm"
   },
   {
+    "name": "pbkdf2",
+    "version": "0.13.0",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "pdfium-render",
     "version": "0.9.4",
     "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "pem-rfc7468",
+    "version": "0.7.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "pem-rfc7468",
+    "version": "1.0.0",
+    "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
   {
@@ -2682,6 +2976,36 @@
     "source": "crate"
   },
   {
+    "name": "pkcs1",
+    "version": "0.7.5",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "pkcs12",
+    "version": "0.2.0-pre.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "pkcs5",
+    "version": "0.8.1",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "pkcs8",
+    "version": "0.10.2",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "pkcs8",
+    "version": "0.11.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "pkg-config",
     "version": "0.3.34",
     "license": "MIT OR Apache-2.0",
@@ -2702,6 +3026,12 @@
   {
     "name": "polling",
     "version": "3.11.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "polyval",
+    "version": "0.7.3",
     "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
@@ -2748,6 +3078,12 @@
     "source": "crate"
   },
   {
+    "name": "ppv-lite86",
+    "version": "0.2.21",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "precomputed-hash",
     "version": "0.1.1",
     "license": "MIT",
@@ -2788,6 +3124,12 @@
     "version": "3.5.2",
     "license": "MIT",
     "source": "npm"
+  },
+  {
+    "name": "primeorder",
+    "version": "0.13.6",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
   },
   {
     "name": "proc-macro-crate",
@@ -2868,8 +3210,26 @@
     "source": "crate"
   },
   {
+    "name": "rand",
+    "version": "0.8.8",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "rand_chacha",
+    "version": "0.3.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "rand_core",
     "version": "0.10.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "rand_core",
+    "version": "0.6.4",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
   },
@@ -2894,6 +3254,12 @@
   {
     "name": "rayon-core",
     "version": "1.13.0",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "rc2",
+    "version": "0.9.0",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
   },
@@ -2958,6 +3324,12 @@
     "source": "npm"
   },
   {
+    "name": "rfc6979",
+    "version": "0.4.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "rfd",
     "version": "0.16.1",
     "license": "MIT",
@@ -2976,6 +3348,12 @@
     "source": "npm"
   },
   {
+    "name": "rsa",
+    "version": "0.9.10",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "rustc-hash",
     "version": "2.1.3",
     "license": "Apache-2.0 OR MIT",
@@ -2985,6 +3363,12 @@
     "name": "rustc_version",
     "version": "0.4.1",
     "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "rusticata-macros",
+    "version": "4.1.0",
+    "license": "MIT/Apache-2.0",
     "source": "crate"
   },
   {
@@ -3024,6 +3408,12 @@
     "source": "npm"
   },
   {
+    "name": "salsa20",
+    "version": "0.11.0",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "same-file",
     "version": "1.0.6",
     "license": "Unlicense/MIT",
@@ -3057,6 +3447,18 @@
     "name": "scopeguard",
     "version": "1.2.0",
     "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "scrypt",
+    "version": "0.12.0",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "sec1",
+    "version": "0.7.3",
+    "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
   {
@@ -3168,6 +3570,18 @@
     "source": "npm"
   },
   {
+    "name": "sha1",
+    "version": "0.10.7",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "sha1",
+    "version": "0.11.0",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "sha2",
     "version": "0.10.9",
     "license": "MIT OR Apache-2.0",
@@ -3176,6 +3590,12 @@
   {
     "name": "sha2",
     "version": "0.11.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "sha3",
+    "version": "0.10.9",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
   },
@@ -3207,6 +3627,12 @@
     "name": "signal-hook-registry",
     "version": "1.4.8",
     "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "signature",
+    "version": "2.2.0",
+    "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
   {
@@ -3274,6 +3700,24 @@
     "version": "1.2.2",
     "license": "BSD-3-Clause",
     "source": "npm"
+  },
+  {
+    "name": "spin",
+    "version": "0.9.9",
+    "license": "MIT",
+    "source": "crate"
+  },
+  {
+    "name": "spki",
+    "version": "0.7.3",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "spki",
+    "version": "0.8.1",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
   },
   {
     "name": "stable_deref_trait",
@@ -3387,6 +3831,12 @@
     "name": "sync_wrapper",
     "version": "1.0.2",
     "license": "Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "synstructure",
+    "version": "0.13.2",
+    "license": "MIT",
     "source": "crate"
   },
   {
@@ -3597,6 +4047,18 @@
     "name": "tinyvec",
     "version": "1.13.3",
     "license": "Zlib OR Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "tls_codec",
+    "version": "0.4.2",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "tls_codec_derive",
+    "version": "0.4.2",
+    "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },
   {
@@ -3812,6 +4274,12 @@
   {
     "name": "unicode-segmentation",
     "version": "1.13.3",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
+    "name": "universal-hash",
+    "version": "0.6.1",
     "license": "MIT OR Apache-2.0",
     "source": "crate"
   },
@@ -4416,6 +4884,24 @@
     "source": "crate"
   },
   {
+    "name": "x509-cert",
+    "version": "0.2.5",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "x509-cert",
+    "version": "0.3.0",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "x509-parser",
+    "version": "0.18.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "crate"
+  },
+  {
     "name": "xattr",
     "version": "1.6.1",
     "license": "MIT OR Apache-2.0",
@@ -4470,6 +4956,18 @@
     "source": "crate"
   },
   {
+    "name": "zerocopy",
+    "version": "0.8.63",
+    "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "zerocopy-derive",
+    "version": "0.8.63",
+    "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
     "name": "zerofrom",
     "version": "0.1.8",
     "license": "Unicode-3.0",
@@ -4484,6 +4982,12 @@
   {
     "name": "zeroize",
     "version": "1.9.1",
+    "license": "Apache-2.0 OR MIT",
+    "source": "crate"
+  },
+  {
+    "name": "zeroize_derive",
+    "version": "1.5.0",
     "license": "Apache-2.0 OR MIT",
     "source": "crate"
   },

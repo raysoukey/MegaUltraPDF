@@ -107,6 +107,13 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   rien n'a changé (signatures préservées), et les signatures se vérifient toujours sur eux. **Toute nouvelle
   méthode publique qui modifie le document appelle `self.mark_changed()` en tête** (en plus
   de `apply`), sinon une modification directe (chemin du CLI) serait perdue à l'enregistrement.
+- OCR et signature (ADR-0013) : modules derrière les features `ocr` / `signature` de
+  `mega-core` (le CLI les active par défaut, l'app toujours). Tesseract est un processus
+  externe (`ocr::find_tesseract`, jamais de shell). Une signature s'ajoute par **mise à jour
+  incrémentale** (`lopdf::IncrementalDocument`) et se vérifie sur `file_bytes`, jamais sur
+  `to_bytes()` (réécriture PDFium). `SignatureStatus::Intact` = intégrité, **pas** identité
+  certifiée. Les tests qui datent une signature doivent tomber dans la validité des
+  certificats de test (`fixtures/test-signer*.p12`, mot de passe `test`).
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
   produirait un paquet sans PDFium). Les ressources sont dans la surcouche
   `tauri.release.conf.json` car `tauri-build` les exige à chaque compilation.

@@ -58,6 +58,31 @@ livré. La feature est activée par les `dev-dependencies` du crate lui-même
 ni `mega-app`. `cfg(feature = …)` est le cousin de `cfg!(debug_assertions)` vu au Lot 0 :
 une condition de **compilation**, pas d'exécution.
 
+### 5. Des options qui apportent leurs dépendances : `ocr` et `signature` (Lot 8)
+
+```toml
+# crates/mega-core/Cargo.toml:17-27
+ocr = []
+signature = ["dep:cms", "dep:x509-cert", "dep:der", "dep:spki", "dep:rsa", …]
+cms = { version = "0.2.3", features = ["builder"], optional = true }   # ligne 49
+```
+
+`optional = true` : la crate `cms` n'est téléchargée et compilée que si la feature
+`signature` est demandée ; `dep:cms` dans la liste de la feature dit « active cette
+dépendance ». Côté code, des modules entiers disparaissent sans elle
+(`crates/mega-core/src/lib.rs:43-44` et `53-54`) :
+
+```rust
+#[cfg(feature = "signature")]
+pub mod digital_signature;
+```
+
+Même chose pour une variante d'`enum` (`EditCommand::OcrPage`, `edit.rs:221`) et pour
+les bras de `match` qui la traitent (`edit.rs:308`). Les features se **propagent** :
+`mega-cli` déclare `signature = ["mega-core/signature", "dep:chrono"]` et l'active par
+défaut. La CI vérifie que le cœur compile aussi sans elles
+(`cargo check -p mega-core --no-default-features`).
+
 ## Ce qui se passerait sans
 
 Avec `image` par défaut, le binaire embarquerait des décodeurs jamais appelés, et une

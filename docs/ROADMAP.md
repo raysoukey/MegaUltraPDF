@@ -14,6 +14,6 @@ Légende : ✅ terminé · 🚧 en cours · ⬜ à venir. Démarrer un lot : `/l
 | 5 | Édition de contenu | Insérer texte et images, déplacer/supprimer des objets, retouche de texte « au mieux », caviardage réel (première passe `lopdf`), filigrane, numérotation, recadrage ; dettes `lopdf` du Lot 3 (`/InkList`, `/AP` des notes, élagage), pages tournées | ✅ |
 | 6 | Export, impression, sécurité | Export images/texte, impression via le WebView, métadonnées, chiffrement (`lopdf`), optimisation | ✅ |
 | 7 | Finition et distribution | i18n FR/EN, accessibilité, préférences, aide, « À propos » et licences, installeurs (bundler Tauri), version portable, workflow de release | ✅ |
-| 8 | Options avancées (désactivées par défaut) | OCR (couche de texte invisible, feature `ocr`), signature numérique cryptographique et vérification des signatures (feature `signature`) | 🚧 |
+| 8 | Options avancées (désactivées par défaut) | OCR (couche de texte invisible, feature `ocr`), signature numérique cryptographique et vérification des signatures (feature `signature`) | ✅ |
 
 Référence complète : `docs/superpowers/specs/2026-10-26-megaultrapdf-design.md`, §5.

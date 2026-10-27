@@ -21,7 +21,7 @@ use crate::annotations::{AnnotationPatch, NewAnnotation};
 use crate::document::{Document, PageSize};
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
-use crate::forms::FieldValue;
+use crate::forms::{FieldValue, SignatureSource};
 use crate::geometry::Rect;
 
 /// Une édition de la structure du document, sérialisable (le frontend l'envoie telle quelle).
@@ -107,6 +107,15 @@ pub enum EditCommand {
     },
     /// Aplatit le formulaire et les annotations de toutes les pages.
     FlattenForm,
+    /// Appose une signature visuelle (contenu de page).
+    InsertSignature {
+        /// Page.
+        page: u16,
+        /// Zone, en points PDF.
+        rect: Rect,
+        /// Image ou traits.
+        source: SignatureSource,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -165,6 +174,7 @@ impl Command for EditCommand {
             EditCommand::MoveAnnotation { .. } => "Déplacer : Annotation".to_string(),
             EditCommand::SetFieldValue { .. } => "Remplir un champ".to_string(),
             EditCommand::FlattenForm => "Aplatir le formulaire".to_string(),
+            EditCommand::InsertSignature { .. } => "Apposer une signature".to_string(),
         }
     }
 
@@ -221,6 +231,9 @@ impl Command for EditCommand {
                 doc.set_field_value(*page, *index, value)
             }
             EditCommand::FlattenForm => doc.flatten_all(),
+            EditCommand::InsertSignature { page, rect, source } => {
+                doc.insert_signature(*page, *rect, source)
+            }
         }
     }
 }

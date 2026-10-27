@@ -59,7 +59,9 @@ pub use annotations::{
 pub use document::{Document, PageSize};
 pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};
-pub use forms::{FieldKind, FieldOption, FieldValue, FormField, FormInfo, FormType};
+pub use forms::{
+    FieldKind, FieldOption, FieldValue, FormField, FormInfo, FormType, SignatureSource,
+};
 pub use geometry::{Rect, Rotation};
 pub use links::{LinkTarget, PageLink};
 pub use outline::OutlineNode;

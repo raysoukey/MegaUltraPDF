@@ -15,6 +15,11 @@ use pdfium_render::prelude::{
 };
 use serde::{Deserialize, Serialize};
 
+mod signature;
+
+pub use signature::SignatureSource;
+
+use crate::annotations::{MAX_ANNOTATIONS_PER_PAGE, MAX_STRING_CHARS};
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
@@ -131,6 +136,7 @@ impl Document {
             field_count += page
                 .annotations()
                 .iter()
+                .take(MAX_ANNOTATIONS_PER_PAGE)
                 .filter(|a| a.as_form_field().is_some())
                 .count() as u32;
         }
@@ -219,7 +225,7 @@ impl Document {
         for (index, ann) in pdf_page
             .annotations()
             .iter()
-            .take(crate::annotations::MAX_ANNOTATIONS_PER_PAGE)
+            .take(MAX_ANNOTATIONS_PER_PAGE)
             .enumerate()
         {
             let Some(field) = ann.as_form_field() else {
@@ -239,10 +245,19 @@ fn invalid(msg: &str) -> CoreError {
 /// Nom, lecture seule, requis : communs à tous les genres (trait `PdfFormFieldCommon`).
 fn common<F: PdfFormFieldCommon>(f: &F) -> (String, bool, bool) {
     (
-        f.name().unwrap_or_default(),
+        clamp(f.name().unwrap_or_default()),
         f.is_read_only(),
         f.is_required(),
     )
+}
+
+/// Un PDF est une donnée non fiable : chaque chaîne lue est bornée.
+fn clamp(s: String) -> String {
+    if s.chars().count() > MAX_STRING_CHARS {
+        s.chars().take(MAX_STRING_CHARS).collect()
+    } else {
+        s
+    }
 }
 
 /// \[Apprentissage\] **`match` sur une `enum` de la bibliothèque** : `PdfFormField` est une
@@ -258,7 +273,13 @@ fn read_field(page: u16, index: u16, rect: Rect, field: &PdfFormField) -> FormFi
                     ro,
                     rq,
                     FieldKind::Text,
-                    Some(t.value().unwrap_or_default()),
+                    // La valeur d'un champ mot de passe n'est pas exposée (ni affichée,
+                    // ni journalisée) : l'utilisateur en saisit une nouvelle.
+                    if t.is_password() {
+                        None
+                    } else {
+                        Some(clamp(t.value().unwrap_or_default()))
+                    },
                     None,
                     Vec::new(),
                     t.is_multiline(),
@@ -272,7 +293,7 @@ fn read_field(page: u16, index: u16, rect: Rect, field: &PdfFormField) -> FormFi
                     ro,
                     rq,
                     FieldKind::Checkbox,
-                    c.group_value(),
+                    c.group_value().map(clamp),
                     Some(c.is_checked().unwrap_or(false)),
                     Vec::new(),
                     false,
@@ -286,7 +307,7 @@ fn read_field(page: u16, index: u16, rect: Rect, field: &PdfFormField) -> FormFi
                     ro,
                     rq,
                     FieldKind::Radio,
-                    r.group_value(),
+                    r.group_value().map(clamp),
                     Some(r.is_checked().unwrap_or(false)),
                     Vec::new(),
                     false,
@@ -300,7 +321,7 @@ fn read_field(page: u16, index: u16, rect: Rect, field: &PdfFormField) -> FormFi
                     ro,
                     rq,
                     FieldKind::Combo,
-                    c.value(),
+                    c.value().map(clamp),
                     None,
                     options_of(c.options().iter()),
                     false,
@@ -314,7 +335,7 @@ fn read_field(page: u16, index: u16, rect: Rect, field: &PdfFormField) -> FormFi
                     ro,
                     rq,
                     FieldKind::List,
-                    l.value(),
+                    l.value().map(clamp),
                     None,
                     options_of(l.options().iter()),
                     false,
@@ -385,7 +406,7 @@ fn options_of(
 ) -> Vec<FieldOption> {
     iter.take(1024)
         .map(|o| FieldOption {
-            label: o.label().cloned().unwrap_or_default(),
+            label: clamp(o.label().cloned().unwrap_or_default()),
             selected: o.is_set(),
         })
         .collect()

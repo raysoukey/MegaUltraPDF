@@ -15,7 +15,8 @@ testing = []
 
 [dependencies]
 pdfium-render = "0.9.4"
-image = { version = "0.25", default-features = false, features = ["png"] }
+# png : rendu ; jpeg : images de signature fournies par l'utilisateur.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 serde.workspace = true
 thiserror.workspace = true
 tempfile = "3"

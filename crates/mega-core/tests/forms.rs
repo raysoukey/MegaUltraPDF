@@ -201,3 +201,124 @@ fn flatten_removes_fields_and_keeps_rendering() {
     plain.flatten_all().unwrap();
     assert_eq!(plain.page_count(), 1);
 }
+
+// ---- Signature visuelle (Task 3) ----
+
+use mega_core::{Rect, SignatureSource};
+
+fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
+    Rect { x, y, w, h }
+}
+
+#[test]
+fn signature_strokes_change_rendering_and_survive_reopen() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "sig"), None).unwrap();
+    let before = doc.render_page(0, 1.0).unwrap();
+    doc.insert_signature(
+        0,
+        rect(100.0, 100.0, 200.0, 60.0),
+        &SignatureSource::Strokes {
+            strokes: vec![
+                vec![[100.0, 110.0], [150.0, 150.0], [200.0, 110.0]],
+                vec![[210.0, 120.0], [290.0, 140.0]],
+            ],
+        },
+    )
+    .unwrap();
+    let after = doc.render_page(0, 1.0).unwrap();
+    assert_ne!(before.rgba, after.rgba);
+    let reopened = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    assert_eq!(reopened.render_page(0, 1.0).unwrap().rgba, after.rgba);
+    // Ce n'est pas une annotation : rien dans /Annots.
+    assert!(reopened.annotations(0).unwrap().is_empty());
+}
+
+#[test]
+fn signature_image_is_fitted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sig.png");
+    // Image 20×10 (ratio 2:1), placée dans un carré 100×100 → 100×50 centré.
+    let img = image::RgbaImage::from_fn(20, 10, |x, _| {
+        if x < 10 {
+            image::Rgba([0, 0, 0, 255])
+        } else {
+            image::Rgba([255, 0, 0, 255])
+        }
+    });
+    img.save(&path).unwrap();
+    let mut doc = Document::from_bytes(sample_pdf(1, "img"), None).unwrap();
+    let before = doc.render_page(0, 1.0).unwrap();
+    doc.insert_signature(
+        0,
+        rect(50.0, 400.0, 100.0, 100.0),
+        &SignatureSource::Image {
+            path: path.to_string_lossy().into_owned(),
+        },
+    )
+    .unwrap();
+    let after = doc.render_page(0, 1.0).unwrap();
+    assert_ne!(before.rgba, after.rgba);
+    let placed = doc.last_image_bounds(0).unwrap().expect("un objet image");
+    assert!(
+        (placed.w - 100.0).abs() < 1.0 && (placed.h - 50.0).abs() < 1.0,
+        "{placed:?}"
+    );
+    assert!(
+        (placed.x - 50.0).abs() < 1.0 && (placed.y - 425.0).abs() < 1.0,
+        "{placed:?}"
+    );
+}
+
+#[test]
+fn corrupt_or_huge_image_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let text_file = dir.path().join("pas-une-image.png");
+    std::fs::write(&text_file, b"bonjour").unwrap();
+    let mut doc = Document::from_bytes(sample_pdf(1, "bad"), None).unwrap();
+    let before = doc.render_page(0, 1.0).unwrap();
+    assert!(matches!(
+        doc.insert_signature(
+            0,
+            rect(0.0, 0.0, 50.0, 50.0),
+            &SignatureSource::Image {
+                path: text_file.to_string_lossy().into_owned()
+            }
+        ),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    let huge = dir.path().join("huge.png");
+    image::RgbaImage::new(9000, 10).save(&huge).unwrap();
+    assert!(matches!(
+        doc.insert_signature(
+            0,
+            rect(0.0, 0.0, 50.0, 50.0),
+            &SignatureSource::Image {
+                path: huge.to_string_lossy().into_owned()
+            }
+        ),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    assert!(matches!(
+        doc.insert_signature(
+            0,
+            rect(0.0, 0.0, 50.0, 50.0),
+            &SignatureSource::Strokes { strokes: vec![] }
+        ),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    assert!(matches!(
+        doc.insert_signature(
+            0,
+            rect(0.0, 0.0, 0.0, 50.0),
+            &SignatureSource::Strokes {
+                strokes: vec![vec![[0.0, 0.0], [1.0, 1.0]]]
+            }
+        ),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    assert_eq!(
+        doc.render_page(0, 1.0).unwrap().rgba,
+        before.rgba,
+        "document inchangé"
+    );
+}

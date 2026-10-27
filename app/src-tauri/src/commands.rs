@@ -108,6 +108,27 @@ pub async fn annotations(
     blocking(handle, move |h| h.annotations(id, page)).await
 }
 
+/// Champs de formulaire d'une page.
+#[tauri::command]
+pub async fn form_fields(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    page: u16,
+) -> Result<Vec<mega_core::FormField>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.form_fields(id, page)).await
+}
+
+/// Nature du formulaire et nombre de champs.
+#[tauri::command]
+pub async fn form_info(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<mega_core::FormInfo, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.form_info(id)).await
+}
+
 /// Liens d'une page.
 #[tauri::command]
 pub async fn page_links(

@@ -38,6 +38,7 @@
 pub mod annotations;
 pub mod attachments;
 pub mod cleanup;
+pub mod compare;
 pub mod content;
 pub mod document;
 pub mod edit;
@@ -64,6 +65,7 @@ pub use annotations::{
     Annotation, AnnotationKind, AnnotationPatch, Color, Geometry, NewAnnotation, Style,
 };
 pub use attachments::Attachment;
+pub use compare::PageDiff;
 pub use content::redact::RedactReport;
 pub use content::{FontFamily, ObjectKind, PageObject, TextStyle};
 pub use document::{Document, PageSize};

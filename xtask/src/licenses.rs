@@ -180,8 +180,10 @@ pub fn license_files(dir: &Path) -> Vec<PathBuf> {
     };
     let mut files: Vec<PathBuf> = read
         .filter_map(Result::ok)
+        // `DirEntry::file_type` ne suit pas les liens symboliques : un « LICENSE » qui
+        // pointerait vers un fichier privé de la machine n'est jamais lu (ni publié).
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .map(|e| e.path())
-        .filter(|p| p.is_file())
         .filter(|p| {
             let name = p
                 .file_name()
@@ -196,6 +198,22 @@ pub fn license_files(dir: &Path) -> Vec<PathBuf> {
             .unwrap_or_default()
     });
     files
+}
+
+/// Taille maximale lue dans un fichier de licence : un paquet hostile ne doit pas pouvoir
+/// gonfler le générateur ni le fichier livré.
+pub const MAX_LICENSE_BYTES: usize = 256 * 1024;
+
+/// Texte d'un fichier de licence, lu au plus sur [`MAX_LICENSE_BYTES`] octets.
+pub fn read_license_text(path: &Path) -> anyhow::Result<String> {
+    use std::io::Read;
+    let file =
+        std::fs::File::open(path).with_context(|| format!("lecture de {}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_LICENSE_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("lecture de {}", path.display()))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Regroupe les textes identiques (fins de ligne normalisées) : chaque texte n'est imprimé
@@ -218,16 +236,36 @@ pub fn group_texts(items: Vec<(String, String)>) -> Vec<(String, Vec<String>)> {
     groups
 }
 
+/// Nom de paquet sûr pour un titre Markdown : sur une ligne, sans accent grave.
+fn plain(label: &str) -> String {
+    label
+        .replace(['\r', '\n'], " ")
+        .replace('`', "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Longueur de la plus longue suite d'accents graves dans `text`.
+fn longest_backtick_run(text: &str) -> usize {
+    text.split(|c| c != '`').map(str::len).max().unwrap_or(0)
+}
+
 /// Section « Textes des licences » : chaque texte une fois, puis les paquets qui ne livrent
 /// aucun fichier de licence (leur licence déclarée figure dans les tableaux).
 pub fn render_texts(groups: &[(String, Vec<String>)], without_file: &[String]) -> String {
     let mut md = String::from("\n## Textes des licences\n");
     for (text, labels) in groups {
+        let names: Vec<String> = labels.iter().map(|l| plain(l)).collect();
+        // Clôture plus longue que toute suite d'accents graves du texte : un texte venu d'un
+        // paquet ne peut pas fermer le bloc et injecter du Markdown.
+        let fence = "`".repeat(longest_backtick_run(text).max(2) + 1);
         md.push_str(&format!(
-            "\n### {}\n\n```text\n{text}\n```\n",
-            labels.join(", ")
+            "\n### {}\n\n{fence}text\n{text}\n{fence}\n",
+            names.join(", ")
         ));
     }
+    let without_file: Vec<String> = without_file.iter().map(|l| plain(l)).collect();
     if !without_file.is_empty() {
         md.push_str(&format!(
             "\n### Paquets sans fichier de licence ({})\n\n\
@@ -296,9 +334,7 @@ pub fn generate(root: &Path) -> anyhow::Result<()> {
             continue;
         }
         for file in files {
-            let bytes =
-                std::fs::read(&file).with_context(|| format!("lecture de {}", file.display()))?;
-            texts.push((label.clone(), String::from_utf8_lossy(&bytes).into_owned()));
+            texts.push((label.clone(), read_license_text(&file)?));
         }
     }
     let groups = group_texts(texts);
@@ -452,6 +488,47 @@ mod tests {
         assert!(md.contains("Apache text"));
         // Un paquet sans fichier de licence est nommé, pas oublié.
         assert!(md.contains("d 0.1"));
+    }
+
+    #[test]
+    fn license_files_skip_symlinks() {
+        let dir = std::env::temp_dir().join(format!("mega-lic-ln-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret = dir.join("secret.txt");
+        std::fs::write(&secret, "private").unwrap();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&secret, dir.join("LICENSE"));
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&secret, dir.join("LICENSE"));
+        // Sous Windows, créer un lien demande un privilège : sans lien, rien à vérifier.
+        if made.is_ok() {
+            assert!(license_files(&dir).is_empty());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn license_text_reading_is_capped() {
+        let dir = std::env::temp_dir().join(format!("mega-lic-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("LICENSE");
+        std::fs::write(&file, "a".repeat(MAX_LICENSE_BYTES + 10)).unwrap();
+        assert_eq!(read_license_text(&file).unwrap().len(), MAX_LICENSE_BYTES);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn license_text_cannot_break_out_of_its_fence() {
+        let groups = vec![(
+            "fence ``` inside\n## injected".to_string(),
+            vec!["evil 1.0\n# heading `x`".to_string()],
+        )];
+        let md = render_texts(&groups, &["bad\nname 2.0".to_string()]);
+        assert!(md.contains("````text\nfence ``` inside\n## injected\n````"));
+        assert!(md.contains("### evil 1.0 # heading x"));
+        assert!(md.contains("bad name 2.0"));
     }
 
     #[test]

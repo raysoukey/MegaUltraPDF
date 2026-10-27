@@ -36,6 +36,7 @@
 )]
 
 pub mod annotations;
+pub mod cleanup;
 pub mod document;
 pub mod edit;
 pub mod engine;

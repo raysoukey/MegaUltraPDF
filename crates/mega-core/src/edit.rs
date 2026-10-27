@@ -472,6 +472,8 @@ impl Document {
             self.replace_inner(clean);
             bytes
         };
+        // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
+        let bytes = crate::cleanup::before_save(&bytes)?;
         write_atomically(path, &bytes)?;
         self.set_path(Some(path.to_path_buf()));
         self.history.saved_position = Some(self.history.position);

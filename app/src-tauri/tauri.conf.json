@@ -38,7 +38,7 @@
       {
         "ext": ["pdf"],
         "mimeType": "application/pdf",
-        "name": "PDF",
+        "name": "MegaUltraPDF.Document",
         "description": "Document PDF",
         "role": "Viewer"
       }

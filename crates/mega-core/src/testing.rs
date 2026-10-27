@@ -273,6 +273,37 @@ fn form_pdf_impl(need_appearances: bool) -> Vec<u8> {
     )
 }
 
+/// Une page **tournée** : MediaBox 400 × 600 avec `/Rotate 90` (affichée 600 × 400), le
+/// texte « Page 1 » en haut à gauche de l'espace utilisateur, et un champ texte `nom`
+/// (`/Rect [50 500 250 530]`). Sert à vérifier la conversion espace affiché ↔ utilisateur.
+pub fn rotated_pdf() -> Vec<u8> {
+    let content = "BT /Helv 24 Tf 72 560 Td (Page 1) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] /NeedAppearances true          /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 600] /Rotate 90          /Resources << /Font << /Helv 4 0 R >> >> /Contents 5 0 R /Annots [6 0 R] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        format!(
+            "<< /Length {} >>
+stream
+{content}
+endstream",
+            content.len()
+        ),
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (nom) /V () /Rect [50 500 250 530] /F 4          /DA (/Helv 12 Tf 0 g) /MK << /BC [0 0 0] >> >>"
+            .to_string(),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Page tournée")
+        ),
+    )
+}
+
 /// Un champ texte **séparé de son widget** (dictionnaire de champ parent + widget enfant),
 /// comme en produisent iText ou LibreOffice : `/V` vit sur le parent.
 pub fn form_parent_kid_pdf() -> Vec<u8> {

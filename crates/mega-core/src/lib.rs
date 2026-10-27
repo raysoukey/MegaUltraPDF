@@ -63,7 +63,7 @@ pub use error::{CoreError, CoreResult};
 pub use forms::{
     FieldKind, FieldOption, FieldValue, FormField, FormInfo, FormType, SignatureSource,
 };
-pub use geometry::{Rect, Rotation};
+pub use geometry::{PageFrame, Rect, Rotation};
 pub use links::{LinkTarget, PageLink};
 pub use outline::OutlineNode;
 pub use pagespec::PageSpec;

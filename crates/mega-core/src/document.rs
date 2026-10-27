@@ -126,6 +126,17 @@ impl Document {
         })
     }
 
+    /// Repère de la page `index` : sa rotation `/Rotate` et sa zone visible, pour convertir
+    /// entre l'espace affiché (celui de toute l'API) et l'espace utilisateur du fichier.
+    pub fn page_frame(&self, index: u16) -> CoreResult<crate::geometry::PageFrame> {
+        let _guard = engine::guard();
+        let page = self
+            .inner()
+            .pages()
+            .get(self.checked_index_unlocked(index)?)?;
+        Ok(crate::geometry::frame_of(&page))
+    }
+
     /// Dimensions de toutes les pages, dans l'ordre.
     pub fn page_sizes(&self) -> CoreResult<Vec<PageSize>> {
         (0..self.page_count()).map(|i| self.page_size(i)).collect()

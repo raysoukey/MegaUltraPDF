@@ -1,0 +1,40 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] /NeedAppearances true          /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 600] /Rotate 90          /Resources << /Font << /Helv 4 0 R >> >> /Contents 5 0 R /Annots [6 0 R] >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 39 >>
+stream
+BT /Helv 24 Tf 72 560 Td (Page 1) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (nom) /V () /Rect [50 500 250 530] /F 4          /DA (/Helv 12 Tf 0 g) /MK << /BC [0 0 0] >> >>
+endobj
+7 0 obj
+<< /Title <FEFF005000610067006500200074006F00750072006E00E90065> /Producer (MegaUltraPDF tests) >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000176 00000 n 
+0000000233 00000 n 
+0000000397 00000 n 
+0000000494 00000 n 
+0000000583 00000 n 
+0000000738 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R /Info 7 0 R >>
+startxref
+852
+%%EOF

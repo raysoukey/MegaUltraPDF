@@ -273,6 +273,7 @@ impl Document {
             // chargée dans l'environnement de formulaire ; idem pour les apparences.
             load_form_environment(&pdf_page)?;
         }
+        let frame = crate::geometry::frame_of(&pdf_page);
         let mut out = Vec::new();
         for (index, ann) in pdf_page
             .annotations()
@@ -283,7 +284,8 @@ impl Document {
             let Some(field) = ann.as_form_field() else {
                 continue;
             };
-            let rect = Rect::from_pdf(ann.bounds()?);
+            // Le `/Rect` du widget est en espace utilisateur ; l'interface veut l'affiché.
+            let rect = frame.from_user_space(Rect::from_pdf(ann.bounds()?));
             out.push(read_field(page, index as u16, rect, field));
         }
         Ok(out)

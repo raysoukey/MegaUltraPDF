@@ -12,15 +12,16 @@
 use std::io::Cursor;
 
 use pdfium_render::prelude::{
-    PdfColor, PdfPageContentRegenerationStrategy, PdfPageObjectCommon, PdfPageObjectLineCap,
-    PdfPageObjectLineJoin, PdfPageObjectsCommon, PdfPagePathObject, PdfPoints,
+    PdfColor, PdfMatrix, PdfPageContentRegenerationStrategy, PdfPageObjectCommon,
+    PdfPageObjectLineCap, PdfPageObjectLineJoin, PdfPageObjectsCommon, PdfPagePathObject,
+    PdfPoints,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
-use crate::geometry::Rect;
+use crate::geometry::{Rect, frame_of};
 
 /// Taille maximale d'un fichier image de signature (octets).
 pub const MAX_SIGNATURE_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
@@ -63,7 +64,9 @@ pub(crate) fn fit(image_w: f32, image_h: f32, rect: &Rect) -> Rect {
 }
 
 impl Document {
-    /// Appose une signature visuelle dans `rect` (points PDF) sur la page `page`.
+    /// Appose une signature visuelle dans `rect` (points PDF, espace **affiché**) sur la
+    /// page `page`. Sur une page tournée, l'image reste droite à l'écran et les traits
+    /// suivent les points désignés.
     pub fn insert_signature(
         &mut self,
         page: u16,
@@ -120,13 +123,20 @@ impl Document {
                     .inner()
                     .pages()
                     .get(self.checked_index_unlocked(page)?)?;
-                pdf_page.objects_mut().create_image_object(
+                let frame = frame_of(&pdf_page);
+                // L'image est placée en coordonnées affichées, puis la matrice du repère
+                // l'emmène (tournée) dans l'espace utilisateur.
+                let mut obj = pdf_page.objects_mut().create_image_object(
                     PdfPoints::new(placed.x),
                     PdfPoints::new(placed.y),
                     &image,
                     Some(PdfPoints::new(placed.w)),
                     Some(PdfPoints::new(placed.h)),
                 )?;
+                if !frame.is_identity() {
+                    let m = frame.matrix_to_user_space();
+                    obj.apply_matrix(PdfMatrix::new(m[0], m[1], m[2], m[3], m[4], m[5]))?;
+                }
                 pdf_page.regenerate_content()?;
                 Ok(())
             }
@@ -144,21 +154,24 @@ impl Document {
                 let page_index = self.checked_index_unlocked(page)?;
                 let doc = self.inner();
                 let mut pdf_page = doc.pages().get(page_index)?;
+                let frame = frame_of(&pdf_page);
                 // Un seul flux de contenu pour toute la signature (sinon pdfium-render
                 // régénère le contenu à chaque objet ajouté : un flux par trait).
                 pdf_page
                     .set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
                 let black = PdfColor::new(0, 0, 0, 255);
                 for stroke in valid {
+                    let start = frame.point_to_user_space(stroke[0]);
                     let mut obj = PdfPagePathObject::new(
                         doc,
-                        PdfPoints::new(stroke[0][0]),
-                        PdfPoints::new(stroke[0][1]),
+                        PdfPoints::new(start[0]),
+                        PdfPoints::new(start[1]),
                         Some(black),
                         Some(PdfPoints::new(STROKE_WIDTH)),
                         None,
                     )?;
                     for p in &stroke[1..] {
+                        let p = frame.point_to_user_space(*p);
                         obj.line_to(PdfPoints::new(p[0]), PdfPoints::new(p[1]))?;
                     }
                     obj.set_line_cap(PdfPageObjectLineCap::Round)?;
@@ -171,24 +184,25 @@ impl Document {
         }
     }
 
-    /// Emprise du dernier objet image de la page (tests et diagnostics).
+    /// Emprise du dernier objet image de la page, en espace affiché (tests et diagnostics).
     pub fn last_image_bounds(&self, page: u16) -> CoreResult<Option<Rect>> {
         let _guard = engine::guard();
         let pdf_page = self
             .inner()
             .pages()
             .get(self.checked_index_unlocked(page)?)?;
+        let frame = frame_of(&pdf_page);
         let mut last = None;
         for obj in pdf_page.objects().iter() {
             if obj.as_image_object().is_some()
                 && let Ok(q) = obj.bounds()
             {
-                last = Some(Rect {
+                last = Some(frame.from_user_space(Rect {
                     x: q.left().value,
                     y: q.bottom().value,
                     w: q.width().value,
                     h: q.height().value,
-                });
+                }));
             }
         }
         Ok(last)

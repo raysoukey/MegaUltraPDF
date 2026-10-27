@@ -84,7 +84,7 @@ pub fn version_marker_path(vendor_dir: &Path, target: &str) -> PathBuf {
 }
 
 /// Nom du fichier de bibliothèque (dernier segment du chemin dans l'archive).
-fn library_file_name(asset: &Asset) -> &str {
+pub fn library_file_name(asset: &Asset) -> &str {
     asset
         .library_path_in_archive
         .rsplit('/')

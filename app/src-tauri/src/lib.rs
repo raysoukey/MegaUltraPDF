@@ -23,7 +23,19 @@ mod commands;
 mod error;
 mod protocol;
 
+use std::path::{Path, PathBuf};
+
 use mega_core::service::PdfService;
+
+/// Dossier `pdfium/` des ressources de l'application installée, s'il existe.
+///
+/// Les paquets (NSIS, MSI, deb, AppImage, dmg) y embarquent la bibliothèque PDFium
+/// (`cargo xtask stage-pdfium`, `tauri.release.conf.json`). En développement il n'existe
+/// pas : `None`, et PDFium est cherché comme d'habitude (`MEGA_PDFIUM_DIR`, dossier de
+/// l'exécutable, `vendor/`).
+fn pdfium_resource_dir(resources: &Path) -> Option<PathBuf> {
+    Some(resources.join("pdfium")).filter(|dir| dir.is_dir())
+}
 
 /// Point d'entrée de l'application (appelé par `main.rs`).
 ///
@@ -33,6 +45,15 @@ use mega_core::service::PdfService;
 #[allow(clippy::expect_used)]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    // Avant le démarrage de l'acteur PDFium : dire au cœur où est la bibliothèque livrée
+    // avec le paquet (sans effet si PDFium était déjà chargé, ce qui ne peut pas arriver ici).
+    if let Ok(resources) =
+        tauri::utils::platform::resource_dir(context.package_info(), &tauri::Env::default())
+        && let Some(dir) = pdfium_resource_dir(&resources)
+    {
+        mega_core::engine::set_library_dir(dir);
+    }
     let builder = tauri::Builder::default()
         // Un seul acteur PDFium pour toute l'application ; le handle est clonable.
         .manage(PdfService::spawn())
@@ -73,6 +94,27 @@ pub fn run() {
             commands::split_plan
         ]);
     protocol::register(builder)
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("erreur au lancement de l'application Tauri");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pdfium_resource_dir_requires_the_staged_folder() {
+        let resources = std::env::temp_dir().join(format!("mega-res-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&resources);
+        std::fs::create_dir_all(&resources).unwrap();
+        // Développement : aucun dossier `pdfium/` dans les ressources, on garde la recherche
+        // habituelle (vendor/, MEGA_PDFIUM_DIR…).
+        assert_eq!(pdfium_resource_dir(&resources), None);
+        std::fs::create_dir_all(resources.join("pdfium")).unwrap();
+        assert_eq!(
+            pdfium_resource_dir(&resources),
+            Some(resources.join("pdfium"))
+        );
+        std::fs::remove_dir_all(&resources).unwrap();
+    }
 }

@@ -9,6 +9,7 @@
 
 mod licenses;
 mod pdfium;
+mod stage;
 
 use std::path::{Path, PathBuf};
 
@@ -20,6 +21,7 @@ Usage : cargo xtask <commande>
 Commandes :
   fetch-pdfium [--target <triple>]   Télécharge la bibliothèque PDFium épinglée dans vendor/pdfium/
   gen-fixtures                       Régénère les PDF d'exemple de fixtures/ (sauf encrypted.pdf)
+  stage-pdfium [--target <triple>]   Copie PDFium et sa licence dans app/src-tauri/resources/pdfium/
   licenses                           Inventaire des licences tierces (licenses.json, THIRD_PARTY_LICENSES.md)
 ";
 
@@ -30,6 +32,7 @@ fn main() -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         Some("fetch-pdfium") => fetch_pdfium(&args[1..]),
         Some("gen-fixtures") => gen_fixtures(),
+        Some("stage-pdfium") => stage_pdfium(&args[1..]),
         Some("licenses") => licenses::generate(&workspace_root()),
         Some(other) => bail!("commande inconnue : {other}\n\n{USAGE}"),
         None => {
@@ -60,13 +63,22 @@ fn host_target() -> anyhow::Result<String> {
         .context("ligne `host:` absente de la sortie de rustc -vV")
 }
 
+/// Cible demandée par `--target <triple>`, ou celle de la machine hôte.
+fn target_arg(args: &[String], command: &str) -> anyhow::Result<String> {
+    match args {
+        [] => host_target(),
+        [flag, value] if flag == "--target" => Ok(value.clone()),
+        _ => bail!("arguments invalides pour {command}\n\n{USAGE}"),
+    }
+}
+
 fn fetch_pdfium(args: &[String]) -> anyhow::Result<()> {
-    let target = match args {
-        [] => host_target()?,
-        [flag, value] if flag == "--target" => value.clone(),
-        _ => bail!("arguments invalides pour fetch-pdfium\n\n{USAGE}"),
-    };
-    pdfium::fetch(&workspace_root(), &target)?;
+    pdfium::fetch(&workspace_root(), &target_arg(args, "fetch-pdfium")?)?;
+    Ok(())
+}
+
+fn stage_pdfium(args: &[String]) -> anyhow::Result<()> {
+    stage::stage(&workspace_root(), &target_arg(args, "stage-pdfium")?)?;
     Ok(())
 }
 

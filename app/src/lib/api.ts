@@ -546,6 +546,17 @@ export async function ocrStatus(): Promise<OcrStatus> {
   return invoke<OcrStatus>('ocr_status');
 }
 
+/** Chemin de Tesseract choisi dans les préférences (`null` ou vide : recherche automatique). */
+export async function setTesseractPath(path: string | null): Promise<void> {
+  return invoke<void>('set_tesseract_path', { path });
+}
+
+/** Choisir l'exécutable de Tesseract (dialogue natif). */
+export async function pickExecutable(): Promise<string | null> {
+  const picked = await open({ multiple: false, directory: false });
+  return typeof picked === 'string' ? picked : null;
+}
+
 export async function pagesWithText(id: number): Promise<boolean[]> {
   return invoke<boolean[]>('pages_with_text', { id });
 }

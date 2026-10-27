@@ -343,6 +343,16 @@ pub async fn ocr_status(
     blocking(handle, |_| Ok(mega_core::ocr::ocr_status())).await
 }
 
+/// Chemin de Tesseract choisi dans les préférences (vide ou absent : recherche automatique).
+#[tauri::command]
+pub fn set_tesseract_path(path: Option<String>) {
+    let path = path
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .map(std::path::PathBuf::from);
+    mega_core::ocr::set_tesseract_path(path);
+}
+
 /// Pour chaque page, contient-elle déjà du texte ? (choix des pages à reconnaître)
 #[tauri::command]
 pub async fn pages_with_text(
@@ -515,6 +525,17 @@ mod tests {
             invalid,
             serde_json::json!({ "kind": "invalid", "issue": "content_modified" })
         );
+    }
+
+    /// Le chemin choisi dans les préférences passe avant toute recherche ; vide, il rend la
+    /// main à la recherche automatique.
+    #[test]
+    fn set_tesseract_path_overrides_the_search() {
+        let me = std::env::current_exe().unwrap();
+        set_tesseract_path(Some(me.to_string_lossy().into_owned()));
+        assert_eq!(mega_core::ocr::find_tesseract(), Some(me.clone()));
+        set_tesseract_path(Some("   ".to_string()));
+        assert_ne!(mega_core::ocr::find_tesseract(), Some(me));
     }
 
     #[test]

@@ -5,7 +5,7 @@
   import { onMount } from 'svelte';
   import { trapFocus } from '$lib/actions/trapFocus';
   import { ocrStatus, type OcrStatus } from '$lib/api';
-  import { ocrPages, type OcrScope } from '$lib/logic/ocr';
+  import { ocrOutcome, ocrPages, type OcrScope } from '$lib/logic/ocr';
   import { ocrPage, pagesWithText, showNotice, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
 
@@ -31,7 +31,9 @@
       pagesWithText(doc),
     ]);
     status = s;
-    withText = pages;
+    // Lecture impossible : on le dit, plutôt que « elles contiennent déjà du texte ».
+    if (pages === null) message = t.ocrPagesUnknown;
+    else withText = pages;
     // Par défaut : français et anglais s'ils sont installés, sinon la première langue.
     const preferred = s.languages.filter((l) => l === 'fra' || l === 'eng');
     chosen = preferred.length > 0 ? preferred : s.languages.slice(0, 1);
@@ -56,16 +58,24 @@
     running = true;
     stopRequested = false;
     const pages = [...targets];
-    let done = 0;
+    const processed: number[] = [];
     for (const page of pages) {
       if (stopRequested) break;
-      progress = t.ocrProgress(done + 1, pages.length);
+      progress = t.ocrProgress(processed.length + 1, pages.length);
       if (!(await ocrPage(doc, page, chosen))) break;
-      done += 1;
+      processed.push(page);
     }
     running = false;
     progress = '';
-    if (done > 0) showNotice(t.ocrDone(done));
+    if (processed.length > 0) {
+      // Une page sans mot reconnu n'a rien changé (aucune étape d'historique) : on la compte
+      // à part plutôt que de l'annoncer « reconnue ».
+      const after = (await pagesWithText(doc)) ?? [];
+      const { recognized, empty } = ocrOutcome(processed, after);
+      showNotice(
+        empty > 0 ? `${t.ocrDone(recognized)} · ${t.ocrEmpty(empty)}` : t.ocrDone(recognized),
+      );
+    }
     onclose();
   }
 </script>

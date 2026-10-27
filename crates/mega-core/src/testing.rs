@@ -418,6 +418,54 @@ pub fn form_with_appearances_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// La première page de [`scanned_pdf`] stockée **tournée** : `/MediaBox` paysage, `/Rotate
+/// 90`, et l'image dessinée à un quart de tour anti-horaire, si bien qu'elle s'affiche droite
+/// (comme un scanner qui enregistre une page couchée et la redresse par `/Rotate`).
+pub fn rotated_scan_pdf() -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&scanned_pdf()).expect("numérisation");
+    let pages = doc.get_pages();
+    let first = *pages.get(&1).expect("page 1");
+    for id in pages.values().skip(1).copied().collect::<Vec<_>>() {
+        doc.delete_object(id);
+    }
+    let pages_id = doc
+        .get_dictionary(first)
+        .and_then(|p| p.get(b"Parent"))
+        .and_then(lopdf::Object::as_reference)
+        .expect("parent");
+    let pages_dict = doc.get_dictionary_mut(pages_id).expect("/Pages");
+    pages_dict.set(
+        "Kids",
+        lopdf::Object::Array(vec![lopdf::Object::Reference(first)]),
+    );
+    pages_dict.set("Count", 1);
+    let page = doc.get_dictionary(first).expect("page");
+    let media: Vec<f32> = page
+        .get(b"MediaBox")
+        .and_then(lopdf::Object::as_array)
+        .expect("MediaBox")
+        .iter()
+        .map(|v| v.as_float().expect("nombre"))
+        .collect();
+    let (w, h) = (media[2], media[3]);
+    let content = format!("q\n0 {w} {} 0 {h} 0 cm\n/Im0 Do\nQ\n", -h);
+    let content_id = doc.add_object(lopdf::Stream::new(
+        lopdf::Dictionary::new(),
+        content.into_bytes(),
+    ));
+    let page = doc.get_dictionary_mut(first).expect("page");
+    page.set(
+        "MediaBox",
+        lopdf::Object::Array(vec![0.into(), 0.into(), h.into(), w.into()]),
+    );
+    page.set("Rotate", 90);
+    page.set("Contents", lopdf::Object::Reference(content_id));
+    doc.prune_objects();
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
 /// Un formulaire AcroForm écrit à la main (`/NeedAppearances true`) : texte « nom » (vide),
 /// texte multiligne « adresse », case « ok », groupe radio « choix » (A coché, B), combo
 /// « ville » (Paris, Lyon ; Paris choisi), texte lecture seule « ref », texte requis « email ».

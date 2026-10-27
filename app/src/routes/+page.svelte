@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { pickPdfFiles, startupFile } from '$lib/api';
+  import { pickPdfFiles, setTesseractPath, startupFile } from '$lib/api';
   import type { Annotation } from '$lib/api';
   import AnnotationEditor from '$lib/components/AnnotationEditor.svelte';
   import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
@@ -145,6 +145,7 @@
     (async () => {
       await loadSettings();
       applyLanguage();
+      if (settings.tesseractPath) void setTesseractPath(settings.tesseractPath).catch(() => {});
       const path = await startupFile().catch(() => null);
       if (path) await openPath(path);
       try {

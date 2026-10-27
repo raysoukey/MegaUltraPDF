@@ -96,6 +96,9 @@ export const fr = {
   prefZoomCustom: 'Dernier zoom utilisé',
   prefView: 'Affichage',
   prefAuthor: 'Nom d’auteur des annotations',
+  prefTesseract: 'Tesseract (OCR)',
+  prefTesseractAuto: 'Recherche automatique',
+  browse: 'Parcourir…',
   prefRestore: 'Rouvrir chaque fichier à la page et au zoom où je l’ai laissé',
   prefRecent: (n: number) =>
     n === 0 ? 'Aucun fichier récent' : n === 1 ? '1 fichier récent' : `${n} fichiers récents`,
@@ -154,6 +157,9 @@ export const fr = {
   ocrRun: 'Reconnaître',
   ocrStop: 'Arrêter',
   ocrNothing: 'Aucune page à reconnaître : elles contiennent déjà du texte.',
+  ocrPagesUnknown: 'Impossible de savoir quelles pages contiennent déjà du texte.',
+  ocrEmpty: (n: number) =>
+    n === 1 ? '1 page sans texte reconnaissable' : `${n} pages sans texte reconnaissable`,
   ocrProgress: (done: number, total: number) => `Page ${done} sur ${total}…`,
   ocrDone: (n: number) => (n === 1 ? '1 page reconnue' : `${n} pages reconnues`),
   ocrNeedLanguage: 'Choisissez au moins une langue.',
@@ -656,6 +662,9 @@ export const en: Strings = {
   prefZoomCustom: 'Last zoom used',
   prefView: 'Display',
   prefAuthor: 'Author name for annotations',
+  prefTesseract: 'Tesseract (OCR)',
+  prefTesseractAuto: 'Automatic search',
+  browse: 'Browse…',
   prefRestore: 'Reopen each file at the page and zoom where I left it',
   prefRecent: (n: number) =>
     n === 0 ? 'No recent files' : n === 1 ? '1 recent file' : `${n} recent files`,
@@ -714,6 +723,9 @@ export const en: Strings = {
   ocrRun: 'Recognise',
   ocrStop: 'Stop',
   ocrNothing: 'No page to recognise: they already contain text.',
+  ocrPagesUnknown: 'Could not tell which pages already contain text.',
+  ocrEmpty: (n: number) =>
+    n === 1 ? '1 page with no recognisable text' : `${n} pages with no recognisable text`,
   ocrProgress: (done: number, total: number) => `Page ${done} of ${total}…`,
   ocrDone: (n: number) => (n === 1 ? '1 page recognised' : `${n} pages recognised`),
   ocrNeedLanguage: 'Choose at least one language.',

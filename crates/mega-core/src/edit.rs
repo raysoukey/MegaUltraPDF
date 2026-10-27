@@ -247,6 +247,12 @@ pub trait Command {
     fn label_in(&self, _doc: &Document) -> String {
         self.label()
     }
+    /// Après une application réussie : le document a-t-il réellement changé ? Sinon, aucune
+    /// étape d'historique n'est ajoutée (une page où l'OCR ne trouve aucun mot). Par
+    /// défaut : oui.
+    fn changed_document(&self, _doc: &Document) -> bool {
+        true
+    }
 }
 
 fn plural(n: usize, singular: &str, plural: &str) -> String {
@@ -441,6 +447,18 @@ impl Command for EditCommand {
             EditCommand::OcrPage { page, languages } => doc.ocr_page(*page, languages),
         }
     }
+
+    // `doc` ne sert qu'à l'OCR (feature `ocr`).
+    #[cfg_attr(not(feature = "ocr"), allow(unused_variables))]
+    fn changed_document(&self, doc: &Document) -> bool {
+        match self {
+            // L'OCR n'ajoute une couche que s'il a reconnu des mots : la page a alors du texte
+            // (elle n'en avait pas, sinon l'OCR aurait été refusé).
+            #[cfg(feature = "ocr")]
+            EditCommand::OcrPage { page, .. } => doc.page_has_text(*page).unwrap_or(true),
+            _ => true,
+        }
+    }
 }
 
 /// « Verbe N page(s) » pour une commande qui vise une liste de pages (toutes si `None`).
@@ -556,6 +574,11 @@ impl Document {
             self.reload_from_bytes(before)?;
             self.changed = changed_before;
             return Err(e);
+        }
+        if !command.changed_document(self) {
+            // Rien n'a changé (aucun mot reconnu, par exemple) : pas d'étape d'historique.
+            self.changed = changed_before;
+            return Ok(());
         }
         if !self.history.redo.is_empty() {
             self.history.redo.clear();

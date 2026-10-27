@@ -31,6 +31,26 @@ pub const TESSERACT_ENV: &str = "MEGA_TESSERACT";
 /// Chemin réglé par l'application (préférences), prioritaire sur tout le reste.
 static APP_TESSERACT: RwLock<Option<PathBuf>> = RwLock::new(None);
 
+/// Langues installées du dernier Tesseract interrogé : `--list-langs` lancé une fois, pas à
+/// chaque page (C40). Rafraîchi par [`ocr_status`] (ouverture du dialogue) et vidé quand le
+/// chemin de Tesseract change.
+static LANGUAGES: RwLock<Option<(PathBuf, Vec<String>)>> = RwLock::new(None);
+
+/// Langues de `exe`, depuis le cache si c'est le même exécutable.
+fn installed_languages(exe: &Path) -> CoreResult<Vec<String>> {
+    if let Ok(cache) = LANGUAGES.read()
+        && let Some((cached, languages)) = cache.as_ref()
+        && cached == exe
+    {
+        return Ok(languages.clone());
+    }
+    let languages = tesseract_languages(exe)?;
+    if let Ok(mut cache) = LANGUAGES.write() {
+        *cache = Some((exe.to_path_buf(), languages.clone()));
+    }
+    Ok(languages)
+}
+
 /// Un mot reconnu, avec sa boîte en **pixels** de l'image analysée (origine en haut à gauche).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OcrWord {
@@ -175,7 +195,13 @@ pub fn search_candidates(
     list.extend(app.map(Path::to_path_buf));
     list.extend(env.map(PathBuf::from));
     if let Some(path_var) = path_var {
-        list.extend(std::env::split_paths(&path_var).map(|dir| dir.join(exe_name())));
+        // Une entrée vide du `PATH` désignerait le dossier courant : un `tesseract.exe` posé
+        // à côté d'un document ouvert serait lancé. Seuls les dossiers absolus comptent (C41).
+        list.extend(
+            std::env::split_paths(&path_var)
+                .filter(|dir| dir.is_absolute())
+                .map(|dir| dir.join(exe_name())),
+        );
     }
     let usual: &[&str] = if cfg!(windows) {
         &[
@@ -193,6 +219,9 @@ pub fn search_candidates(
 pub fn set_tesseract_path(path: Option<PathBuf>) {
     if let Ok(mut slot) = APP_TESSERACT.write() {
         *slot = path;
+    }
+    if let Ok(mut cache) = LANGUAGES.write() {
+        *cache = None;
     }
 }
 
@@ -280,11 +309,16 @@ pub struct OcrStatus {
 /// mais inutilisable (`--list-langs` échoue) compte comme absent.
 pub fn ocr_status() -> OcrStatus {
     match find_tesseract().and_then(|exe| tesseract_languages(&exe).ok().map(|l| (exe, l))) {
-        Some((exe, languages)) => OcrStatus {
-            available: true,
-            path: Some(exe.to_string_lossy().into_owned()),
-            languages,
-        },
+        Some((exe, languages)) => {
+            if let Ok(mut cache) = LANGUAGES.write() {
+                *cache = Some((exe.clone(), languages.clone()));
+            }
+            OcrStatus {
+                available: true,
+                path: Some(exe.to_string_lossy().into_owned()),
+                languages,
+            }
+        }
         None => OcrStatus {
             available: false,
             path: None,
@@ -326,7 +360,7 @@ impl Document {
                 "choisissez au moins une langue de reconnaissance".to_string(),
             ));
         }
-        let installed = tesseract_languages(exe)?;
+        let installed = installed_languages(exe)?;
         if let Some(missing) = languages.iter().find(|l| !installed.contains(l)) {
             return Err(CoreError::InvalidOperation(format!(
                 "langue de reconnaissance non installée pour Tesseract : {missing}"
@@ -339,7 +373,10 @@ impl Document {
             )));
         }
         let size = self.page_size(page)?;
-        let image = self.render_page(page, OCR_DPI / 72.0)?;
+        // Sans les annotations : le texte d'une note posée sur le scan n'appartient pas à la
+        // page et n'entre pas dans sa couche de texte (C40).
+        let image =
+            self.render_page_opts(page, OCR_DPI / 72.0, crate::geometry::Rotation::None, false)?;
         let png = tempfile::Builder::new()
             .prefix("mega-ocr-")
             .suffix(".png")

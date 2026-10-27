@@ -937,9 +937,9 @@ export async function refreshSignatures(doc: OpenDoc): Promise<void> {
   await ensureSignatures(doc);
 }
 
-/** Pour chaque page, contient-elle déjà du texte ? (vide en cas d'erreur) */
-export async function pagesWithText(doc: OpenDoc): Promise<boolean[]> {
-  return fetchPagesWithText(doc.summary.id).catch(() => []);
+/** Pour chaque page, contient-elle déjà du texte ? `null` en cas d'erreur (à signaler). */
+export async function pagesWithText(doc: OpenDoc): Promise<boolean[] | null> {
+  return fetchPagesWithText(doc.summary.id).catch(() => null);
 }
 
 /** Reconnaît le texte d'une page (OCR) ; faux en cas d'échec (erreur affichée). */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { ocrPages } from './ocr';
+import { ocrOutcome, ocrPages } from './ocr';
 
 describe('ocrPages', () => {
   it('keeps every page without text', () => {
@@ -13,5 +13,14 @@ describe('ocrPages', () => {
   });
   it('ignores a current page outside the document', () => {
     expect(ocrPages('current', 5, [false])).toEqual([]);
+  });
+});
+
+describe('ocrOutcome', () => {
+  it('counts processed pages that gained text and those where nothing was recognized', () => {
+    expect(ocrOutcome([0, 2, 3], [false, true, true, false])).toEqual({ recognized: 1, empty: 2 });
+  });
+  it('a missing page list counts nothing as recognized', () => {
+    expect(ocrOutcome([1], [])).toEqual({ recognized: 0, empty: 1 });
   });
 });

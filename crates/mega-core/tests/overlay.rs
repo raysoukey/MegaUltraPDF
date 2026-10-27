@@ -409,3 +409,12 @@ fn inherited_media_box_is_read() {
         .collect();
     assert_eq!(crop, vec![110.0, 110.0, 490.0, 690.0]);
 }
+
+/// C26 : le modèle anglais `{title}` vaut `{titre}`.
+#[test]
+fn numbering_accepts_title_placeholder() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "Report"), None).unwrap();
+    doc.add_page_numbers(&numbering("{n} {title}", Corner::BottomCenter, 1))
+        .unwrap();
+    assert_eq!(page_text(&doc, 0), "Page11Report");
+}

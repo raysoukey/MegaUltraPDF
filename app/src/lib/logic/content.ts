@@ -64,7 +64,8 @@ export function fillTemplate(template: string, n: number, total: number, title: 
   return template
     .replaceAll('{n}', String(n))
     .replaceAll('{total}', String(total))
-    .replaceAll('{titre}', title);
+    .replaceAll('{titre}', title)
+    .replaceAll('{title}', title);
 }
 
 export type PageScope = 'all' | 'current' | 'selected';

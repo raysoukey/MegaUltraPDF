@@ -30,7 +30,6 @@ export const fr = {
   close: 'Fermer',
   closeTab: "Fermer l'onglet",
   recentFiles: 'Fichiers récents',
-  noRecentFiles: 'Aucun fichier récent',
   clearRecent: 'Vider la liste',
   zoomIn: 'Zoom avant',
   zoomOut: 'Zoom arrière',
@@ -50,7 +49,6 @@ export const fr = {
   search: 'Rechercher',
   searchPlaceholder: 'Rechercher dans le document…',
   searchMatchCase: 'Respecter la casse',
-  searchWholeWord: 'Mots entiers',
   searchCount: (current: number, total: number) =>
     total === 0 ? 'Aucun résultat' : `${current} / ${total}`,
   searchNext: 'Résultat suivant',
@@ -70,15 +68,16 @@ export const fr = {
   propSize: 'Taille',
   unknown: '—',
   bytes: (n: number) => {
+    const num = (v: number) =>
+      v.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     if (n < 1024) return `${n} o`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} Ko`;
-    return `${(n / (1024 * 1024)).toFixed(1)} Mo`;
+    if (n < 1024 * 1024) return `${num(n / 1024)} Ko`;
+    return `${num(n / (1024 * 1024))} Mo`;
   },
   theme: 'Thème',
   themeSystem: 'Système',
   themeLight: 'Clair',
   themeDark: 'Sombre',
-  shortcutsHelp: 'Raccourcis clavier',
   externalLinkConfirm: (uri: string) => `Ouvrir ce lien dans votre navigateur ?\n\n${uri}`,
   externalLinkBlocked: 'Ce type de lien est bloqué pour votre sécurité.',
   copy: 'Copier',
@@ -117,7 +116,7 @@ export const fr = {
     },
     {
       title: 'Remplir un formulaire',
-      body: 'Cliquez dans un champ pour le remplir. Le panneau Champs les liste tous ; une signature manuscrite se dessine dans un champ de signature. Enregistrez avec Ctrl+S.',
+      body: 'Cliquez dans un champ pour le remplir. Le panneau Formulaire les liste tous ; une signature manuscrite se dessine dans un champ de signature. Enregistrez avec Ctrl+S.',
     },
     {
       title: 'Éditer les pages et le contenu',
@@ -227,6 +226,7 @@ export const fr = {
   keyShift: 'Maj',
   keyCtrl: 'Ctrl',
   working: 'Traitement en cours…',
+  dpiValue: (n: number) => `${n} ppp`,
   keyNames: {
     Delete: 'Suppr',
     Escape: 'Échap',
@@ -293,7 +293,6 @@ export const fr = {
   color: 'Couleur',
   customColor: 'Couleur personnalisée',
   fillColor: 'Remplissage',
-  noFill: 'Sans remplissage',
   opacity: 'Opacité',
   strokeWidth: 'Épaisseur',
   fontSize: 'Taille du texte',
@@ -464,7 +463,6 @@ export const fr = {
   optimizeTitle: 'Optimiser…',
   optimizeHint:
     'Objets inutilisés retirés, flux compressés, images recomprimées si cela réduit le fichier.',
-  optimizeCurrentSize: (size: string) => `taille actuelle : ${size}`,
   optimizeRecompress: 'Recomprimer les images en JPEG',
   optimizeQuality: 'Qualité JPEG',
   optimizeDownsample: 'Réduire les grandes images',
@@ -598,7 +596,6 @@ export const en: Strings = {
   close: 'Close',
   closeTab: 'Close tab',
   recentFiles: 'Recent files',
-  noRecentFiles: 'No recent files',
   clearRecent: 'Clear list',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
@@ -618,7 +615,6 @@ export const en: Strings = {
   search: 'Search',
   searchPlaceholder: 'Search the document…',
   searchMatchCase: 'Match case',
-  searchWholeWord: 'Whole words',
   searchCount: (current: number, total: number) =>
     total === 0 ? 'No results' : `${current} of ${total}`,
   searchNext: 'Next result',
@@ -638,15 +634,16 @@ export const en: Strings = {
   propSize: 'Size',
   unknown: '—',
   bytes: (n: number) => {
+    const num = (v: number) =>
+      v.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    if (n < 1024 * 1024) return `${num(n / 1024)} KB`;
+    return `${num(n / (1024 * 1024))} MB`;
   },
   theme: 'Theme',
   themeSystem: 'System',
   themeLight: 'Light',
   themeDark: 'Dark',
-  shortcutsHelp: 'Keyboard shortcuts',
   externalLinkConfirm: (uri: string) => `Open this link in your browser?\n\n${uri}`,
   externalLinkBlocked: 'This kind of link is blocked for your safety.',
   copy: 'Copy',
@@ -685,7 +682,7 @@ export const en: Strings = {
     },
     {
       title: 'Fill in a form',
-      body: 'Click a field to fill it in. The Fields panel lists them all; a handwritten signature is drawn in a signature field. Save with Ctrl+S.',
+      body: 'Click a field to fill it in. The Form panel lists them all; a handwritten signature is drawn in a signature field. Save with Ctrl+S.',
     },
     {
       title: 'Edit pages and content',
@@ -693,7 +690,7 @@ export const en: Strings = {
     },
     {
       title: 'Export and print',
-      body: 'The File menu exports pages as images or the text, prints (Ctrl+P), compares two documents and optimises the file size.',
+      body: 'The File menu exports pages as images or the text, prints (Ctrl+P), compares two documents and optimizes the file size.',
     },
     {
       title: 'Protect',
@@ -713,23 +710,23 @@ export const en: Strings = {
   licenseLicense: 'Licence',
   licenseSeeFile: 'see file',
   // OCR and digital signature (Lot 8)
-  ocrMenu: 'Recognise text (OCR)…',
-  ocrTitle: 'Recognise text (OCR)',
+  ocrMenu: 'Recognize text (OCR)…',
+  ocrTitle: 'Recognize text (OCR)',
   ocrIntro:
-    'The text of scanned pages is recognised by Tesseract and added as an invisible layer: the page looks the same, but search and copy work.',
+    'The text of scanned pages is recognized by Tesseract and added as an invisible layer: the page looks the same, but search and copy work.',
   ocrMissing:
     'Tesseract cannot be found. Install it with the languages you need (for example “eng” and “fra”), then reopen this dialog.',
   ocrLanguages: 'Languages',
   ocrScopeUntexted: 'All pages without text',
   ocrScopeCurrent: 'Current page only',
-  ocrRun: 'Recognise',
+  ocrRun: 'Recognize',
   ocrStop: 'Stop',
-  ocrNothing: 'No page to recognise: they already contain text.',
+  ocrNothing: 'No page to recognize: they already contain text.',
   ocrPagesUnknown: 'Could not tell which pages already contain text.',
   ocrEmpty: (n: number) =>
-    n === 1 ? '1 page with no recognisable text' : `${n} pages with no recognisable text`,
+    n === 1 ? '1 page with no recognizable text' : `${n} pages with no recognizable text`,
   ocrProgress: (done: number, total: number) => `Page ${done} of ${total}…`,
-  ocrDone: (n: number) => (n === 1 ? '1 page recognised' : `${n} pages recognised`),
+  ocrDone: (n: number) => (n === 1 ? '1 page recognized' : `${n} pages recognized`),
   ocrNeedLanguage: 'Choose at least one language.',
   signMenu: 'Sign digitally…',
   signTitle: 'Sign digitally',
@@ -795,6 +792,7 @@ export const en: Strings = {
   keyShift: 'Shift',
   keyCtrl: 'Ctrl',
   working: 'Working…',
+  dpiValue: (n: number) => `${n} dpi`,
   keyNames: {
     Delete: 'Del',
     Escape: 'Esc',
@@ -858,10 +856,9 @@ export const en: Strings = {
     widget: 'Field',
     other: 'Annotation',
   } as Record<string, string>,
-  color: 'Colour',
-  customColor: 'Custom colour',
+  color: 'Color',
+  customColor: 'Custom color',
   fillColor: 'Fill',
-  noFill: 'No fill',
   opacity: 'Opacity',
   strokeWidth: 'Thickness',
   fontSize: 'Text size',
@@ -947,7 +944,7 @@ export const en: Strings = {
   apply: 'Apply',
   numberingTitle: 'Page numbering',
   numberingTemplate: 'Template',
-  numberingTemplateHint: '{n} page number, {total} page count, {titre} document title',
+  numberingTemplateHint: '{n} page number, {total} page count, {title} document title',
   numberingCorner: 'Position',
   corners: {
     top_left: 'Header, left',
@@ -1031,7 +1028,6 @@ export const en: Strings = {
   optimizeTitle: 'Optimize…',
   optimizeHint:
     'Unused objects removed, streams compressed, images recompressed when it shrinks the file.',
-  optimizeCurrentSize: (size: string) => `current size: ${size}`,
   optimizeRecompress: 'Recompress images as JPEG',
   optimizeQuality: 'JPEG quality',
   optimizeDownsample: 'Shrink large images',
@@ -1155,6 +1151,9 @@ function initialLanguage(): Language {
 }
 
 let current: Language = initialLanguage();
+// Le lecteur d'écran lit la bonne langue dès le premier affichage, sans attendre les
+// préférences (C25).
+if (typeof document !== 'undefined') document.documentElement.lang = current;
 
 /**
  * Les chaînes de la langue courante. C'est **un seul objet partagé**, rempli par

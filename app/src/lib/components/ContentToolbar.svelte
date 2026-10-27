@@ -27,6 +27,7 @@
     { tool: 'redact', glyph: '▬' },
   ];
   let menuOpen = $state(false);
+  let openFrom = $state<'first' | 'last'>('first');
   let trigger: HTMLButtonElement | undefined = $state();
 
   function closeMenu(refocus: boolean) {
@@ -72,19 +73,24 @@
       aria-expanded={menuOpen}
       bind:this={trigger}
       onkeydown={(e) => {
-        if (e.key === 'ArrowDown' && !menuOpen) {
+        // ↓ ouvre sur le premier élément, ↑ sur le dernier (motif ARIA « bouton de menu »).
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !menuOpen) {
           e.preventDefault();
+          openFrom = e.key === 'ArrowUp' ? 'last' : 'first';
           menuOpen = true;
         }
       }}
-      onclick={() => (menuOpen = !menuOpen)}>{t.contentMenu} ▾</button
+      onclick={() => {
+        openFrom = 'first';
+        menuOpen = !menuOpen;
+      }}>{t.contentMenu} <span aria-hidden="true">▾</span></button
     >
     {#if menuOpen}
       <ul
         class="dropdown"
         role="menu"
         aria-label={t.contentMenu}
-        use:menuNav={{ onclose: closeMenu }}
+        use:menuNav={{ onclose: closeMenu, start: openFrom }}
       >
         <li role="none">
           <button type="button" role="menuitem" onclick={() => pick(onwatermark)}

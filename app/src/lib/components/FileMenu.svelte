@@ -33,6 +33,7 @@
   } = $props();
 
   let open = $state(false);
+  let openFrom = $state<'first' | 'last'>('first');
   let trigger: HTMLButtonElement | undefined = $state();
 
   function close(refocus: boolean) {
@@ -82,15 +83,25 @@
     title={t.fileMenu}
     bind:this={trigger}
     onkeydown={(e) => {
-      if (e.key === 'ArrowDown' && !open) {
+      // ↓ ouvre sur le premier élément, ↑ sur le dernier (motif ARIA « bouton de menu »).
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) {
         e.preventDefault();
+        openFrom = e.key === 'ArrowUp' ? 'last' : 'first';
         open = true;
       }
     }}
-    onclick={() => (open = !open)}>{t.fileMenu} ▾</button
+    onclick={() => {
+      openFrom = 'first';
+      open = !open;
+    }}>{t.fileMenu} <span aria-hidden="true">▾</span></button
   >
   {#if open}
-    <ul class="dropdown" role="menu" aria-label={t.fileMenu} use:menuNav={{ onclose: close }}>
+    <ul
+      class="dropdown"
+      role="menu"
+      aria-label={t.fileMenu}
+      use:menuNav={{ onclose: close, start: openFrom }}
+    >
       <li role="none">
         <button type="button" role="menuitem" onclick={() => pick(onopen)}
           >{t.openFile} <span class="key">{shortcutKeyFor('open')}</span></button
@@ -98,17 +109,21 @@
       </li>
       {#if settings.recent.length > 0}
         <li class="separator" role="separator"></li>
-        <li class="muted" role="none">{t.recentFiles}</li>
-        {#each settings.recent.slice(0, 8) as path (path)}
-          <li role="none">
-            <button
-              type="button"
-              role="menuitem"
-              title={path}
-              onclick={() => pick(() => onopenrecent(path))}>{path.split(/[\\/]/).pop()}</button
-            >
-          </li>
-        {/each}
+        <li role="none">
+          <ul class="group" role="group" aria-label={t.recentFiles}>
+            <li role="none"><span class="muted" aria-hidden="true">{t.recentFiles}</span></li>
+            {#each settings.recent.slice(0, 8) as path (path)}
+              <li role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  title={path}
+                  onclick={() => pick(() => onopenrecent(path))}>{path.split(/[\\/]/).pop()}</button
+                >
+              </li>
+            {/each}
+          </ul>
+        </li>
         <li role="none">
           <button type="button" role="menuitem" onclick={() => pick(clearRecent)}
             >{t.clearRecent}</button
@@ -132,6 +147,11 @@
 </div>
 
 <style>
+  .group {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
   .menu {
     position: relative;
   }
@@ -164,6 +184,7 @@
     margin: 0.25rem 0;
   }
   .muted {
+    display: block;
     color: var(--muted);
     padding: 0.2rem 0.55rem;
     font-size: 0.85rem;

@@ -7,7 +7,11 @@
 import { menuKey } from '$lib/logic/menu';
 
 /** Paramètres de `menuNav` : comment fermer le menu (et faut-il rendre le focus au bouton). */
-export type MenuNavOptions = { onclose: (refocus: boolean) => void };
+export type MenuNavOptions = {
+  onclose: (refocus: boolean) => void;
+  /** Élément focalisé à l'ouverture : le premier (↓, clic) ou le dernier (↑). */
+  start?: 'first' | 'last';
+};
 
 /**
  * Rend un menu ouvert utilisable au clavier : ↓ ↑ Début Fin déplacent le focus entre les
@@ -29,14 +33,25 @@ export function menuNav(node: HTMLElement, options: MenuNavOptions) {
   // À l'ouverture, le focus va au premier élément actif (motif ARIA « bouton de menu »).
   queueMicrotask(() => {
     const list = items();
-    const move = menuKey('Home', -1, enabled(list));
+    const move = menuKey(opts.start === 'last' ? 'End' : 'Home', -1, enabled(list));
     if (move && 'index' in move) list[move.index].focus();
   });
 
   function onkeydown(e: KeyboardEvent) {
     const list = items();
-    const move = menuKey(e.key, list.indexOf(document.activeElement as HTMLElement), enabled(list));
+    const labels = list.map((el) => el.textContent ?? '');
+    const move = menuKey(
+      e.key,
+      list.indexOf(document.activeElement as HTMLElement),
+      enabled(list),
+      labels,
+    );
     if (!move || 'activate' in move) return;
+    // Tab ferme le menu et laisse le navigateur déplacer le focus (C27).
+    if ('close' in move && !move.refocus) {
+      opts.onclose(false);
+      return;
+    }
     e.preventDefault();
     // Échap ferme le menu seulement : ni le dialogue ni la recherche en dessous.
     e.stopPropagation();

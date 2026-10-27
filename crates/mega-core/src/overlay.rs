@@ -72,7 +72,8 @@ pub enum Corner {
 /// Numérotation des pages (ou tout en-tête / pied de page à base de modèle).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PageNumbering {
-    /// Modèle : `{n}` numéro, `{total}` nombre de pages, `{titre}` titre du document.
+    /// Modèle : `{n}` numéro, `{total}` nombre de pages, `{titre}` (ou `{title}`) titre du
+    /// document.
     pub template: String,
     /// Position.
     pub corner: Corner,
@@ -260,6 +261,7 @@ impl Document {
                 .replace("{n}", &number.to_string())
                 .replace("{total}", &total.to_string())
                 .replace("{titre}", &title)
+                .replace("{title}", &title)
                 .trim()
                 .to_string();
             check_text(&text)?;

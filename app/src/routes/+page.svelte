@@ -139,6 +139,15 @@
     if (doc && !doc.formInfo) void ensureFormInfo(doc);
   });
 
+  // Changer de langue efface les messages affichés : ils resteraient dans l'ancienne (C25).
+  let shownLanguage = ui.language;
+  $effect(() => {
+    if (ui.language === shownLanguage) return;
+    shownLanguage = ui.language;
+    docsState.notice = null;
+    docsState.error = null;
+  });
+
   onMount(() => {
     let unlisten: (() => void) | undefined;
     let unlistenClose: (() => void) | undefined;

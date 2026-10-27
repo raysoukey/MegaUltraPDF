@@ -37,13 +37,33 @@
     if (f.password) return '••••';
     return f.value && f.value.trim() !== '' ? f.value : t.formEmpty;
   }
+  let cancelButton: HTMLButtonElement | undefined = $state();
+  // La confirmation remplace le bouton qui avait le focus : on le place sur « Annuler ».
+  $effect(() => {
+    if (confirming) cancelButton?.focus();
+  });
+
+  /** Va à la page du champ, puis y place le focus dès que le calque l'affiche. */
+  function focusField(f: FormField) {
+    goToPage(doc, f.page);
+    let tries = 0;
+    const attempt = () => {
+      const el = document.querySelector<HTMLElement>(
+        `.page[data-page="${f.page}"] .form-layer [data-field="${f.index}"]`,
+      );
+      if (el) el.focus();
+      else if (++tries < 30) requestAnimationFrame(attempt);
+    };
+    requestAnimationFrame(attempt);
+  }
+
   async function flatten() {
     confirming = false;
     await flattenForm(doc);
   }
 </script>
 
-<div class="panel" aria-label={t.formTab}>
+<div class="panel" role="region" aria-label={t.formTab}>
   {#if xfa}
     <p class="muted">{t.formXfa}</p>
   {/if}
@@ -56,7 +76,7 @@
   <ul role="list">
     {#each fields as f (`${f.page}-${f.index}`)}
       <li class:missing={missing.includes(f)}>
-        <button type="button" class="item" onclick={() => goToPage(doc, f.page)}>
+        <button type="button" class="item" onclick={() => focusField(f)}>
           <span class="name">{f.name}{f.required ? ' *' : ''}</span>
           <span class="value">{shown(f)}</span>
           <span class="meta"
@@ -69,7 +89,9 @@
   <div class="actions">
     {#if confirming}
       <span>{t.flattenConfirm}</span>
-      <button type="button" onclick={() => (confirming = false)}>{t.cancel}</button>
+      <button type="button" bind:this={cancelButton} onclick={() => (confirming = false)}
+        >{t.cancel}</button
+      >
       <button type="button" class="primary" onclick={flatten}>{t.flatten}</button>
     {:else}
       <button

@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Où rouvrir un fichier : à la position mémorisée ou avec le zoom par défaut (logique pure).
 
-/** Zoom de départ d'un document, tel que le stockent les préférences. */
-export type ZoomModeLike = 'custom' | 'fitWidth' | 'fitPage';
+import type { ZoomMode } from '$lib/state/settings.svelte';
 
 /** Page et zoom d'ouverture d'un document. */
 export interface StartPosition {
   page: number;
   scale: number;
-  zoomMode: ZoomModeLike;
+  zoomMode: ZoomMode;
 }
 
 /** La partie des préférences qui décide de la position d'ouverture. */
@@ -16,7 +15,7 @@ export interface PositionSettings {
   /** Dernier zoom utilisé (mis à jour à chaque zoom). */
   scale: number;
   /** Zoom choisi dans les préférences pour ouvrir un fichier inconnu. */
-  defaultZoomMode: ZoomModeLike;
+  defaultZoomMode: ZoomMode;
   restorePositions: boolean;
   positions: Record<string, StartPosition>;
 }

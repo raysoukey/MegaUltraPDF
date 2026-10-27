@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { tabNav } from '$lib/actions/tabNav';
   import { trapFocus } from '$lib/actions/trapFocus';
   import { pickDirectory, pickSaveFile } from '$lib/api';
   import { scopePages, type PageScope } from '$lib/logic/content';
@@ -84,7 +85,7 @@
       }}
     >
       <h2 id="export-title">{t.exportTitle}</h2>
-      <div class="tabs" role="tablist">
+      <div class="tabs" role="tablist" use:tabNav>
         <button
           type="button"
           role="tab"

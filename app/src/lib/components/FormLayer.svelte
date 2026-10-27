@@ -75,6 +75,8 @@
             value={f.value ?? ''}
             readonly={f.read_only || xfa}
             aria-label={f.name}
+            aria-required={f.required}
+            data-field={f.index}
             title={title(f)}
             style:font-size="{fontSize(f)}px"
             onchange={(e) => commitText(f, e)}
@@ -84,6 +86,8 @@
             value={f.value ?? ''}
             readonly={f.read_only || xfa}
             aria-label={f.name}
+            aria-required={f.required}
+            data-field={f.index}
             title={title(f)}
             style:font-size="{fontSize(f)}px"
             onchange={(e) => commitText(f, e)}
@@ -94,6 +98,8 @@
             checked={f.checked ?? false}
             disabled={f.read_only || xfa}
             aria-label={f.name}
+            aria-required={f.required}
+            data-field={f.index}
             title={title(f)}
             onchange={(e) => commitChecked(f, e)}
           />
@@ -104,6 +110,7 @@
             checked={f.checked ?? false}
             disabled={f.read_only || xfa}
             aria-label={f.name}
+            data-field={f.index}
             title={title(f)}
             onchange={() => commitRadio(f)}
           />
@@ -111,6 +118,8 @@
           <select
             disabled={f.read_only || xfa}
             aria-label={f.name}
+            aria-required={f.required}
+            data-field={f.index}
             title={title(f)}
             style:font-size="{fontSize(f)}px"
             onchange={(e) => commitSelect(f, e)}

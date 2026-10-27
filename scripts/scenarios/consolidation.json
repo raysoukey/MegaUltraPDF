@@ -93,5 +93,63 @@
   },
   {
     "wait": 400
+  },
+  {
+    "eval": "(() => { document.querySelector('.sidebar [role=tablist] [role=tab]').focus(); return true; })()",
+    "label": "focus sur l'onglet Vignettes"
+  },
+  {
+    "key": "ArrowRight"
+  },
+  {
+    "wait": 400
+  },
+  {
+    "assert": "(() => { const tab = document.querySelector('.sidebar [role=tab][aria-selected=true]'); return (tab && tab.textContent.trim() === 'Signets' && document.activeElement === tab) || 'ERREUR ' + (tab && tab.textContent); })()",
+    "label": "→ passe à l'onglet Signets (sélectionné et focalisé)"
+  },
+  {
+    "key": ",",
+    "ctrl": true
+  },
+  {
+    "wait": 600
+  },
+  {
+    "eval": "(() => { const s = document.querySelector('#pref-language'); s.value = 'en'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "interface en anglais"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 400
+  },
+  {
+    "assert": "(() => { const tab = document.querySelector('.sidebar [role=tab][aria-selected=true]'); return (tab && tab.textContent.trim() === 'Bookmarks') || 'ERREUR ' + (tab && tab.textContent); })()",
+    "label": "l'onglet Signets reste choisi après le changement de langue"
+  },
+  {
+    "key": ",",
+    "ctrl": true
+  },
+  {
+    "wait": 600
+  },
+  {
+    "eval": "(() => { const s = document.querySelector('#pref-language'); s.value = 'fr'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "retour au français"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 400
   }
 ]

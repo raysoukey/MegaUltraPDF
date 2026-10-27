@@ -25,10 +25,25 @@ describe('menuKey', () => {
     expect(menuKey('ArrowDown', 0, [false, false])).toBeNull();
   });
   it('closes on Escape and Tab, activates on Enter and Space, ignores the rest', () => {
-    expect(menuKey('Escape', 1, all)).toEqual({ close: true });
-    expect(menuKey('Tab', 1, all)).toEqual({ close: true });
+    expect(menuKey('Escape', 1, all)).toEqual({ close: true, refocus: true });
+    // Tab ferme et laisse le focus suivre son cours (pas de retour au bouton du menu).
+    expect(menuKey('Tab', 1, all)).toEqual({ close: true, refocus: false });
     expect(menuKey('Enter', 1, all)).toEqual({ activate: true });
     expect(menuKey(' ', 1, all)).toEqual({ activate: true });
     expect(menuKey('a', 1, all)).toBeNull();
+  });
+});
+
+describe('menuKey type-ahead (C27)', () => {
+  const labels = ['Exporter…', 'Imprimer…', 'Propriétés…', 'Protéger…'];
+  it('a letter moves to the next item starting with it, wrapping', () => {
+    expect(menuKey('p', 0, [true, true, true, true], labels)).toEqual({ index: 2 });
+    expect(menuKey('P', 2, [true, true, true, true], labels)).toEqual({ index: 3 });
+    expect(menuKey('p', 3, [true, true, true, true], labels)).toEqual({ index: 2 });
+    expect(menuKey('i', 3, [true, true, true, true], labels)).toEqual({ index: 1 });
+  });
+  it('skips disabled items and ignores letters without a match', () => {
+    expect(menuKey('p', 0, [true, true, false, true], labels)).toEqual({ index: 3 });
+    expect(menuKey('z', 0, [true, true, true, true], labels)).toBeNull();
   });
 });

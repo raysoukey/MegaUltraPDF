@@ -87,3 +87,10 @@ describe('poignée de redimensionnement', () => {
     expect(nearCorner(100, 60, c)).toBe(false);
   });
 });
+
+describe('fillTemplate (C26)', () => {
+  it('accepts {title} as well as {titre}', () => {
+    expect(fillTemplate('{n}/{total} {title}', 2, 9, 'Rapport')).toBe('2/9 Rapport');
+    expect(fillTemplate('{titre}', 1, 1, 'Rapport')).toBe('Rapport');
+  });
+});

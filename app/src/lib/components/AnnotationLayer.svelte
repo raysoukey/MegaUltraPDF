@@ -357,6 +357,11 @@
     cursor: crosshair;
     z-index: 3;
   }
+  /* Le calque laisse passer les clics ; seules les zones des annotations les prennent, et
+     elles doivent passer devant les liens (z-index 2) pour pouvoir être choisies (B8). */
+  .annotation-layer.selecting {
+    z-index: 3;
+  }
   .annotation-layer svg {
     display: block;
     overflow: visible;

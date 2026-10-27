@@ -55,7 +55,7 @@
   }
 </script>
 
-<div class="panel" aria-label={t.annotations}>
+<div class="panel" role="region" aria-label={t.annotations}>
   {#if loading && pages.length === 0}
     <p class="muted">{t.loading}</p>
   {:else if total === 0}
@@ -63,14 +63,13 @@
   {:else}
     {#each pages as group (group.page)}
       <h3>{t.annotationOnPage(group.page + 1)}</h3>
-      <ul role="listbox" aria-label={t.annotationOnPage(group.page + 1)}>
+      <ul aria-label={t.annotationOnPage(group.page + 1)}>
         {#each group.items as a (a.index)}
           <li class:selected={isSelected(group.page, a)}>
             <button
               type="button"
               class="item"
-              role="option"
-              aria-selected={isSelected(group.page, a)}
+              aria-current={isSelected(group.page, a) ? 'true' : undefined}
               onclick={() => pick(group.page, a)}
               ondblclick={() => onedit(a, group.page)}
             >

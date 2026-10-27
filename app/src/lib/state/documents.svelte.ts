@@ -138,6 +138,29 @@ export interface OpenDoc {
    * les change pas (elles portent sur le fichier) ; un enregistrement les fait relire.
    */
   signatures: SignatureInfo[] | null;
+  /**
+   * État de vue gardé avec le document (et non dans les composants) : il survit au
+   * remontage de l'interface lors d'un changement de langue (C32).
+   */
+  view: DocView;
+}
+
+/** Onglet de la barre latérale. */
+export type SidebarTab =
+  'thumbnails' | 'bookmarks' | 'annotations' | 'form' | 'attachments' | 'signatures';
+
+/** Ce que l'utilisateur a choisi dans la vue d'un document. */
+export interface DocView {
+  sidebarTab: SidebarTab;
+  /** Recherche sensible à la casse. */
+  matchCase: boolean;
+  /** Signets dépliés ou repliés, par clé de signet. */
+  outlineOpen: Record<string, boolean>;
+}
+
+/** Vue d'un document qui vient d'être ouvert. */
+function freshView(): DocView {
+  return { sidebarTab: 'thumbnails', matchCase: false, outlineOpen: {} };
 }
 
 export interface PasswordPrompt {
@@ -230,6 +253,7 @@ export async function openPath(path: string, password?: string): Promise<boolean
       security: null,
       attachments: null,
       signatures: null,
+      view: freshView(),
     });
     docsState.activeId = summary.id;
     docsState.passwordPrompt = null;
@@ -659,6 +683,7 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
       security: null,
       attachments: null,
       signatures: null,
+      view: freshView(),
     });
     docsState.activeId = summary.id;
     return true;

@@ -32,10 +32,23 @@ jobs:
         name: Créer (ou retrouver) la release brouillon
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           VERSION=$(node -p "require('./app/package.json').version")
           TAG="v$VERSION"
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
+          # Une étiquette poussée doit correspondre à la version du code construit.
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+            echo "::error::étiquette $GITHUB_REF_NAME différente de la version $TAG (app/package.json)"
+            exit 1
+          fi
+          # Jamais de modification d'une release déjà publiée (les binaires téléchargés
+          # par les utilisateurs ne doivent pas changer en silence).
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" != "true" ]; then
+              echo "::error::la release $TAG est déjà publiée : refus de la modifier"
+              exit 1
+            fi
+          else
             gh release create "$TAG" --draft --target "$GITHUB_SHA" \
               --title "MegaUltraPDF $TAG" \
               --notes "Paquets non signés : Windows affiche un avertissement SmartScreen (« Informations complémentaires » puis « Exécuter quand même ») et macOS demande une ouverture via clic droit > Ouvrir. Licences tierces : THIRD_PARTY_LICENSES.md."
@@ -127,4 +140,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "${{ needs.draft.outputs.tag }}" paquets/* --clobber
+        run: |
+          TAG="${{ needs.draft.outputs.tag }}"
+          if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" != "true" ]; then
+            echo "::error::la release $TAG n'est plus un brouillon : téléversement refusé"
+            exit 1
+          fi
+          gh release upload "$TAG" paquets/* --clobber

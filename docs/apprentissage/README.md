@@ -11,6 +11,7 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [Lot 3 — Annotations](lot-3.md)
 - [Lot 4 — Formulaires et signature visuelle](lot-4.md)
 - [Lot 5 — Édition de contenu](lot-5.md)
+- [Lot 6 — Export, impression, sécurité](lot-6.md)
 
 ## Fiches concept (`/concept <nom>` pour en ajouter une)
 
@@ -27,3 +28,5 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [`Drop` et ressources natives](concepts/drop-et-ressources-natives.md)
 - [Matrices et transformations : changer de repère](concepts/matrices-et-transformations.md)
 - [Flux de contenu PDF : lire et écrire le programme d'une page](concepts/flux-de-contenu-pdf.md)
+- [`Read`, `Write` et `Cursor` : des octets sans se soucier d'où ils viennent](concepts/read-write-et-cursor.md)
+- [Features Cargo et dépendances : n'embarquer que ce qui sert](concepts/features-cargo-et-dependances.md)

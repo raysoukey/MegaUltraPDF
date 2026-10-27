@@ -12,7 +12,7 @@ Légende : ✅ terminé · 🚧 en cours · ⬜ à venir. Démarrer un lot : `/l
 | 3 | Annotations | Surligner, souligner, barrer, note, texte libre, encre, formes, tampon ; propriétés ; panneau des annotations ; calque SVG | ✅ |
 | 4 | Formulaires et signature visuelle | Champs AcroForm en champs HTML, remplissage, enregistrement, aplatir ; image ou dessin de signature | ✅ |
 | 5 | Édition de contenu | Insérer texte et images, déplacer/supprimer des objets, retouche de texte « au mieux », caviardage réel (première passe `lopdf`), filigrane, numérotation, recadrage ; dettes `lopdf` du Lot 3 (`/InkList`, `/AP` des notes, élagage), pages tournées | ✅ |
-| 6 | Export, impression, sécurité | Export images/texte, impression via le WebView, métadonnées, chiffrement (`lopdf`), optimisation | 🚧 |
+| 6 | Export, impression, sécurité | Export images/texte, impression via le WebView, métadonnées, chiffrement (`lopdf`), optimisation | ✅ |
 | 7 | Finition et distribution | i18n FR/EN, accessibilité, préférences, aide, installeurs (bundler Tauri), options désactivées par défaut (OCR, signature cryptographique) | ⬜ |
 
 Référence complète : `docs/superpowers/specs/2026-10-26-megaultrapdf-design.md`, §5.

@@ -121,3 +121,11 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   PDFium seulement pour mesurer, avant la phase `lopdf` (verrou non réentrant). Une annotation
   fraîche est écrite **inline** dans `/Annots` par PDFium : les passes `lopdf` traitent les
   deux formes.
+- Sécurité et métadonnées (ADR-0011) : pdfium-render 0.9.4 ne connaît que les révisions de
+  sécurité 2 à 4 (`security_handler_revision()` échoue en AES-256 : inconnu = chiffré, lire
+  `/Encrypt /P` soi-même) ; sa balise « ModificationDate » n'existe pas (`/ModDate` lu par
+  lopdf) ; `lopdf` déchiffre en silence un mot de passe utilisateur vide (`was_encrypted()`
+  avant toute réécriture) ; chiffrer = `EncryptionVersion::V5` + `Aes256CryptFilter` + clé
+  `rand` ; les instantanés d'historique portent le mot de passe ; pièces jointes listées dans
+  l'ordre de l'arbre de noms (clés triées) ; `cargo clippy --all-targets` échoue tant qu'un
+  fichier de test ne compile pas : ne jamais enchaîner `task-done` après un gate qui a échoué.

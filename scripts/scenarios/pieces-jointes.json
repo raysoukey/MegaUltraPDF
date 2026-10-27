@@ -1,0 +1,18 @@
+[
+  { "wait": 1800 },
+  { "assert": "document.querySelectorAll('.page img').length >= 1", "label": "page rendue" },
+  { "click": "button[aria-label='Pièces jointes']" },
+  { "wait": 800 },
+  { "assert": "document.querySelectorAll('.attachments li').length === 2 && document.body.innerText.includes('2 pièces jointes')", "label": "deux pièces jointes listées" },
+  { "assert": "document.body.innerText.includes('données.csv') && document.body.innerText.includes('notes.txt')", "label": "noms affichés (UTF-16 décodé)" },
+  { "shot": "01-pieces-jointes.png" },
+  { "eval": "(() => { document.querySelectorAll('.attachments li button[aria-label=\"Retirer la pièce jointe\"]')[1].click(); return true; })()", "label": "retirer notes.txt" },
+  { "wait": 2000 },
+  { "assert": "document.querySelectorAll('.attachments li').length === 1 && !document.body.innerText.includes('notes.txt')", "label": "il reste données.csv" },
+  { "assert": "document.querySelector('button[title^=\"Annuler : Retirer la pièce jointe : notes.txt\"]') !== null", "label": "libellé « Retirer la pièce jointe : notes.txt »" },
+  { "key": "z", "ctrl": true },
+  { "wait": 2000 },
+  { "assert": "document.querySelectorAll('.attachments li').length === 2", "label": "Ctrl+Z : pièce jointe revenue" },
+  { "assert": "[...document.querySelectorAll('.attachments button')].some(b => b.textContent.trim().startsWith('Joindre'))", "label": "bouton « Joindre un fichier… » présent (dialogue natif : couvert par la CLI)" },
+  { "shot": "02-annule.png" }
+]

@@ -5,6 +5,8 @@
 import {
   annotations as fetchAnnotations,
   applyEdit as apiApplyEdit,
+  formFields as fetchFormFields,
+  formInfo as fetchFormInfo,
   closeDocument,
   extractPages,
   isAppError,
@@ -24,7 +26,11 @@ import {
   type AnnotationPatch,
   type DocumentSummary,
   type EditCommand,
+  type FieldValue,
+  type FormField,
+  type FormInfo,
   type NewAnnotation,
+  type SignatureSource,
   type Rect,
   type EditResult,
   type EditState,
@@ -79,6 +85,12 @@ export interface OpenDoc {
   annotations: Record<number, Annotation[]>;
   /** Annotation sélectionnée dans le calque ou le panneau. */
   selectedAnnotation: { page: number; index: number } | null;
+  /** Champs de formulaire par page (cache vidé à chaque édition). */
+  formFields: Record<number, FormField[]>;
+  /** Nature du formulaire (chargée à l'ouverture, rafraîchie après édition). */
+  formInfo: FormInfo | null;
+  /** Zone tracée pour une signature, en attente du dialogue. */
+  signatureRequest: { page: number; rect: Rect } | null;
 }
 
 export interface PasswordPrompt {
@@ -168,6 +180,9 @@ export async function openPath(path: string, password?: string): Promise<boolean
       selectedPages: [],
       annotations: {},
       selectedAnnotation: null,
+      formFields: {},
+      formInfo: null,
+      signatureRequest: null,
     });
     docsState.activeId = summary.id;
     docsState.passwordPrompt = null;
@@ -415,6 +430,8 @@ function afterEdit(doc: OpenDoc, result: EditResult): void {
   doc.selectedPages = doc.selectedPages.filter((p) => p < result.summary.page_count);
   doc.annotations = {};
   doc.selectedAnnotation = null;
+  doc.formFields = {};
+  doc.formInfo = null;
   doc.page = Math.min(doc.page, Math.max(0, result.summary.page_count - 1));
   nextGeneration(doc);
 }
@@ -531,6 +548,9 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
       selectedPages: [],
       annotations: {},
       selectedAnnotation: null,
+      formFields: {},
+      formInfo: null,
+      signatureRequest: null,
     });
     docsState.activeId = summary.id;
     return true;
@@ -639,6 +659,53 @@ export async function deleteSelectedAnnotation(doc: OpenDoc): Promise<void> {
   const sel = doc.selectedAnnotation;
   if (!sel) return;
   await deleteAnnotation(doc, sel.page, sel.index);
+}
+
+// ---- Formulaires (Lot 4) ----
+
+export async function ensureFormInfo(doc: OpenDoc): Promise<FormInfo | null> {
+  if (doc.formInfo) return doc.formInfo;
+  const info = await fetchFormInfo(doc.summary.id).catch(() => null);
+  doc.formInfo = info;
+  return info;
+}
+
+export async function ensureFormFields(doc: OpenDoc, page: number): Promise<FormField[]> {
+  const cached = doc.formFields[page];
+  if (cached) return cached;
+  const list = await fetchFormFields(doc.summary.id, page).catch(() => []);
+  doc.formFields[page] = list;
+  return list;
+}
+
+export async function setFieldValue(
+  doc: OpenDoc,
+  page: number,
+  index: number,
+  value: FieldValue,
+): Promise<boolean> {
+  return applyEdit(doc, { kind: 'set_field_value', page, index, value });
+}
+
+export async function flattenForm(doc: OpenDoc): Promise<boolean> {
+  return applyEdit(doc, { kind: 'flatten_form' });
+}
+
+export function requestSignature(doc: OpenDoc, page: number, rect: Rect): void {
+  doc.signatureRequest = { page, rect };
+}
+
+export function cancelSignature(doc: OpenDoc): void {
+  doc.signatureRequest = null;
+}
+
+export async function insertSignature(
+  doc: OpenDoc,
+  page: number,
+  rect: Rect,
+  source: SignatureSource,
+): Promise<boolean> {
+  return applyEdit(doc, { kind: 'insert_signature', page, rect, source });
 }
 
 export function setSelectedPages(doc: OpenDoc, pages: number[]): void {

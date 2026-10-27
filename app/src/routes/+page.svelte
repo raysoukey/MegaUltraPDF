@@ -5,6 +5,7 @@
   import type { Annotation } from '$lib/api';
   import AnnotationEditor from '$lib/components/AnnotationEditor.svelte';
   import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
+  import SignatureDialog from '$lib/components/SignatureDialog.svelte';
   import CloseConfirmDialog from '$lib/components/CloseConfirmDialog.svelte';
   import MergeDialog from '$lib/components/MergeDialog.svelte';
   import PasswordDialog from '$lib/components/PasswordDialog.svelte';
@@ -26,6 +27,7 @@
     deleteSelectedAnnotation,
     displayName,
     ensureAnnotations,
+    ensureFormInfo,
     docById,
     docsState,
     goToPage,
@@ -77,6 +79,11 @@
 
   $effect(() => {
     applyTheme(settings.theme);
+  });
+
+  // Nature du formulaire du document actif (onglet « Formulaire », bandeau XFA).
+  $effect(() => {
+    if (doc && !doc.formInfo) void ensureFormInfo(doc);
   });
 
   onMount(() => {
@@ -292,6 +299,9 @@
   {#if docsState.error}
     <p class="error" role="alert">{docsState.error}</p>
   {/if}
+  {#if doc?.formInfo?.form_type === 'xfa'}
+    <p class="error" role="status">{t.formXfa}</p>
+  {/if}
 
   <section class="body">
     {#if doc}
@@ -328,6 +338,9 @@
   {/if}
   {#if doc && splitOpen}
     <SplitDialog {doc} onclose={() => (splitOpen = false)} />
+  {/if}
+  {#if doc && doc.signatureRequest}
+    <SignatureDialog {doc} page={doc.signatureRequest.page} rect={doc.signatureRequest.rect} />
   {/if}
   {#if doc && editing}
     {#key editing.annotation.index}

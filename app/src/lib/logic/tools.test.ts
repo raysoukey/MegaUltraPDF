@@ -16,6 +16,7 @@ describe('isDrawingTool', () => {
     expect(isDrawingTool('rect')).toBe(true);
     expect(isDrawingTool('ink')).toBe(true);
     expect(isDrawingTool('note')).toBe(true);
+    expect(isDrawingTool('signature')).toBe(true);
     expect(isDrawingTool('select')).toBe(false);
     expect(isDrawingTool('highlight')).toBe(false);
   });
@@ -100,6 +101,11 @@ describe('finishDraft', () => {
       expect(s.geometry.rect.w).toBeGreaterThan(100);
       expect(s.geometry.rect.h).toBeGreaterThan(30);
     }
+  });
+  it('never turns a signature draft into an annotation (handled by the signature dialog)', () => {
+    let s = beginDraft('signature', { x: 0, y: 0 })!;
+    s = extendDraft(s, { x: 100, y: 40 });
+    expect(finishDraft(s, style, '', '')).toBeNull();
   });
   it('requires text for note, text and stamp drafts', () => {
     let t = beginDraft('text', { x: 10, y: 100 })!;

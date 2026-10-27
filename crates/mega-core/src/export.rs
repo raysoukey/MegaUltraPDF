@@ -171,9 +171,9 @@ fn encode(page: &crate::render::RenderedPage, format: ImageFormat) -> CoreResult
         ImageFormat::Png => page.to_png(),
         ImageFormat::Jpeg { quality } => {
             // Le JPEG n'a pas de canal alpha : on aplatit sur blanc.
-            let rgb: Vec<u8> = page
-                .rgba
-                .chunks_exact(4)
+            let (pixels, _rest) = page.rgba.as_chunks::<4>();
+            let rgb: Vec<u8> = pixels
+                .iter()
                 .flat_map(|px| {
                     let a = u16::from(px[3]);
                     let blend = |c: u8| ((u16::from(c) * a + 255 * (255 - a)) / 255) as u8;

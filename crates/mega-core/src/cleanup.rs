@@ -11,6 +11,8 @@
 //! (`m` déplacer, `l` ligne, `c` courbe, `re` rectangle…). `lopdf::content::Content::decode`
 //! le découpe en opérations ; on en déduit la liste de points attendue dans `/InkList`.
 
+use std::collections::BTreeSet;
+
 use lopdf::content::Content;
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
@@ -36,9 +38,10 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
         return Ok(bytes.to_vec());
     }
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
-    for page_id in pages {
-        clean_page_annotations(&mut doc, page_id)?;
+    for page_id in &pages {
+        clean_page_annotations(&mut doc, *page_id)?;
     }
+    drop_dangling_annotation_links(&mut doc, &pages)?;
     let pages_before = doc.get_pages().len();
     doc.prune_objects();
     doc.renumber_objects();
@@ -119,6 +122,135 @@ fn clean_page_annotations(doc: &mut Document, page_id: ObjectId) -> CoreResult<(
         }
     }
     Ok(())
+}
+
+/// Le tableau `/Annots` d'une page : où le réécrire (objet indirect, ou `None` s'il est
+/// direct dans la page) et ses éléments.
+fn page_annots(doc: &Document, page_id: ObjectId) -> Option<(Option<ObjectId>, Vec<Object>)> {
+    match doc.get_dictionary(page_id).ok()?.get(b"Annots").ok()? {
+        Object::Reference(id) => Some((
+            Some(*id),
+            doc.get_object(*id).ok()?.as_array().ok()?.clone(),
+        )),
+        Object::Array(array) => Some((None, array.clone())),
+        _ => None,
+    }
+}
+
+/// Une annotation retirée de la page (supprimée, caviardée) ne doit pas survivre dans le
+/// fichier par un objet qui la cite encore (B20, Lot 9) : son **popup** (dont `/Parent` la
+/// vise et qui, lui, peut être hors de la zone caviardée), une **réponse** (`/IRT`), ou
+/// l'**arbre de structure** d'un PDF balisé (marqueur `/OBJR`). On retire ces liens ; l'élagage
+/// qui suit supprime alors la note, son `/Contents` compris.
+///
+/// \[Apprentissage\] L'élagage garde tout objet **atteignable** depuis la racine : supprimer
+/// une note de `/Annots` ne suffit pas tant qu'un autre objet la référence encore.
+fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> CoreResult<()> {
+    // Annotations encore listées sur une page (par référence).
+    let listed = |doc: &Document| -> BTreeSet<ObjectId> {
+        pages
+            .iter()
+            .filter_map(|page| page_annots(doc, *page))
+            .flat_map(|(_, items)| items)
+            .filter_map(|item| item.as_reference().ok())
+            .collect()
+    };
+    let before = listed(doc);
+    // 1. Popups dont le parent n'est plus listé : retirés de `/Annots`.
+    for page_id in pages {
+        let Some((array_id, items)) = page_annots(doc, *page_id) else {
+            continue;
+        };
+        let orphan = |item: &Object| {
+            let dict = match item {
+                Object::Reference(id) => doc.get_dictionary(*id).ok(),
+                Object::Dictionary(dict) => Some(dict),
+                _ => None,
+            };
+            dict.is_some_and(|d| {
+                subtype(d) == b"Popup"
+                    && d.get(b"Parent")
+                        .and_then(Object::as_reference)
+                        .is_ok_and(|parent| !before.contains(&parent))
+            })
+        };
+        let kept: Vec<Object> = items.iter().filter(|i| !orphan(i)).cloned().collect();
+        if kept.len() == items.len() {
+            continue;
+        }
+        match array_id {
+            Some(id) => {
+                doc.objects.insert(id, Object::Array(kept));
+            }
+            None => doc
+                .get_dictionary_mut(*page_id)
+                .map_err(structure)?
+                .set("Annots", Object::Array(kept)),
+        }
+    }
+    // 2. Annotations qui ne sont plus listées nulle part.
+    let alive = listed(doc);
+    let dead: BTreeSet<ObjectId> = doc
+        .objects
+        .iter()
+        .filter(|(id, object)| {
+            !alive.contains(id)
+                && object.as_dict().is_ok_and(|d| {
+                    d.has(b"Rect")
+                        && (d.get(b"Type").and_then(Object::as_name).ok()
+                            == Some(b"Annot".as_slice())
+                            || d.has(b"Subtype"))
+                })
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    if dead.is_empty() {
+        return Ok(());
+    }
+    // 3. Liens `/IRT` et `/OBJR` vers elles : retirés partout, y compris dans les objets directs.
+    for object in doc.objects.values_mut() {
+        scrub_links(object, &dead, 0);
+    }
+    Ok(())
+}
+
+/// Retire de `object` (et de ce qu'il contient directement) les clés `/IRT` et les `/Obj` de
+/// marqueurs `/OBJR` qui visent une annotation de `dead`. Profondeur bornée : un objet direct
+/// ne peut pas se contenir lui-même, mais un fichier hostile peut l'imbriquer très loin.
+fn scrub_links(object: &mut Object, dead: &BTreeSet<ObjectId>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    let targets_dead = |o: Option<&Object>| {
+        o.and_then(|o| o.as_reference().ok())
+            .is_some_and(|id| dead.contains(&id))
+    };
+    match object {
+        Object::Dictionary(dict) => {
+            if targets_dead(dict.get(b"IRT").ok()) {
+                dict.remove(b"IRT");
+            }
+            let is_objr =
+                dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"OBJR".as_slice());
+            if is_objr && targets_dead(dict.get(b"Obj").ok()) {
+                dict.remove(b"Obj");
+            }
+            for (_, value) in dict.iter_mut() {
+                scrub_links(value, dead, depth + 1);
+            }
+        }
+        Object::Array(items) => {
+            for item in items.iter_mut() {
+                scrub_links(item, dead, depth + 1);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, value) in stream.dict.iter_mut() {
+                scrub_links(value, dead, depth + 1);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn subtype(dict: &Dictionary) -> Vec<u8> {

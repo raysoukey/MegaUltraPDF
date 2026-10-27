@@ -248,3 +248,66 @@ fn redaction_refuses_form_fields() {
     assert_eq!(doc.form_fields(0).unwrap().len(), before);
     assert!(!doc.is_modified());
 }
+
+// --- Lot 9 (B20) : une note retirée ne survit ni par son popup, ni par une réponse, ni par
+// l'arbre de structure.
+
+/// Vrai si `needle` apparaît dans une chaîne ou un flux (décodé) de l'objet.
+fn object_contains(object: &lopdf::Object, needle: &[u8]) -> bool {
+    use lopdf::Object;
+    let has = |bytes: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    match object {
+        Object::String(bytes, _) => has(bytes),
+        Object::Array(items) => items.iter().any(|o| object_contains(o, needle)),
+        Object::Dictionary(dict) => dict.iter().any(|(_, o)| object_contains(o, needle)),
+        Object::Stream(stream) => {
+            stream.dict.iter().any(|(_, o)| object_contains(o, needle))
+                || has(&stream
+                    .decompressed_content()
+                    .unwrap_or_else(|_| stream.content.clone()))
+        }
+        _ => false,
+    }
+}
+
+fn saved_contains(doc: &mut Document, needle: &str) -> bool {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("enregistre.pdf");
+    doc.save_as(&path).unwrap();
+    let saved = lopdf::Document::load_mem(&std::fs::read(&path).unwrap()).unwrap();
+    saved
+        .objects
+        .values()
+        .any(|o| object_contains(o, needle.as_bytes()))
+}
+
+#[test]
+fn redacted_note_does_not_survive_through_its_popup() {
+    let mut doc = Document::from_bytes(
+        mega_core::testing::note_with_popup_pdf("NoteTresSecrete"),
+        None,
+    )
+    .unwrap();
+    assert!(saved_contains(&mut doc, "NoteTresSecrete"), "témoin");
+    let mut doc = Document::from_bytes(
+        mega_core::testing::note_with_popup_pdf("NoteTresSecrete"),
+        None,
+    )
+    .unwrap();
+    doc.redact(0, rect(40.0, 40.0, 40.0, 40.0)).unwrap();
+    assert!(!saved_contains(&mut doc, "NoteTresSecrete"));
+    // La réponse, hors zone, reste.
+    assert!(saved_contains(&mut doc, "Reponse"));
+}
+
+#[test]
+fn deleting_a_note_also_drops_it_from_the_saved_file() {
+    let mut doc = Document::from_bytes(
+        mega_core::testing::note_with_popup_pdf("NoteTresSecrete"),
+        None,
+    )
+    .unwrap();
+    doc.apply(&EditCommand::DeleteAnnotation { page: 0, index: 0 })
+        .unwrap();
+    assert!(!saved_contains(&mut doc, "NoteTresSecrete"));
+}

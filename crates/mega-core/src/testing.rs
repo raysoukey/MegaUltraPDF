@@ -745,6 +745,34 @@ pub fn certified_pdf(p: i64) -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Une note qui contient `secret`, avec son popup **hors** de la note, une réponse (`/IRT`)
+/// ailleurs sur la page, et un arbre de structure (PDF balisé) qui la cite par `/OBJR`.
+/// Caviarder ou supprimer la note doit faire disparaître `secret` du fichier enregistré.
+pub fn note_with_popup_pdf(secret: &str) -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R /MarkInfo << /Marked true >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Annots [4 0 R 5 0 R 6 0 R] \
+         /StructParents 0 >>"
+            .to_string(),
+        format!(
+            "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents ({secret}) \
+             /T (Auteur) /Popup 5 0 R /P 3 0 R /StructParent 1 >>"
+        ),
+        "<< /Type /Annot /Subtype /Popup /Rect [300 300 450 400] /Parent 4 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /Contents (Reponse) \
+         /IRT 4 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /StructTreeRoot /K 8 0 R >>".to_string(),
+        "<< /Type /StructElem /S /Annot /P 7 0 R /Pg 3 0 R \
+         /K << /Type /OBJR /Obj 4 0 R /Pg 3 0 R >> >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,
 /// avec une table `xref` aux positions exactes.
 fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {

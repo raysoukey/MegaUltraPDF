@@ -6,7 +6,7 @@
 //! sérialise les appels derrière un verrou, car PDFium elle-même n'est pas conçue
 //! pour être appelée depuis plusieurs threads à la fois.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use pdfium_render::prelude::{PdfDocument, Pdfium};
@@ -16,23 +16,68 @@ use crate::error::{CoreError, CoreResult};
 /// Variable d'environnement permettant d'imposer le dossier contenant PDFium.
 pub const LIBRARY_DIR_ENV: &str = "MEGA_PDFIUM_DIR";
 
+/// Dossier de PDFium indiqué par l'application (ressources d'un paquet installé).
+static APP_LIBRARY_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// L'instance PDFium (ou la liste des dossiers vainement fouillés), créée au premier usage.
+static PDFIUM: OnceLock<Result<Pdfium, Vec<PathBuf>>> = OnceLock::new();
+
+/// Indique à `mega-core` où trouver PDFium avant son premier usage : l'application Tauri y
+/// passe le dossier de ses ressources, qui n'est pas celui de l'exécutable sur macOS
+/// (`Contents/Resources`) ni sous Linux (`/usr/lib/<app>`).
+///
+/// Retourne `false` si un dossier a déjà été réglé ou si PDFium est déjà chargée : le réglage
+/// arriverait trop tard pour servir.
+///
+/// \[Apprentissage\] Même outil qu'`engine::pdfium` (fiche `oncelock`) : `OnceLock::set` ne
+/// réussit qu'une fois. C'est une alternative sûre à `std::env::set_var`, devenue `unsafe` en
+/// Rust 2024 parce qu'un autre thread pourrait lire l'environnement au même moment.
+pub fn set_library_dir(dir: PathBuf) -> bool {
+    if PDFIUM.get().is_some() {
+        return false;
+    }
+    APP_LIBRARY_DIR.set(dir).is_ok()
+}
+
+/// Le dossier réglé par [`set_library_dir`], s'il y en a un.
+pub fn app_library_dir() -> Option<&'static Path> {
+    APP_LIBRARY_DIR.get().map(PathBuf::as_path)
+}
+
+/// Ordre de recherche, en fonction pure (testable) : dossier de l'application, variable
+/// d'environnement, dossier de l'exécutable, puis dossier `vendor/` du développement.
+fn search_paths_with(
+    app_dir: Option<&Path>,
+    env_dir: Option<PathBuf>,
+    exe_dir: Option<PathBuf>,
+    dev_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    app_dir
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(env_dir)
+        .chain(exe_dir)
+        .chain(dev_dir)
+        .collect()
+}
+
 /// Dossiers où chercher la bibliothèque PDFium, dans l'ordre.
 ///
-/// 1. le dossier donné par `MEGA_PDFIUM_DIR` ;
-/// 2. le dossier de l'exécutable (cas d'une application installée) ;
-/// 3. `vendor/pdfium/<triple>/` à la racine du workspace (cas de `cargo run` et
+/// 1. le dossier réglé par l'application ([`set_library_dir`], ressources du paquet) ;
+/// 2. le dossier donné par `MEGA_PDFIUM_DIR` ;
+/// 3. le dossier de l'exécutable (version portable) ;
+/// 4. `vendor/pdfium/<triple>/` à la racine du workspace (cas de `cargo run` et
 ///    `cargo test`, rempli par `cargo xtask fetch-pdfium`).
 pub fn library_search_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if let Some(dir) = std::env::var_os(LIBRARY_DIR_ENV) {
-        paths.push(PathBuf::from(dir));
-    }
-    if let Some(exe_dir) = std::env::current_exe()
+    let env_dir = std::env::var_os(LIBRARY_DIR_ENV).map(PathBuf::from);
+    let exe_dir = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(PathBuf::from))
-    {
-        paths.push(exe_dir);
-    }
+        .and_then(|p| p.parent().map(PathBuf::from));
+    search_paths_with(app_library_dir(), env_dir, exe_dir, dev_library_dir())
+}
+
+/// `vendor/pdfium/<triple>/` du workspace, en développement seulement.
+fn dev_library_dir() -> Option<PathBuf> {
     // En développement seulement : `vendor/pdfium/<triple>/` à la racine du workspace
     // (`CARGO_MANIFEST_DIR` vaut `<racine>/crates/mega-core`, on remonte de deux niveaux).
     // \[Apprentissage\] `cfg!(debug_assertions)` vaut `true` en profil `dev`, `false` en
@@ -42,14 +87,15 @@ pub fn library_search_paths() -> Vec<PathBuf> {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..");
-        paths.push(
+        Some(
             workspace_root
                 .join("vendor")
                 .join("pdfium")
                 .join(env!("MEGA_TARGET_TRIPLE")),
-        );
+        )
+    } else {
+        None
     }
-    paths
 }
 
 /// Retourne l'instance PDFium partagée, en la créant au premier appel.
@@ -70,7 +116,6 @@ pub fn library_search_paths() -> Vec<PathBuf> {
 /// `OnceLock` garantit donc en plus l'unicité de l'appel d'initialisation de PDFium, qui
 /// n'est pas réentrant. Fiche : `docs/apprentissage/concepts/oncelock.md`.
 pub(crate) fn pdfium() -> CoreResult<&'static Pdfium> {
-    static PDFIUM: OnceLock<Result<Pdfium, Vec<PathBuf>>> = OnceLock::new();
     match PDFIUM.get_or_init(load) {
         Ok(p) => Ok(p),
         Err(searched) => Err(CoreError::LibraryNotFound {
@@ -136,6 +181,36 @@ fn load() -> Result<Pdfium, Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_dir_set_by_the_app_comes_first() {
+        let paths = search_paths_with(
+            Some(Path::new("ressources")),
+            Some(PathBuf::from("env")),
+            Some(PathBuf::from("exe")),
+            Some(PathBuf::from("vendor")),
+        );
+        let names: Vec<String> = paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["ressources", "env", "exe", "vendor"]);
+        let without_app = search_paths_with(None, None, Some(PathBuf::from("exe")), None);
+        assert_eq!(without_app, vec![PathBuf::from("exe")]);
+    }
+
+    #[test]
+    fn set_library_dir_is_write_once() {
+        // Un dossier inoffensif : celui où PDFium est déjà cherché en développement.
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let first = set_library_dir(dir.clone());
+        // Le premier appel peut échouer si un autre test a déjà chargé PDFium ; le second
+        // échoue toujours.
+        assert!(!set_library_dir(PathBuf::from("ailleurs")));
+        if first {
+            assert_eq!(app_library_dir(), Some(dir.as_path()));
+        }
+    }
 
     #[test]
     #[cfg(debug_assertions)]

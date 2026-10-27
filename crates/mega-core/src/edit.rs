@@ -217,6 +217,14 @@ pub enum EditCommand {
         /// Position dans la liste des pièces jointes.
         index: u16,
     },
+    /// Reconnaît le texte d'une page numérisée (Tesseract) et l'ajoute en couche invisible.
+    #[cfg(feature = "ocr")]
+    OcrPage {
+        /// Index de la page (à partir de 0).
+        page: u16,
+        /// Langues Tesseract (`eng`, `fra`…), dans l'ordre de préférence.
+        languages: Vec<String>,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -297,6 +305,10 @@ impl Command for EditCommand {
                     .unwrap_or_else(|| path.clone())
             ),
             EditCommand::DeleteAttachment { .. } => "Retirer la pièce jointe".to_string(),
+            #[cfg(feature = "ocr")]
+            EditCommand::OcrPage { page, .. } => {
+                format!("Reconnaître le texte (page {})", u32::from(*page) + 1)
+            }
         }
     }
 
@@ -409,6 +421,8 @@ impl Command for EditCommand {
             }
             EditCommand::AddAttachment { path } => doc.add_attachment(Path::new(path)),
             EditCommand::DeleteAttachment { index } => doc.delete_attachment(*index),
+            #[cfg(feature = "ocr")]
+            EditCommand::OcrPage { page, languages } => doc.ocr_page(*page, languages),
         }
     }
 }

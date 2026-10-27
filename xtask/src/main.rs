@@ -110,6 +110,10 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let xfa = dir.join("xfa.pdf");
     std::fs::write(&xfa, mega_core::testing::xfa_pdf())?;
     println!("écrit : {}", xfa.display());
+    // Page numérisée (image seule, aucun texte) pour l'OCR (Lot 8).
+    let scanned = dir.join("scanned.pdf");
+    std::fs::write(&scanned, mega_core::testing::scanned_pdf())?;
+    println!("écrit : {}", scanned.display());
     let rotated = dir.join("rotated.pdf");
     std::fs::write(&rotated, mega_core::testing::rotated_pdf())?;
     println!("écrit : {}", rotated.display());

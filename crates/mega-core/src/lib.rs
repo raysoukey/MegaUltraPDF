@@ -48,6 +48,8 @@ pub mod export;
 pub mod forms;
 pub mod geometry;
 pub mod links;
+#[cfg(feature = "ocr")]
+pub mod ocr;
 pub mod optimize;
 pub mod outline;
 pub mod overlay;

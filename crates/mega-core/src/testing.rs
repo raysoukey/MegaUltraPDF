@@ -790,3 +790,97 @@ fn try_sample_pdf(pages: u16, title: &str) -> Result<Vec<u8>, PdfiumError> {
     }
     doc.save_to_bytes()
 }
+
+/// Un PDF « numérisé » de 3 pages A4 : chaque page n'est qu'une image en niveaux de gris
+/// (rendu à 150 dpi de [`sample_pdf`], « Page N »), sans aucun texte extractible. Sert aux
+/// tests de l'OCR (Lot 8) et à `fixtures/scanned.pdf`.
+///
+/// # Panics
+/// Si PDFium n'est pas disponible : ce générateur n'est utilisé que par des tests.
+pub fn scanned_pdf() -> Vec<u8> {
+    use lopdf::{Dictionary, Document as LoDocument, Object, Stream};
+
+    let source =
+        crate::Document::from_bytes(sample_pdf(3, "numérisé"), None).expect("PDF d'exemple valide");
+    let mut doc = LoDocument::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    let mut kids = Vec::new();
+    for index in 0..source.page_count() {
+        let size = source.page_size(index).expect("taille de page");
+        let image = source
+            .render_page(index, 150.0 / 72.0)
+            .expect("rendu de la page");
+        // RGBA → gris (moyenne pondérée de la luminance).
+        let gray: Vec<u8> = image
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|px| {
+                let l =
+                    0.299 * f32::from(px[0]) + 0.587 * f32::from(px[1]) + 0.114 * f32::from(px[2]);
+                l.round().clamp(0.0, 255.0) as u8
+            })
+            .collect();
+        let mut picture = Stream::new(
+            Dictionary::from_iter(vec![
+                ("Type", Object::Name(b"XObject".to_vec())),
+                ("Subtype", Object::Name(b"Image".to_vec())),
+                ("Width", Object::Integer(i64::from(image.width_px))),
+                ("Height", Object::Integer(i64::from(image.height_px))),
+                ("ColorSpace", Object::Name(b"DeviceGray".to_vec())),
+                ("BitsPerComponent", Object::Integer(8)),
+            ]),
+            gray,
+        );
+        picture.compress().expect("compression de l'image");
+        let picture_id = doc.add_object(picture);
+        let content = format!(
+            "q\n{} 0 0 {} 0 0 cm\n/Im0 Do\nQ\n",
+            size.width_pt, size.height_pt
+        );
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
+        let page_id = doc.add_object(Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Page".to_vec())),
+            ("Parent", Object::Reference(pages_id)),
+            (
+                "MediaBox",
+                Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(0),
+                    Object::Real(size.width_pt),
+                    Object::Real(size.height_pt),
+                ]),
+            ),
+            (
+                "Resources",
+                Object::Dictionary(Dictionary::from_iter(vec![(
+                    "XObject",
+                    Object::Dictionary(Dictionary::from_iter(vec![(
+                        "Im0",
+                        Object::Reference(picture_id),
+                    )])),
+                )])),
+            ),
+            ("Contents", Object::Reference(content_id)),
+        ]));
+        kids.push(Object::Reference(page_id));
+    }
+    let count = kids.len() as i64;
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Pages".to_vec())),
+            ("Kids", Object::Array(kids)),
+            ("Count", Object::Integer(count)),
+        ])),
+    );
+    let catalog_id = doc.add_object(Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Catalog".to_vec())),
+        ("Pages", Object::Reference(pages_id)),
+    ]));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation");
+    out
+}

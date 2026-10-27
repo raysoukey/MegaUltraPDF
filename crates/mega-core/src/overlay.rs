@@ -373,13 +373,16 @@ impl Document {
         // phase `lopdf`). Largeur à 100 pt, proportionnelle à la taille.
         let mut ops = String::new();
         for w in words {
-            let text = win_ansi_lossy(w.text.trim());
+            // Une espace finale est écrite (elle sépare les mots d'une ligne pour l'extraction
+            // et la recherche) mais n'entre pas dans la largeur à remplir.
+            let text = win_ansi_lossy(w.text.trim_start());
+            let word = text.trim_end();
             let r = w.rect;
-            if text.is_empty() || !(r.w > 0.0 && r.h > 0.0) || !(r.x.is_finite() && r.y.is_finite())
+            if word.is_empty() || !(r.w > 0.0 && r.h > 0.0) || !(r.x.is_finite() && r.y.is_finite())
             {
                 continue;
             }
-            let width_100 = self.measure_width(&text, 100.0)?;
+            let width_100 = self.measure_width(word, 100.0)?;
             if width_100 <= 0.0 {
                 continue;
             }

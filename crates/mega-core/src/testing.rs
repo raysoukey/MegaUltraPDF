@@ -196,6 +196,95 @@ pub fn bezier_ink_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Un formulaire AcroForm écrit à la main (`/NeedAppearances true`) : texte « nom » (vide),
+/// texte multiligne « adresse », case « ok », groupe radio « choix » (A coché, B), combo
+/// « ville » (Paris, Lyon ; Paris choisi), texte lecture seule « ref », texte requis « email ».
+pub fn form_pdf() -> Vec<u8> {
+    form_pdf_impl(true)
+}
+
+/// Le même formulaire **sans** `/NeedAppearances` (PDFium ne régénère alors pas les
+/// apparences après une écriture de valeur).
+pub fn form_pdf_without_need_appearances() -> Vec<u8> {
+    form_pdf_impl(false)
+}
+
+fn form_pdf_impl(need_appearances: bool) -> Vec<u8> {
+    let na = if need_appearances {
+        " /NeedAppearances true"
+    } else {
+        ""
+    };
+    let on = "0 g 2 w 4 10 m 8 5 l 16 16 l S";
+    let off = "0 G 1 w 0.5 0.5 19 19 re S";
+    let labels = "BT /Helv 12 Tf 72 730 Td (Nom :) Tj 0 -110 Td (Adresse :) Tj ET";
+    let text = |name: &str, value: &str, rect: &str, flags: u32| {
+        format!(
+            "<< /Type /Annot /Subtype /Widget /FT /Tx /T ({name}) /V ({value}) /Rect [{rect}] \
+             /F 4 /Ff {flags} /DA (/Helv 12 Tf 0 g) /MK << /BC [0 0 0] >> >>"
+        )
+    };
+    let objects = vec![
+        format!(
+            "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R 6 0 R 7 0 R 8 0 R 11 0 R 12 0 R 13 0 R]{na} \
+             /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> >> >>"
+        ),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 4 0 R >> >> \
+         /Contents 16 0 R /Annots [5 0 R 6 0 R 7 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        text("nom", "", "72 700 300 724", 0),
+        text("adresse", "", "72 620 300 680", 4096),
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /T (ok) /V /Off /AS /Off /Rect [72 580 92 600] /F 4 \
+         /AP << /N << /Yes 14 0 R /Off 15 0 R >> >> >>"
+            .to_string(),
+        "<< /FT /Btn /Ff 32768 /T (choix) /V /A /Kids [9 0 R 10 0 R] >>".to_string(),
+        "<< /Type /Annot /Subtype /Widget /Parent 8 0 R /AS /A /Rect [72 540 92 560] /F 4 \
+         /AP << /N << /A 14 0 R /Off 15 0 R >> >> >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Widget /Parent 8 0 R /AS /Off /Rect [100 540 120 560] /F 4 \
+         /AP << /N << /B 14 0 R /Off 15 0 R >> >> >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (ville) /Opt [(Paris) (Lyon)] /V (Paris) \
+         /Rect [72 500 200 524] /F 4 /DA (/Helv 12 Tf 0 g) >>"
+            .to_string(),
+        text("ref", "REF-001", "72 460 200 484", 1),
+        text("email", "", "72 420 300 444", 2),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length {} >>\nstream\n{on}\nendstream",
+            on.len()
+        ),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length {} >>\nstream\n{off}\nendstream",
+            off.len()
+        ),
+        format!(
+            "<< /Length {} >>\nstream\n{labels}\nendstream",
+            labels.len()
+        ),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Formulaire")
+        ),
+    )
+}
+
+/// Une page avec un `/AcroForm` portant une clé `/XFA` : formulaire XFA (non pris en charge).
+pub fn xfa_pdf() -> Vec<u8> {
+    let xfa = "<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\"/>";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [] /XFA 4 0 R >> >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        format!("<< /Length {} >>\nstream\n{xfa}\nendstream", xfa.len()),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un PDF **hostile** : signet dont `/Next` pointe sur lui-même, et signet dont le premier
 /// enfant est lui-même. Sert à vérifier que la lecture des signets est bornée.
 pub fn cyclic_outline_pdf() -> Vec<u8> {

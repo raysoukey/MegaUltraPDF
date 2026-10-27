@@ -40,6 +40,7 @@ pub mod document;
 pub mod edit;
 pub mod engine;
 pub mod error;
+pub mod forms;
 pub mod geometry;
 pub mod links;
 pub mod outline;
@@ -58,6 +59,7 @@ pub use annotations::{
 pub use document::{Document, PageSize};
 pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};
+pub use forms::{FieldKind, FieldOption, FormField, FormInfo, FormType};
 pub use geometry::{Rect, Rotation};
 pub use links::{LinkTarget, PageLink};
 pub use outline::OutlineNode;

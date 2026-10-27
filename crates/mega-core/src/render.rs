@@ -53,6 +53,17 @@ impl Document {
         scale: f32,
         rotation: Rotation,
     ) -> CoreResult<RenderedPage> {
+        self.render_page_opts(index, scale, rotation, true)
+    }
+
+    /// Rendu complet, avec ou sans annotations et champs (export « page nue »).
+    pub(crate) fn render_page_opts(
+        &self,
+        index: u16,
+        scale: f32,
+        rotation: Rotation,
+        annotations: bool,
+    ) -> CoreResult<RenderedPage> {
         let _guard = crate::engine::guard();
         let page = self
             .inner()
@@ -79,9 +90,9 @@ impl Document {
         let config = PdfRenderConfig::new()
             .set_target_size(width_px, height_px)
             .rotate(rotation.to_pdfium(), false)
-            .render_form_data(true)
+            .render_form_data(annotations)
             // Dessine les annotations (drapeau FPDF_ANNOT) : surlignages, formes, tampons…
-            .render_annotations(true);
+            .render_annotations(annotations);
         let bitmap = page.render_with_config(&config)?;
         Ok(RenderedPage {
             width_px: bitmap.width() as u32,

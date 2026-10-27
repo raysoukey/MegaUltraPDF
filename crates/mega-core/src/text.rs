@@ -63,6 +63,16 @@ impl Document {
         Ok(boxes)
     }
 
+    /// Tout le texte de la page `index`, dans l'ordre de lecture de PDFium (export texte).
+    pub fn page_text(&self, index: u16) -> CoreResult<String> {
+        let _guard = engine::guard();
+        let page = self
+            .inner()
+            .pages()
+            .get(self.checked_index_unlocked(index)?)?;
+        Ok(page.text()?.all())
+    }
+
     /// Cherche `query` dans la page `index`. Une requête vide ne trouve rien.
     pub fn search_page(
         &self,

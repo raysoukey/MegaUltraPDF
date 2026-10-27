@@ -146,4 +146,9 @@ jobs:
             echo "::error::la release $TAG n'est plus un brouillon : téléversement refusé"
             exit 1
           fi
-          gh release upload "$TAG" paquets/* --clobber
+          # download-artifact recrée l'arborescence (target/release/bundle/…) : on téléverse
+          # chaque fichier trouvé, pas les dossiers.
+          mapfile -t files < <(find paquets -type f)
+          if [ ${#files[@]} -eq 0 ]; then echo "::error::aucun paquet à téléverser"; exit 1; fi
+          printf '%s\n' "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber

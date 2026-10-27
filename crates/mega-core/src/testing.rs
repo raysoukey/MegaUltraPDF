@@ -773,6 +773,37 @@ pub fn note_with_popup_pdf(secret: &str) -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Un texte « Secret » dans une police **sous-ensemble** (`/BaseFont /ABCDEF+Helvetica`) :
+/// seuls les glyphes utilisés seraient incorporés, un caractère nouveau s'afficherait mal.
+pub fn subset_font_pdf() -> Vec<u8> {
+    let content = "BT /F1 24 Tf 72 700 Td (Secret) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R \
+         /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /ABCDEF+Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Une page sans `/MediaBox` propre : elle **hérite** celle de `/Pages`, qui ne commence pas
+/// à l'origine (`[100 100 500 700]`).
+pub fn inherited_media_box_pdf() -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [100 100 500 700] >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R >>".to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,
 /// avec une table `xref` aux positions exactes.
 fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {

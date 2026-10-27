@@ -816,6 +816,18 @@ export async function deleteSelectedObject(doc: OpenDoc): Promise<void> {
 }
 
 /** Déplace un objet de `(dx, dy)` points affichés ; son index ne change pas. */
+/** Redimensionne l'objet `index` de la page `page` dans `rect` (points affichés). */
+export async function resizeObject(
+  doc: OpenDoc,
+  page: number,
+  index: number,
+  rect: Rect,
+): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'resize_object', page, index, rect });
+  if (ok) doc.selectedObject = { page, index };
+  return ok;
+}
+
 export async function moveObject(
   doc: OpenDoc,
   page: number,

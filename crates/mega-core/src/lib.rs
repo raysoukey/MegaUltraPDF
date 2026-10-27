@@ -47,6 +47,7 @@ pub mod edit;
 pub mod engine;
 pub mod error;
 pub mod export;
+pub(crate) mod fonts;
 pub mod forms;
 pub mod geometry;
 pub mod links;

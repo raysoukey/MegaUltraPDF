@@ -134,6 +134,15 @@ pub enum EditCommand {
         /// Déplacement vertical (points, positif vers le haut).
         dy: f32,
     },
+    /// Redimensionne un objet du contenu pour qu'il occupe `rect` (points, espace affiché).
+    ResizeObject {
+        /// Page.
+        page: u16,
+        /// Position de l'objet.
+        index: u16,
+        /// Nouvelle emprise.
+        rect: Rect,
+    },
     /// Remplace le texte d'un objet texte.
     SetObjectText {
         /// Page.
@@ -286,6 +295,7 @@ impl Command for EditCommand {
             EditCommand::InsertSignature { .. } => "Apposer une signature".to_string(),
             EditCommand::DeleteObject { .. } => "Supprimer : Objet".to_string(),
             EditCommand::MoveObject { .. } => "Déplacer : Objet".to_string(),
+            EditCommand::ResizeObject { .. } => "Redimensionner : Objet".to_string(),
             EditCommand::SetObjectText { .. } => "Modifier le texte".to_string(),
             EditCommand::InsertText { .. } => "Insérer du texte".to_string(),
             EditCommand::InsertImage { .. } => "Insérer une image".to_string(),
@@ -340,6 +350,9 @@ impl Command for EditCommand {
                 .map(|f| format!("Remplir : {}", f.name)),
             EditCommand::DeleteObject { page, index } => object("Supprimer", *page, *index),
             EditCommand::MoveObject { page, index, .. } => object("Déplacer", *page, *index),
+            EditCommand::ResizeObject { page, index, .. } => {
+                object("Redimensionner", *page, *index)
+            }
             EditCommand::Watermark { spec } => Some(pages_label("Filigraner", &spec.pages, doc)),
             EditCommand::PageNumbers { spec } => Some(pages_label("Numéroter", &spec.pages, doc)),
             EditCommand::CropPages { spec } => Some(pages_label("Recadrer", &spec.pages, doc)),
@@ -391,6 +404,9 @@ impl Command for EditCommand {
                 dx,
                 dy,
             } => doc.move_object(*page, *index, *dx, *dy),
+            EditCommand::ResizeObject { page, index, rect } => {
+                doc.resize_object(*page, *index, *rect)
+            }
             EditCommand::SetObjectText { page, index, text } => {
                 doc.set_object_text(*page, *index, text)
             }

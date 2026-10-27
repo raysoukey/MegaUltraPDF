@@ -17,7 +17,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lopdf::{Dictionary, Document as LoDocument, Object, ObjectId, Stream};
-use pdfium_render::prelude::{PdfPageObjectCommon, PdfPageTextObject, PdfPoints};
 use serde::{Deserialize, Serialize};
 
 use crate::annotations::{Color, to_pdf_rect};
@@ -25,6 +24,7 @@ use crate::content::win_ansi_byte;
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
+use crate::fonts;
 use crate::geometry::{PageFrame, Rect, Rotation};
 
 /// Longueur maximale d'un texte de filigrane ou de numérotation (après substitution).
@@ -195,14 +195,6 @@ impl Document {
         }
     }
 
-    /// Largeur d'un texte en Helvetica à `size` points, mesurée par PDFium.
-    fn measure_width(&mut self, text: &str, size: f32) -> CoreResult<f32> {
-        let _guard = engine::guard();
-        let font = self.inner_mut().fonts_mut().helvetica();
-        let object = PdfPageTextObject::new(self.inner(), text, font, PdfPoints::new(size))?;
-        Ok(object.bounds()?.width().value)
-    }
-
     /// Pose un filigrane sur les pages visées.
     pub fn add_watermark(&mut self, w: &Watermark) -> CoreResult<()> {
         self.mark_changed();
@@ -219,7 +211,7 @@ impl Document {
             return Err(invalid("angle invalide"));
         }
         let pages = self.target_pages(&w.pages)?;
-        let width = self.measure_width(&w.text, w.size)?;
+        let width = text_width(&w.text, w.size);
         let (sin, cos) = w.angle_deg.to_radians().sin_cos();
         let mut placements = Vec::with_capacity(pages.len());
         for page in pages {
@@ -271,7 +263,7 @@ impl Document {
                 .trim()
                 .to_string();
             check_text(&text)?;
-            let width = self.measure_width(&text, n.size)?;
+            let width = text_width(&text, n.size);
             let frame = self.page_frame(page)?;
             let (pw, ph) = frame.displayed_size();
             let x = match n.corner {
@@ -310,6 +302,19 @@ impl Document {
             return Err(invalid("les marges doivent être positives ou nulles"));
         }
         let pages = self.target_pages(&c.pages)?;
+        // PDFium ne lit que la `/MediaBox` propre à la page : l'héritée vient de `lopdf`,
+        // lue avant la phase PDFium (le verrou n'est pas réentrant).
+        let inherited: BTreeMap<u16, Rect> = {
+            let doc = LoDocument::load_mem(&self.to_bytes()?).map_err(structure)?;
+            let ids = doc.get_pages();
+            pages
+                .iter()
+                .filter_map(|p| {
+                    let id = ids.get(&(u32::from(*p) + 1))?;
+                    Some((*p, inherited_media_box(&doc, *id)?))
+                })
+                .collect()
+        };
         {
             let _guard = engine::guard();
             for page in pages {
@@ -320,11 +325,17 @@ impl Document {
                     .map(Rotation::from_pdfium)
                     .unwrap_or_default()
                     .degrees();
-                let media = pdf_page
-                    .boundaries()
-                    .media()
-                    .map(|b| Rect::from_pdf(b.bounds))
-                    .unwrap_or_else(|_| {
+                let media = inherited
+                    .get(&page)
+                    .copied()
+                    .or_else(|| {
+                        pdf_page
+                            .boundaries()
+                            .media()
+                            .ok()
+                            .map(|b| Rect::from_pdf(b.bounds))
+                    })
+                    .unwrap_or_else(|| {
                         let (w, h) = (pdf_page.width().value, pdf_page.height().value);
                         let (w, h) = if rotate % 180 == 90 { (h, w) } else { (w, h) };
                         Rect {
@@ -369,8 +380,8 @@ impl Document {
             return Err(CoreError::PageOutOfRange { index: page, count });
         }
         let frame = self.page_frame(page)?;
-        // Mesures PDFium d'abord (le verrou n'est pas réentrant : rien de PDFium pendant la
-        // phase `lopdf`). Largeur à 100 pt, proportionnelle à la taille.
+        // Largeur d'**avance** à 100 pt (table AFM, proportionnelle à la taille) : c'est elle
+        // que `Tz` étire, et que les lecteurs utilisent pour placer la sélection.
         let mut ops = String::new();
         for w in words {
             // Une espace finale est écrite (elle sépare les mots d'une ligne pour l'extraction
@@ -382,7 +393,7 @@ impl Document {
             {
                 continue;
             }
-            let width_100 = self.measure_width(word, 100.0)?;
+            let width_100 = text_width(word, 100.0);
             if width_100 <= 0.0 {
                 continue;
             }
@@ -418,6 +429,7 @@ impl Document {
             ("BaseFont", Object::Name(b"Helvetica".to_vec())),
             ("Encoding", Object::Name(b"WinAnsiEncoding".to_vec())),
         ])));
+        add_widths(&mut doc, font_id);
         ensure_resources(&mut doc, page_id, &[("Font", FONT_KEY, font_id)])?;
         let m = frame.matrix_to_user_space();
         let cm = if frame.is_identity() {
@@ -458,6 +470,7 @@ impl Document {
             ("BaseFont", Object::Name(b"Helvetica".to_vec())),
             ("Encoding", Object::Name(b"WinAnsiEncoding".to_vec())),
         ])));
+        add_widths(&mut doc, font_id);
         let mut states: BTreeMap<u32, (String, ObjectId)> = BTreeMap::new();
         let mut wrapped: BTreeSet<ObjectId> = BTreeSet::new();
         for p in placements {
@@ -516,6 +529,49 @@ impl Document {
         doc.save_to(&mut out)?;
         self.reload_from_bytes(out)
     }
+}
+
+/// Largeur d'avance d'un texte en Helvetica WinAnsi à `size` points (table AFM : la même
+/// pour tous les lecteurs, sans passer par PDFium). Un caractère hors WinAnsi compte comme `?`.
+fn text_width(text: &str, size: f32) -> f32 {
+    let bytes: Vec<u8> = text
+        .chars()
+        .map(|c| win_ansi_byte(c).unwrap_or(b'?'))
+        .collect();
+    fonts::text_width(&bytes, size)
+}
+
+/// Ajoute `/FirstChar`, `/LastChar` et `/Widths` à la police `font_id` (B24, Lot 9).
+fn add_widths(doc: &mut LoDocument, font_id: ObjectId) {
+    if let Ok(font) = doc.get_dictionary_mut(font_id) {
+        for (key, value) in fonts::widths_entries() {
+            font.set(key, value);
+        }
+    }
+}
+
+/// `/MediaBox` de la page `page_id`, héritée d'un ancêtre `/Pages` si besoin (§7.7.3.4).
+fn inherited_media_box(doc: &LoDocument, page_id: ObjectId) -> Option<Rect> {
+    let mut node = doc.get_dictionary(page_id).ok()?;
+    for _ in 0..32 {
+        if let Ok(value) = node.get(b"MediaBox")
+            && let Ok((_, Object::Array(items))) = doc.dereference(value)
+        {
+            let n: Vec<f32> = items.iter().filter_map(|o| o.as_float().ok()).collect();
+            let [x0, y0, x1, y1] = n[..] else {
+                return None;
+            };
+            return Some(Rect {
+                x: x0.min(x1),
+                y: y0.min(y1),
+                w: (x1 - x0).abs(),
+                h: (y1 - y0).abs(),
+            });
+        }
+        let parent = node.get(b"Parent").and_then(Object::as_reference).ok()?;
+        node = doc.get_dictionary(parent).ok()?;
+    }
+    None
 }
 
 /// Ressources héritées d'un ancêtre `/Pages` (copie), ou un dictionnaire vide.

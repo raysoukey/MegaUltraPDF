@@ -94,6 +94,7 @@ export type EditCommand =
   | { kind: 'insert_signature'; page: number; rect: Rect; source: SignatureSource }
   | { kind: 'delete_object'; page: number; index: number }
   | { kind: 'move_object'; page: number; index: number; dx: number; dy: number }
+  | { kind: 'resize_object'; page: number; index: number; rect: Rect }
   | { kind: 'set_object_text'; page: number; index: number; text: string }
   | { kind: 'insert_text'; page: number; at: [number, number]; text: string; style: TextStyle }
   | { kind: 'insert_image'; page: number; rect: Rect; path: string }

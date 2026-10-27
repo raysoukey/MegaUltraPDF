@@ -4,6 +4,7 @@
 // Aucune décision sur le document : tout cela ne fait que préparer une commande Rust.
 
 import type { PageObject, PageSize, Rect } from '$lib/api';
+import type { CssRect } from './geometry';
 import type { Pt, Tool } from './tools';
 
 /** Les outils qui agissent sur le contenu de la page (calque `ObjectLayer`). */
@@ -39,6 +40,23 @@ export function rectFromCorners(a: Pt, b: Pt): Rect {
     w: Math.abs(a.x - b.x),
     h: Math.abs(a.y - b.y),
   };
+}
+
+/**
+ * Coin de `b` le plus éloigné de `p` : pendant un redimensionnement, il reste fixe et le
+ * rectangle va de lui au pointeur (quelle que soit la rotation de l'affichage).
+ */
+export function oppositeCorner(b: Rect, p: Pt): Pt {
+  const x = Math.abs(p.x - b.x) > Math.abs(p.x - (b.x + b.w)) ? b.x : b.x + b.w;
+  const y = Math.abs(p.y - b.y) > Math.abs(p.y - (b.y + b.h)) ? b.y : b.y + b.h;
+  return { x, y };
+}
+
+/** Vrai si le point écran (`px`, `py`, relatif au calque) touche la poignée de `c`. */
+export function nearCorner(px: number, py: number, c: CssRect, tolerance = 8): boolean {
+  return (
+    Math.abs(px - (c.left + c.width)) <= tolerance && Math.abs(py - (c.top + c.height)) <= tolerance
+  );
 }
 
 /** Aperçu d'un modèle de numérotation (la substitution réelle est faite en Rust). */

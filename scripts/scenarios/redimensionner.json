@@ -1,0 +1,79 @@
+[
+  {
+    "wait": 1800
+  },
+  {
+    "click": "button[aria-label='Ajuster à la page']"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "click": "button[aria-label='Objets de la page']"
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "assert": "document.querySelector('.page[data-page=\"0\"] rect.object[data-kind=\"image\"]') !== null",
+    "label": "l'image numérisée est un objet de la page 1"
+  },
+  {
+    "eval": "(() => { const r = document.querySelector('.page[data-page=\"0\"] rect.object[data-kind=\"image\"]'); window.__w = Number(r.getAttribute('width')); return true; })()",
+    "label": "largeur mémorisée"
+  },
+  {
+    "drag": ".page[data-page='0'] rect.object[data-kind='image']",
+    "from": [
+      60,
+      60
+    ],
+    "to": [
+      60,
+      60
+    ]
+  },
+  {
+    "wait": 600
+  },
+  {
+    "assert": "document.querySelector('.page[data-page=\"0\"] rect.handle') !== null",
+    "label": "image sélectionnée : poignée affichée"
+  },
+  {
+    "drag": ".page[data-page='0'] rect.handle",
+    "from": [
+      2,
+      2
+    ],
+    "to": [
+      -120,
+      -160
+    ]
+  },
+  {
+    "wait": 2500
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Redimensionner : Image\"]') !== null",
+    "label": "libellé « Redimensionner : Image »"
+  },
+  {
+    "assert": "(() => { const r = document.querySelector('.page[data-page=\"0\"] rect.object[data-kind=\"image\"]'); return window.__w - Number(r.getAttribute('width')) > 80; })()",
+    "label": "l'image est plus étroite"
+  },
+  {
+    "shot": "01-redimensionnee.png"
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "assert": "(() => { const r = document.querySelector('.page[data-page=\"0\"] rect.object[data-kind=\"image\"]'); return Math.abs(window.__w - Number(r.getAttribute('width'))) < 2; })()",
+    "label": "Ctrl+Z rend la taille d'origine"
+  }
+]

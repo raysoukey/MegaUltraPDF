@@ -334,3 +334,78 @@ fn non_win_ansi_letters_become_question_marks() {
     let text = doc.page_text(0).unwrap();
     assert!(text.contains("?mega") && text.contains("été"), "{text:?}");
 }
+
+// --- Lot 9 : largeurs Helvetica (B24, C46) et MediaBox héritée (B29) --------------------
+
+/// Les polices Helvetica que nous ajoutons déclarent leurs largeurs (`/Widths`).
+#[test]
+fn overlay_fonts_declare_widths() {
+    // Page vierge : les seules polices sont les nôtres. Un document par chemin d'écriture
+    // (filigrane, couche invisible).
+    let mut marked = Document::from_bytes(blank_pdf(300.0, 300.0), None).unwrap();
+    marked.add_watermark(&watermark("BROUILLON", None)).unwrap();
+    let mut ocr = Document::from_bytes(blank_pdf(300.0, 300.0), None).unwrap();
+    ocr.add_invisible_words(0, &[word("Mot", 20.0, 100.0, 60.0, 20.0)])
+        .unwrap();
+    for doc in [marked, ocr] {
+        let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+        let fonts: Vec<&lopdf::Dictionary> = saved
+            .objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .filter(|d| {
+                d.get(b"BaseFont").ok() == Some(&lopdf::Object::Name(b"Helvetica".to_vec()))
+            })
+            .collect();
+        assert_eq!(fonts.len(), 1);
+        let font = fonts[0];
+        assert_eq!(font.get(b"FirstChar").unwrap().as_i64().unwrap(), 32);
+        assert_eq!(font.get(b"LastChar").unwrap().as_i64().unwrap(), 255);
+        assert_eq!(font.get(b"Widths").unwrap().as_array().unwrap().len(), 224);
+    }
+}
+
+/// Un mot OCR est étiré (`Tz`) d'après la **largeur d'avance** d'Helvetica, pas d'après
+/// l'encre : « I » (278/1000) à 20 pt dans 50 pt de large → Tz = 100 × 50 / 5,56.
+#[test]
+fn ocr_word_box_matches_advance_width() {
+    let mut doc = Document::from_bytes(blank_pdf(300.0, 300.0), None).unwrap();
+    doc.add_invisible_words(0, &[word("I", 20.0, 100.0, 50.0, 20.0)])
+        .unwrap();
+    let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    let page = *saved.get_pages().get(&1).unwrap();
+    let content = lopdf::content::Content::decode(&saved.get_page_content(page)).unwrap();
+    let tz = content
+        .operations
+        .iter()
+        .find(|op| op.operator == "Tz")
+        .and_then(|op| op.operands[0].as_float().ok())
+        .unwrap();
+    assert!((tz - 899.28).abs() < 1.0, "Tz = {tz}");
+}
+
+/// Une page qui hérite sa `/MediaBox` de `/Pages` (hors de l'origine) se recadre à partir
+/// de cette boîte.
+#[test]
+fn inherited_media_box_is_read() {
+    let mut doc =
+        Document::from_bytes(mega_core::testing::inherited_media_box_pdf(), None).unwrap();
+    doc.crop_pages(&CropSpec {
+        margins: [10.0, 10.0, 10.0, 10.0],
+        pages: None,
+    })
+    .unwrap();
+    let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    let page = *saved.get_pages().get(&1).unwrap();
+    let crop: Vec<f32> = saved
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"CropBox")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_float().unwrap())
+        .collect();
+    assert_eq!(crop, vec![110.0, 110.0, 490.0, 690.0]);
+}

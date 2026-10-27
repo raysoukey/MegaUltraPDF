@@ -125,13 +125,6 @@
     applyTheme(settings.theme);
   });
 
-  // Après un changement de langue, l'interface est remontée : chaque visionneuse doit revenir
-  // à la page où l'on était (et non en haut du document).
-  $effect(() => {
-    void ui.language;
-    for (const d of docsState.docs) d.scrollRequest = d.page;
-  });
-
   // Nature du formulaire du document actif (onglet « Formulaire », bandeau XFA).
   $effect(() => {
     if (doc && !doc.formInfo) void ensureFormInfo(doc);

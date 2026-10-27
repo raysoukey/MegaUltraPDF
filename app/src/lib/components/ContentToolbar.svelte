@@ -36,7 +36,8 @@
   );
 
   function pick(action: () => void) {
-    menuOpen = false;
+    // Focus rendu au bouton avant l'ouverture du dialogue (origine retenue par trapFocus).
+    closeMenu(true);
     action();
   }
 </script>

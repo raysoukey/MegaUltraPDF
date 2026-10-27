@@ -37,7 +37,9 @@
     if (refocus) trigger?.focus();
   }
   function pick(action: () => void) {
-    open = false;
+    // Le focus revient au bouton **avant** d'ouvrir le dialogue : c'est lui que le piège de
+    // focus du dialogue retiendra comme élément d'origine (l'élément du menu va disparaître).
+    close(true);
     action();
   }
   const entries = $derived<

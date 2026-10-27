@@ -69,7 +69,14 @@
       {/each}
     </div>
 
-    <div class="panel" id="help-panel" role="tabpanel" aria-labelledby="help-tab-{tab}">
+    <!-- tabindex="0" : le panneau défile au clavier (motif ARIA « onglets »). -->
+    <div
+      class="panel"
+      id="help-panel"
+      role="tabpanel"
+      tabindex="0"
+      aria-labelledby="help-tab-{tab}"
+    >
       {#if tab === 'start'}
         {#each t.helpSections as section (section.title)}
           <h3>{section.title}</h3>

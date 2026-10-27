@@ -63,7 +63,9 @@
               disabled={i === files.length - 1}
               onclick={() => move(i, 1)}>▼</button
             >
-            <button type="button" title={t.remove} onclick={() => remove(i)}>×</button>
+            <button type="button" aria-label={t.remove} title={t.remove} onclick={() => remove(i)}
+              >×</button
+            >
           </li>
         {/each}
       </ol>

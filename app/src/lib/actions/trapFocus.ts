@@ -8,7 +8,7 @@
 import { nextFocus } from '$lib/logic/focus';
 
 const FOCUSABLE =
-  'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
+  'a[href], button, input:not([type="hidden"]), select, textarea, summary, [tabindex]:not([tabindex="-1"])';
 
 /**
  * Un élément peut-il recevoir le focus par Tab maintenant ? Ni désactivé, ni caché, ni
@@ -27,6 +27,10 @@ function usable(el: HTMLElement): boolean {
  */
 export function trapFocus(node: HTMLElement) {
   const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // Le dialogue lui-même peut recevoir le focus (sans entrer dans l'ordre de tabulation) : un
+  // clic sur du texte du dialogue y laisse le focus au lieu de le renvoyer au document, et
+  // Tab / Maj+Tab restent donc piégés.
+  if (!node.hasAttribute('tabindex')) node.tabIndex = -1;
 
   function elements(): HTMLElement[] {
     return Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE));
@@ -39,10 +43,7 @@ export function trapFocus(node: HTMLElement) {
     const list = elements();
     const i = nextFocus(-1, list.map(usable), false);
     if (i >= 0) list[i].focus();
-    else {
-      node.tabIndex = -1;
-      node.focus();
-    }
+    else node.focus();
   });
 
   function onkeydown(e: KeyboardEvent) {

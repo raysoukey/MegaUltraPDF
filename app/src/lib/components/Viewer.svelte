@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { fitPageScale, fitWidthScale, nextZoom } from '$lib/logic/zoom';
   import { pageAtScroll, pageLayout, visiblePages } from '$lib/logic/virtualization';
   import {
@@ -13,6 +14,13 @@
   import PageView from './PageView.svelte';
 
   let { doc }: { doc: OpenDoc } = $props();
+
+  // Une visionneuse neuve (changement d'onglet, remontage au changement de langue) reprend à
+  // la page courante du document au lieu du haut du fichier.
+  // [Apprentissage] Pas de `$effect` ici : un effet relit toutes les valeurs réactives qu'il
+  // touche (`doc.page` change à chaque défilement) et se relancerait sans cesse. `onMount`
+  // ne s'exécute qu'une fois, à la création du composant.
+  onMount(() => goToPage(doc, doc.page));
 
   const GAP = 16;
   const GUTTER = 24;

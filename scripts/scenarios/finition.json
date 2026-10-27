@@ -3,6 +3,28 @@
     "wait": 1800
   },
   {
+    "eval": "(() => { const v = document.querySelector('.viewer'); const p = document.querySelectorAll('.page')[1]; const top = p.getBoundingClientRect().top - v.getBoundingClientRect().top + v.scrollTop; window.__target = Math.round(top + p.offsetHeight / 2); v.scrollTop = window.__target; return window.__target; })()",
+    "label": "défilement : milieu de la page 2"
+  },
+  {
+    "wait": 700
+  },
+  {
+    "assert": "Math.abs(document.querySelector('.viewer').scrollTop - window.__target) < 3 || 'ERREUR saut vers ' + document.querySelector('.viewer').scrollTop",
+    "label": "le défilement continu ne saute pas au haut de la page (régression revue Lot 7)"
+  },
+  {
+    "eval": "(() => { const v = document.querySelector('.viewer'); window.__target = window.__target - 200; v.scrollTop = window.__target; return window.__target; })()",
+    "label": "défilement vers le haut"
+  },
+  {
+    "wait": 700
+  },
+  {
+    "assert": "Math.abs(document.querySelector('.viewer').scrollTop - window.__target) < 3 || 'ERREUR saut vers ' + document.querySelector('.viewer').scrollTop",
+    "label": "remonter ne saute pas"
+  },
+  {
     "eval": "(() => { document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]').focus(); return document.activeElement.title; })()",
     "label": "focus sur le bouton Fichier"
   },
@@ -121,6 +143,12 @@
     "shot": "01-clavier.png"
   },
   {
+    "key": "End"
+  },
+  {
+    "wait": 700
+  },
+  {
     "key": ",",
     "ctrl": true
   },
@@ -145,6 +173,10 @@
   {
     "assert": "document.querySelectorAll('.tabs-bar [role=tab], nav [role=tab], [role=tablist] [role=tab]').length >= 1 && document.querySelectorAll('.page img').length >= 1",
     "label": "le document reste ouvert"
+  },
+  {
+    "assert": "document.querySelector('.toolbar form input').value === '3' || 'ERREUR page ' + document.querySelector('.toolbar form input').value",
+    "label": "la page courante est conservée après la bascule de langue"
   },
   {
     "assert": "document.querySelector('[role=dialog] h2').textContent === 'Preferences'",
@@ -216,6 +248,39 @@
     "shot": "03-a-propos.png"
   },
   {
+    "eval": "(() => { document.getElementById('help-tab-about').focus(); return true; })()",
+    "label": "focus sur l'onglet À propos"
+  },
+  {
+    "key": "Tab"
+  },
+  {
+    "key": "Tab"
+  },
+  {
+    "assert": "document.activeElement.tagName === 'SUMMARY' || 'ERREUR focus sur ' + document.activeElement.tagName + ' ' + document.activeElement.textContent.slice(0, 30)",
+    "label": "Tab atteint la liste des licences (summary)"
+  },
+  {
+    "drag": "#help-title",
+    "from": [
+      4,
+      4
+    ],
+    "to": [
+      4,
+      4
+    ]
+  },
+  {
+    "key": "Tab",
+    "shift": true
+  },
+  {
+    "assert": "document.querySelector('[role=dialog]').contains(document.activeElement) || 'ERREUR focus hors du dialogue : ' + document.activeElement.tagName",
+    "label": "après un clic sur du texte, Maj+Tab reste dans le dialogue"
+  },
+  {
     "key": "F1"
   },
   {
@@ -224,5 +289,38 @@
   {
     "assert": "!document.querySelector('[role=dialog]')",
     "label": "F1 referme l'aide"
+  },
+  {
+    "eval": "(() => { document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]').focus(); return true; })()",
+    "label": "focus sur Fichier (fin)"
+  },
+  {
+    "key": "ArrowDown"
+  },
+  {
+    "wait": 250
+  },
+  {
+    "key": "End"
+  },
+  {
+    "key": "Enter"
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent === 'Préférences'",
+    "label": "Préférences ouvertes depuis le menu au clavier"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "document.activeElement.title === 'Fichier' || 'ERREUR focus sur ' + document.activeElement.tagName",
+    "label": "fermer un dialogue ouvert depuis le menu rend le focus au bouton du menu"
   }
 ]

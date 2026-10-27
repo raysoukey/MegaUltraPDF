@@ -168,6 +168,27 @@ impl Document {
     }
 }
 
+/// Instant Unix d'une date PDF `D:AAAAMMJJHHmmSS` (le décalage horaire est appliqué s'il est
+/// écrit, ignoré s'il est mal formé).
+pub(crate) fn parse_pdf_date(text: &str) -> Option<i64> {
+    let digits = text.strip_prefix("D:").unwrap_or(text);
+    let base = digits.get(..14)?;
+    let naive = chrono::NaiveDateTime::parse_from_str(base, "%Y%m%d%H%M%S").ok()?;
+    let mut secs = naive.and_utc().timestamp();
+    let rest = &digits[14..];
+    let sign = match rest.chars().next() {
+        Some('+') => -1,
+        Some('-') => 1,
+        _ => 0,
+    };
+    if sign != 0 {
+        let hh: i64 = rest.get(1..3).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let mm: i64 = rest.get(4..6).and_then(|s| s.parse().ok()).unwrap_or(0);
+        secs += sign * (hh * 3600 + mm * 60);
+    }
+    Some(secs)
+}
+
 /// Chaîne de texte PDF (§7.9.2.2) : UTF-16BE si elle commence par le BOM `FE FF`, sinon
 /// PDFDocEncoding, dont les 256 valeurs coïncident avec Latin-1 pour tout ce qu'une date ou
 /// un titre ordinaire contient.

@@ -40,6 +40,7 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
     for page_id in &pages {
         clean_page_annotations(&mut doc, *page_id)?;
+        identify_annotations(&mut doc, *page_id)?;
     }
     drop_dangling_annotation_links(&mut doc, &pages)?;
     let pages_before = doc.get_pages().len();
@@ -135,6 +136,69 @@ fn page_annots(doc: &Document, page_id: ObjectId) -> Option<(Option<ObjectId>, V
         Object::Array(array) => Some((None, array.clone())),
         _ => None,
     }
+}
+
+/// Donne à chaque annotation de la page qui n'en a pas un `/NM` (nom unique sur la page)
+/// et un `/P` (sa page) : clés facultatives que PDFium n'écrit pas, mais dont se servent les
+/// lecteurs qui synchronisent, fusionnent ou répondent à des commentaires (§12.5.2, B3).
+fn identify_annotations(doc: &mut Document, page_id: ObjectId) -> CoreResult<()> {
+    let Some((array_id, mut items)) = page_annots(doc, page_id) else {
+        return Ok(());
+    };
+    let mut names: BTreeSet<Vec<u8>> = items
+        .iter()
+        .filter_map(|item| match item {
+            Object::Reference(id) => doc.get_dictionary(*id).ok(),
+            Object::Dictionary(dict) => Some(dict),
+            _ => None,
+        })
+        .filter_map(|d| {
+            d.get(b"NM")
+                .and_then(Object::as_str)
+                .ok()
+                .map(<[u8]>::to_vec)
+        })
+        .collect();
+    let mut inline_changed = false;
+    for (i, item) in items.iter_mut().enumerate() {
+        let mut fresh = || {
+            let mut name = format!("mega-{}-{}-{i}", page_id.0, page_id.1).into_bytes();
+            while names.contains(&name) {
+                name.push(b'x');
+            }
+            names.insert(name.clone());
+            Object::String(name, lopdf::StringFormat::Literal)
+        };
+        let dict = match item {
+            Object::Reference(id) => match doc.get_dictionary_mut(*id) {
+                Ok(dict) => dict,
+                Err(_) => continue,
+            },
+            Object::Dictionary(dict) => {
+                inline_changed |= !dict.has(b"NM") || !dict.has(b"P");
+                dict
+            }
+            _ => continue,
+        };
+        if !dict.has(b"NM") {
+            dict.set("NM", fresh());
+        }
+        if !dict.has(b"P") {
+            dict.set("P", Object::Reference(page_id));
+        }
+    }
+    if inline_changed {
+        match array_id {
+            Some(id) => {
+                doc.objects.insert(id, Object::Array(items));
+            }
+            None => doc
+                .get_dictionary_mut(page_id)
+                .map_err(structure)?
+                .set("Annots", Object::Array(items)),
+        }
+    }
+    Ok(())
 }
 
 /// Une annotation retirée de la page (supprimée, caviardée) ne doit pas survivre dans le
@@ -303,6 +367,23 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
     let mut strokes: Vec<Vec<f32>> = Vec::new();
     let mut current: Vec<f32> = Vec::new();
     let num = |o: &Object| o.as_float().ok();
+    // Une courbe de Bézier est échantillonnée en 8 segments depuis le point courant : une
+    // `/InkList` réduite aux extrémités ferait d'une ellipse un losange (B25, Lot 9).
+    let curve = |current: &mut Vec<f32>, c1: [f32; 2], c2: [f32; 2], end: [f32; 2]| {
+        let [Some(&x0), Some(&y0)] = [current.len().checked_sub(2), current.len().checked_sub(1)]
+            .map(|i| i.and_then(|i| current.get(i)))
+        else {
+            current.extend(end);
+            return;
+        };
+        for step in 1..=8 {
+            let t = step as f32 / 8.0;
+            let u = 1.0 - t;
+            let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+            current.push(a * x0 + b * c1[0] + c * c2[0] + d * end[0]);
+            current.push(a * y0 + b * c1[1] + c * c2[1] + d * end[1]);
+        }
+    };
     for op in content.operations.iter().take(100_000) {
         let v: Vec<f32> = op.operands.iter().filter_map(num).collect();
         match (op.operator.as_str(), v.as_slice()) {
@@ -315,8 +396,19 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
                 current.extend([*x, *y]);
             }
             ("l", [x, y]) => current.extend([*x, *y]),
-            ("c", [.., x, y]) => current.extend([*x, *y]),
-            ("v", [.., x, y]) | ("y", [.., x, y]) => current.extend([*x, *y]),
+            ("c", [x1, y1, x2, y2, x, y]) => curve(&mut current, [*x1, *y1], [*x2, *y2], [*x, *y]),
+            ("v", [x2, y2, x, y]) => {
+                // Premier point de contrôle = point courant.
+                let start = [
+                    current
+                        .get(current.len().wrapping_sub(2))
+                        .copied()
+                        .unwrap_or(*x2),
+                    current.last().copied().unwrap_or(*y2),
+                ];
+                curve(&mut current, start, [*x2, *y2], [*x, *y]);
+            }
+            ("y", [x1, y1, x, y]) => curve(&mut current, [*x1, *y1], [*x, *y], [*x, *y]),
             ("re", [x, y, w, h]) => {
                 if current.len() >= 4 {
                     strokes.push(std::mem::take(&mut current));
@@ -335,6 +427,21 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
     }
     if strokes.is_empty() {
         return None;
+    }
+    // Les points de l'apparence sont dans l'espace du formulaire : `/Matrix` les ramène dans
+    // celui de la page (§8.10.1).
+    let matrix: Option<Vec<f32>> = stream
+        .dict
+        .get(b"Matrix")
+        .and_then(Object::as_array)
+        .ok()
+        .map(|m| m.iter().filter_map(num).collect());
+    if let Some([a, b, c, d, e, f]) = matrix.as_deref() {
+        for stroke in &mut strokes {
+            for [x, y] in stroke.as_chunks_mut::<2>().0 {
+                (*x, *y) = (a * *x + c * *y + e, b * *x + d * *y + f);
+            }
+        }
     }
     Some(
         strokes

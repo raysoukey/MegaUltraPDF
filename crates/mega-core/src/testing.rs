@@ -196,6 +196,26 @@ pub fn bezier_ink_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Une `Ink` **sans** `/InkList` dont l'apparence a une `/Matrix` (translation 10, 20) :
+/// les points de l'apparence sont dans l'espace du formulaire, pas dans celui de la page.
+pub fn ink_with_matrix_pdf() -> Vec<u8> {
+    let appearance = "0 0 1 RG 2 w 100 100 m 150 150 l S";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [4 0 R] >>".to_string(),
+        "<< /Type /Annot /Subtype /Ink /Rect [108 118 162 172] /F 4 /C [0 0 1] \
+         /AP << /N 5 0 R >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [98 98 152 152] /Matrix [1 0 0 1 10 20] \
+             /Length {} >>\nstream\n{appearance}\nendstream",
+            appearance.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un formulaire AcroForm écrit à la main (`/NeedAppearances true`) : texte « nom » (vide),
 /// texte multiligne « adresse », case « ok », groupe radio « choix » (A coché, B), combo
 /// « ville » (Paris, Lyon ; Paris choisi), texte lecture seule « ref », texte requis « email ».

@@ -100,7 +100,10 @@ fn signing_time_outside_the_certificate_validity_is_invalid() {
     let der = cms::sign_digest(&rsa(), &digest, 4_070_908_800).unwrap();
     let check = cms::verify(&der, &digest);
     assert!(
-        matches!(check.status, SignatureStatus::Invalid(ref m) if m.contains("validité")),
+        check.status
+            == SignatureStatus::Invalid(
+                mega_core::digital_signature::SigIssue::SigningTimeOutsideValidity
+            ),
         "{check:?}"
     );
 }

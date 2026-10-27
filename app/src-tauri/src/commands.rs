@@ -508,12 +508,12 @@ mod tests {
         assert_eq!(json[0]["covers_whole_document"], true);
         assert!(json[0]["signed_at"].is_i64());
         let invalid = serde_json::to_value(mega_core::digital_signature::SignatureStatus::Invalid(
-            "modifié".to_string(),
+            mega_core::digital_signature::SigIssue::ContentModified,
         ))
         .unwrap();
         assert_eq!(
             invalid,
-            serde_json::json!({ "kind": "invalid", "detail": "modifié" })
+            serde_json::json!({ "kind": "invalid", "issue": "content_modified" })
         );
     }
 

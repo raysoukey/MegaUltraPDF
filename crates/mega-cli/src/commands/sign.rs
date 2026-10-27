@@ -64,8 +64,8 @@ fn verdict(info: &SignatureInfo) -> String {
         SignatureStatus::Intact => {
             "intègre, mais le document a été modifié après cette signature".to_string()
         }
-        SignatureStatus::Invalid(why) => format!("INVALIDE : {why}"),
-        SignatureStatus::Unsupported(why) => format!("non vérifiable : {why}"),
+        SignatureStatus::Invalid(why) => format!("INVALIDE : {}", why.message()),
+        SignatureStatus::Unsupported(why) => format!("non vérifiable : {}", why.message()),
     }
 }
 

@@ -386,11 +386,38 @@ export interface OcrStatus {
   languages: string[];
 }
 
-/** Verdict d'une signature (miroir de `SignatureStatus`, sérialisé `{ kind, detail }`). */
+/** Raison d'un verdict (miroir de `SigIssue`) : traduite par `strings.ts` (`sigIssues`). */
+export type SigIssue =
+  | 'cms_unreadable'
+  | 'not_signed_data'
+  | 'not_detached'
+  | 'multiple_signers'
+  | 'no_signer'
+  | 'signer_certificate_missing'
+  | 'digest_algorithm'
+  | 'no_signed_attributes'
+  | 'message_digest_missing'
+  | 'content_modified'
+  | 'content_type_invalid'
+  | 'signing_time_outside_validity'
+  | 'signed_attributes_unreadable'
+  | 'signing_certificate_mismatch'
+  | 'public_key_unreadable'
+  | 'weak_key'
+  | 'unsupported_curve'
+  | 'signature_value_unreadable'
+  | 'signature_mismatch'
+  | 'signature_algorithm'
+  | 'unsupported_format'
+  | 'byte_range_invalid'
+  | 'contents_invalid'
+  | 'usage_rights';
+
+/** Verdict d'une signature (miroir de `SignatureStatus`, sérialisé `{ kind, issue }`). */
 export type SignatureStatus =
   | { kind: 'intact' }
-  | { kind: 'invalid'; detail: string }
-  | { kind: 'unsupported'; detail: string };
+  | { kind: 'invalid'; issue: SigIssue }
+  | { kind: 'unsupported'; issue: SigIssue };
 
 /** Une signature numérique vérifiée (miroir de `mega_core::digital_signature::SignatureInfo`). */
 export interface SignatureInfo {

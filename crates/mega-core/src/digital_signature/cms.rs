@@ -19,7 +19,7 @@ use spki::AlgorithmIdentifierOwned;
 use x509_cert::Certificate;
 use x509_cert::attr::{Attribute, AttributeValue};
 
-use super::{SignatureStatus, SigningIdentity, SigningKey};
+use super::{SigIssue, SignatureStatus, SigningIdentity, SigningKey};
 use crate::error::{CoreError, CoreResult};
 
 const ID_DATA: der::oid::ObjectIdentifier =
@@ -230,12 +230,12 @@ pub(crate) fn common_name(cert: &Certificate) -> String {
     cert.tbs_certificate.subject.to_string()
 }
 
-fn invalid(detail: &str) -> SignatureStatus {
-    SignatureStatus::Invalid(detail.to_string())
+fn invalid(issue: SigIssue) -> SignatureStatus {
+    SignatureStatus::Invalid(issue)
 }
 
-fn unsupported(detail: &str) -> SignatureStatus {
-    SignatureStatus::Unsupported(detail.to_string())
+fn unsupported(issue: SigIssue) -> SignatureStatus {
+    SignatureStatus::Unsupported(issue)
 }
 
 /// Vérifie une signature CMS détachée contre l'empreinte `digest` des octets signés. Ne
@@ -244,7 +244,7 @@ pub fn verify(der: &[u8], digest: &[u8]) -> CmsCheck {
     let mut check = CmsCheck {
         signer: None,
         signed_at: None,
-        status: unsupported("structure CMS illisible"),
+        status: unsupported(SigIssue::CmsUnreadable),
     };
     // Un `/Contents` de PDF est complété de zéros qu'un décodeur DER strict refuserait : on
     // ne garde que l'élément annoncé par l'en-tête.
@@ -256,7 +256,7 @@ pub fn verify(der: &[u8], digest: &[u8]) -> CmsCheck {
         return check;
     };
     if content_info.content_type != ID_SIGNED_DATA {
-        check.status = unsupported("le contenu CMS n'est pas une signature (signedData)");
+        check.status = unsupported(SigIssue::NotSignedData);
         return check;
     }
     let Ok(signed) = content_info.content.decode_as::<SignedData>() else {
@@ -265,23 +265,23 @@ pub fn verify(der: &[u8], digest: &[u8]) -> CmsCheck {
     if signed.encap_content_info.econtent.is_some()
         || signed.encap_content_info.econtent_type != ID_DATA
     {
-        check.status = unsupported("signature avec contenu encapsulé (non détachée)");
+        check.status = unsupported(SigIssue::NotDetached);
         return check;
     }
     // Un seul signataire : en vérifier un et taire les autres serait trompeur.
     if signed.signer_infos.0.len() > 1 {
-        check.status = unsupported("plusieurs signataires dans une même signature");
+        check.status = unsupported(SigIssue::MultipleSigners);
         return check;
     }
     let Some(info) = signed.signer_infos.0.iter().next() else {
-        check.status = invalid("aucun signataire");
+        check.status = invalid(SigIssue::NoSigner);
         return check;
     };
     let certificate = signer_certificate(&signed, info);
     check.signer = certificate.map(common_name);
     check.signed_at = signing_time(info);
     check.status = match certificate {
-        None => invalid("certificat du signataire absent"),
+        None => invalid(SigIssue::SignerCertificateMissing),
         Some(cert) => verify_signer(der, info, cert, digest),
     };
     check
@@ -357,25 +357,25 @@ fn verify_signer(
     digest: &[u8],
 ) -> SignatureStatus {
     if info.digest_alg.oid != ID_SHA256 {
-        return unsupported("algorithme d'empreinte autre que SHA-256");
+        return unsupported(SigIssue::DigestAlgorithm);
     }
     if info.signed_attrs.is_none() {
-        return unsupported("signature sans attributs signés");
+        return unsupported(SigIssue::NoSignedAttributes);
     }
     let Some(stated) =
         attribute(info, ID_MESSAGE_DIGEST).and_then(|v| v.decode_as::<OctetString>().ok())
     else {
-        return invalid("empreinte signée absente");
+        return invalid(SigIssue::MessageDigestMissing);
     };
     if stated.as_bytes() != digest {
-        return invalid("le contenu a été modifié depuis la signature");
+        return invalid(SigIssue::ContentModified);
     }
     // `content-type` est obligatoire (RFC 5652 §5.3) et doit désigner des données (`id-data`) :
     // sinon une signature faite pour un autre usage pourrait être réemployée ici.
     let content_type = attribute(info, ID_CONTENT_TYPE)
         .and_then(|v| v.decode_as::<der::oid::ObjectIdentifier>().ok());
     if content_type != Some(ID_DATA) {
-        return invalid("attribut content-type absent, en double ou inattendu");
+        return invalid(SigIssue::ContentTypeInvalid);
     }
     // Contrôle local de la date déclarée : dans la période de validité du certificat.
     if let Some(when) = signing_time(info) {
@@ -386,17 +386,17 @@ fn verify_signer(
             (Some(from), Some(to)) if from <= when && when <= to
         );
         if !inside {
-            return invalid("date de signature hors de la période de validité du certificat");
+            return invalid(SigIssue::SigningTimeOutsideValidity);
         }
     }
     // Ce qui est signé : les attributs signés **tels qu'écrits**, étiquette d'un SET (0x31).
     let Some((start, end)) = signed_attrs_span(der) else {
-        return unsupported("attributs signés introuvables dans la structure CMS");
+        return unsupported(SigIssue::SignedAttributesUnreadable);
     };
     let mut message = der[start..end].to_vec();
     message[0] = 0x31;
     let Ok(spki_der) = cert.tbs_certificate.subject_public_key_info.to_der() else {
-        return invalid("clé publique illisible");
+        return invalid(SigIssue::PublicKeyUnreadable);
     };
     let signature = info.signature.as_bytes();
     let algorithm = info.signature_algorithm.oid;
@@ -404,33 +404,33 @@ fn verify_signer(
         use rsa::pkcs8::DecodePublicKey;
         use rsa::signature::Verifier;
         let Ok(public) = rsa::RsaPublicKey::from_public_key_der(&spki_der) else {
-            return invalid("clé publique RSA illisible");
+            return invalid(SigIssue::PublicKeyUnreadable);
         };
         if rsa::traits::PublicKeyParts::size(&public) * 8 < 2048 {
-            return unsupported("clé RSA trop courte (moins de 2048 bits)");
+            return unsupported(SigIssue::WeakKey);
         }
         let Ok(sig) = rsa::pkcs1v15::Signature::try_from(signature) else {
-            return invalid("valeur de signature RSA illisible");
+            return invalid(SigIssue::SignatureValueUnreadable);
         };
         match rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public).verify(&message, &sig) {
             Ok(()) => SignatureStatus::Intact,
-            Err(_) => invalid("signature RSA fausse"),
+            Err(_) => invalid(SigIssue::SignatureMismatch),
         }
     } else if algorithm == ECDSA_WITH_SHA256 {
         use p256::ecdsa::signature::Verifier;
         use p256::pkcs8::DecodePublicKey;
         let Ok(public) = p256::ecdsa::VerifyingKey::from_public_key_der(&spki_der) else {
-            return unsupported("clé ECDSA autre que P-256");
+            return unsupported(SigIssue::UnsupportedCurve);
         };
         let Ok(sig) = p256::ecdsa::DerSignature::try_from(signature) else {
-            return invalid("valeur de signature ECDSA illisible");
+            return invalid(SigIssue::SignatureValueUnreadable);
         };
         match public.verify(&message, &sig) {
             Ok(()) => SignatureStatus::Intact,
-            Err(_) => invalid("signature ECDSA fausse"),
+            Err(_) => invalid(SigIssue::SignatureMismatch),
         }
     } else {
-        unsupported("algorithme de signature non pris en charge")
+        unsupported(SigIssue::SignatureAlgorithm)
     }
 }
 

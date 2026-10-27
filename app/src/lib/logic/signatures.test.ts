@@ -28,16 +28,20 @@ describe('signatureVerdict', () => {
       text: fr.sigModifiedAfter,
     });
   });
-  it('invalid shows the reason', () => {
-    expect(signatureVerdict(info({ status: { kind: 'invalid', detail: 'modifié' } }))).toEqual({
+  it('invalid shows the translated reason of its issue code', () => {
+    expect(
+      signatureVerdict(info({ status: { kind: 'invalid', issue: 'content_modified' } })),
+    ).toEqual({
       tone: 'bad',
-      text: fr.sigInvalid('modifié'),
+      text: fr.sigInvalid(fr.sigIssues.content_modified),
     });
   });
-  it('unsupported is a warning with the reason', () => {
-    expect(signatureVerdict(info({ status: { kind: 'unsupported', detail: 'SHA-1' } }))).toEqual({
+  it('unsupported is a warning with the translated reason', () => {
+    expect(
+      signatureVerdict(info({ status: { kind: 'unsupported', issue: 'digest_algorithm' } })),
+    ).toEqual({
       tone: 'warn',
-      text: fr.sigUnsupported('SHA-1'),
+      text: fr.sigUnsupported(fr.sigIssues.digest_algorithm),
     });
   });
 });

@@ -27,9 +27,102 @@ use x509_cert::Certificate;
 
 use crate::error::{CoreError, CoreResult};
 
+/// Raison d'un verdict « invalide » ou « non vérifiable », sous forme de **code stable** :
+/// l'interface le traduit (français, anglais), le CLI affiche [`SigIssue::message`] (C43).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SigIssue {
+    /// Structure CMS illisible.
+    CmsUnreadable,
+    /// Le contenu CMS n'est pas une signature (signedData).
+    NotSignedData,
+    /// Signature avec contenu encapsulé (non détachée).
+    NotDetached,
+    /// Plusieurs signataires dans une même signature.
+    MultipleSigners,
+    /// Aucun signataire.
+    NoSigner,
+    /// Certificat du signataire absent.
+    SignerCertificateMissing,
+    /// Algorithme d'empreinte autre que SHA-256.
+    DigestAlgorithm,
+    /// Signature sans attributs signés.
+    NoSignedAttributes,
+    /// Empreinte signée absente.
+    MessageDigestMissing,
+    /// Le contenu a été modifié depuis la signature.
+    ContentModified,
+    /// Attribut content-type absent, en double ou inattendu.
+    ContentTypeInvalid,
+    /// Date de signature hors de la période de validité du certificat.
+    SigningTimeOutsideValidity,
+    /// Attributs signés introuvables dans la structure CMS.
+    SignedAttributesUnreadable,
+    /// Le certificat joint n'est pas celui que la signature désigne.
+    SigningCertificateMismatch,
+    /// Clé publique illisible.
+    PublicKeyUnreadable,
+    /// Clé RSA trop courte (moins de 2048 bits).
+    WeakKey,
+    /// Clé ECDSA autre que P-256.
+    UnsupportedCurve,
+    /// Valeur de signature illisible.
+    SignatureValueUnreadable,
+    /// Signature mathématiquement fausse.
+    SignatureMismatch,
+    /// Algorithme de signature non pris en charge.
+    SignatureAlgorithm,
+    /// Format de signature non pris en charge.
+    UnsupportedFormat,
+    /// /ByteRange absent ou mal formé.
+    ByteRangeInvalid,
+    /// Valeur /Contents illisible ou mal placée.
+    ContentsInvalid,
+    /// Signature de droits d'utilisation (UR3), non vérifiée.
+    UsageRights,
+}
+
+impl SigIssue {
+    /// La raison en français (CLI, journaux).
+    pub fn message(self) -> &'static str {
+        match self {
+            SigIssue::CmsUnreadable => "structure CMS illisible",
+            SigIssue::NotSignedData => "le contenu CMS n'est pas une signature (signedData)",
+            SigIssue::NotDetached => "signature avec contenu encapsulé (non détachée)",
+            SigIssue::MultipleSigners => "plusieurs signataires dans une même signature",
+            SigIssue::NoSigner => "aucun signataire",
+            SigIssue::SignerCertificateMissing => "certificat du signataire absent",
+            SigIssue::DigestAlgorithm => "algorithme d'empreinte autre que SHA-256",
+            SigIssue::NoSignedAttributes => "signature sans attributs signés",
+            SigIssue::MessageDigestMissing => "empreinte signée absente",
+            SigIssue::ContentModified => "le contenu a été modifié depuis la signature",
+            SigIssue::ContentTypeInvalid => "attribut content-type absent, en double ou inattendu",
+            SigIssue::SigningTimeOutsideValidity => {
+                "date de signature hors de la période de validité du certificat"
+            }
+            SigIssue::SignedAttributesUnreadable => {
+                "attributs signés introuvables dans la structure CMS"
+            }
+            SigIssue::SigningCertificateMismatch => {
+                "le certificat joint n'est pas celui que la signature désigne"
+            }
+            SigIssue::PublicKeyUnreadable => "clé publique illisible",
+            SigIssue::WeakKey => "clé RSA trop courte (moins de 2048 bits)",
+            SigIssue::UnsupportedCurve => "clé ECDSA autre que P-256",
+            SigIssue::SignatureValueUnreadable => "valeur de signature illisible",
+            SigIssue::SignatureMismatch => "signature mathématiquement fausse",
+            SigIssue::SignatureAlgorithm => "algorithme de signature non pris en charge",
+            SigIssue::UnsupportedFormat => "format de signature non pris en charge",
+            SigIssue::ByteRangeInvalid => "/ByteRange absent ou mal formé",
+            SigIssue::ContentsInvalid => "valeur /Contents illisible ou mal placée",
+            SigIssue::UsageRights => "signature de droits d'utilisation (UR3), non vérifiée",
+        }
+    }
+}
+
 /// Résultat de la vérification d'une signature.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "issue", rename_all = "snake_case")]
 pub enum SignatureStatus {
     /// **Intègre** : l'empreinte correspond, la signature est mathématiquement juste avec la
     /// clé du certificat joint, et la date déclarée tombe dans sa période de validité.
@@ -37,9 +130,9 @@ pub enum SignatureStatus {
     /// vérifiée (il faudrait le réseau, exclu par le projet). L'interface le dit toujours.
     Intact,
     /// Altérée ou fausse : le contenu signé ne correspond plus, ou la signature est fausse.
-    Invalid(String),
+    Invalid(SigIssue),
     /// Format ou algorithme que cette version ne sait pas vérifier.
-    Unsupported(String),
+    Unsupported(SigIssue),
 }
 
 /// La clé privée d'une identité : RSA (PKCS#1 v1.5) ou ECDSA P-256, avec SHA-256.

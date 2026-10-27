@@ -27,7 +27,7 @@ use lopdf::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{SignatureStatus, SigningIdentity, cms, sha256};
+use super::{SigIssue, SignatureStatus, SigningIdentity, cms, sha256};
 use crate::document::Document;
 use crate::edit::write_atomically;
 use crate::error::{CoreError, CoreResult};
@@ -293,26 +293,24 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
         reason: text_of(value.get(b"Reason").ok()),
         location: text_of(value.get(b"Location").ok()),
         sub_filter: sub_filter.clone(),
-        status: SignatureStatus::Unsupported(String::new()),
+        status: SignatureStatus::Unsupported(SigIssue::CmsUnreadable),
         covers_whole_document: false,
     };
     if sub_filter != "adbe.pkcs7.detached" && sub_filter != "ETSI.CAdES.detached" {
-        info.status = SignatureStatus::Unsupported(format!(
-            "format de signature non pris en charge : {sub_filter}"
-        ));
+        info.status = SignatureStatus::Unsupported(SigIssue::UnsupportedFormat);
         return info;
     }
     let (a, b, c) = match checked_byte_range(value, bytes.len()) {
         Ok(r) => r,
-        Err(why) => {
-            info.status = SignatureStatus::Invalid(why.to_string());
+        Err(_) => {
+            info.status = SignatureStatus::Invalid(SigIssue::ByteRangeInvalid);
             return info;
         }
     };
     let der = match contents_bytes(bytes, a, b) {
         Ok(der) => der,
-        Err(why) => {
-            info.status = SignatureStatus::Invalid(why.to_string());
+        Err(_) => {
+            info.status = SignatureStatus::Invalid(SigIssue::ContentsInvalid);
             return info;
         }
     };

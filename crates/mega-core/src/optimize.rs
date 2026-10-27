@@ -172,7 +172,6 @@ fn decode(stream: &Stream, c: &Candidate) -> Option<DynamicImage> {
 /// Réduit si nécessaire puis encode en JPEG ; `None` si rien n'est à gagner.
 fn recompress(stream: &Stream, c: &Candidate, opts: &OptimizeOptions) -> Option<Stream> {
     let mut img = decode(stream, c)?;
-    let mut resized = false;
     if let Some(max) = opts.max_image_px
         && img.width().max(img.height()) > max
     {
@@ -180,7 +179,6 @@ fn recompress(stream: &Stream, c: &Candidate, opts: &OptimizeOptions) -> Option<
         let w = ((f64::from(img.width()) * scale).round() as u32).max(1);
         let h = ((f64::from(img.height()) * scale).round() as u32).max(1);
         img = img.resize_exact(w, h, image::imageops::FilterType::Triangle);
-        resized = true;
     }
     let quality = opts.image_quality.unwrap_or(85);
     let mut out = Cursor::new(Vec::new());
@@ -204,7 +202,9 @@ fn recompress(stream: &Stream, c: &Candidate, opts: &OptimizeOptions) -> Option<
             .ok()?,
     }
     let encoded = out.into_inner();
-    if !resized && encoded.len() >= stream.content.len() {
+    // Même réduite, une image n'est remplacée que si elle devient plus petite : une image
+    // unie, minuscule en Flate, grossirait en JPEG (C5, Lot 9).
+    if encoded.len() >= stream.content.len() {
         return None;
     }
     let mut dict = stream.dict.clone();
@@ -256,7 +256,7 @@ impl Document {
             ..OptimizeReport::default()
         };
         let before = doc.objects.len();
-        doc.prune_objects();
+        crate::cleanup::prune(&mut doc);
         report.objects_removed =
             u32::try_from(before.saturating_sub(doc.objects.len())).unwrap_or(u32::MAX);
         // Les masques (`/SMask`, `/Mask` en flux) sont des images grises que rien ne distingue

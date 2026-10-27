@@ -46,7 +46,7 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
     // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
     crate::properties::stamp_mod_date(&mut doc);
     let pages_before = doc.get_pages().len();
-    doc.prune_objects();
+    prune(&mut doc);
     doc.renumber_objects();
     let mut out = Vec::new();
     doc.save_to(&mut out)?;
@@ -56,6 +56,45 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
         return Ok(bytes.to_vec());
     }
     Ok(out)
+}
+
+/// Objets atteignables depuis la remorque (racine, `/Info`, `/Encrypt`…), en suivant toutes
+/// les références des dictionnaires, tableaux et dictionnaires de flux.
+///
+/// \[Apprentissage\] `lopdf::Document::prune_objects` tient la liste des objets vus dans
+/// un `Vec` et appelle `contains` à chaque référence : temps **quadratique**, sensible sur un
+/// gros fichier (C22, Lot 9). Un `BTreeSet` répond à « déjà vu ? » en temps logarithmique.
+pub(crate) fn reachable(doc: &Document) -> BTreeSet<ObjectId> {
+    fn refs_of(object: &Object, out: &mut Vec<ObjectId>) {
+        match object {
+            Object::Reference(id) => out.push(*id),
+            Object::Array(items) => items.iter().for_each(|o| refs_of(o, out)),
+            Object::Dictionary(dict) => dict.iter().for_each(|(_, o)| refs_of(o, out)),
+            Object::Stream(stream) => stream.dict.iter().for_each(|(_, o)| refs_of(o, out)),
+            _ => {}
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let mut todo = Vec::new();
+    for (_, value) in doc.trailer.iter() {
+        refs_of(value, &mut todo);
+    }
+    while let Some(id) = todo.pop() {
+        if seen.insert(id)
+            && let Some(object) = doc.objects.get(&id)
+        {
+            refs_of(object, &mut todo);
+        }
+    }
+    seen
+}
+
+/// Retire les objets inatteignables (orphelins) et rend leur nombre.
+pub(crate) fn prune(doc: &mut Document) -> usize {
+    let keep = reachable(doc);
+    let before = doc.objects.len();
+    doc.objects.retain(|id, _| keep.contains(id));
+    before - doc.objects.len()
 }
 
 /// Vrai si `out` se relit comme un PDF non vide ayant encore `pages_before` pages.
@@ -467,5 +506,30 @@ mod tests {
             "fichier tronqué"
         );
         assert!(!rewrite_is_sane(0, b"pas un pdf"));
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    /// Même résultat que `lopdf`, y compris sur des références cycliques (signets en boucle,
+    /// popup et note qui se citent l'un l'autre).
+    #[test]
+    fn prune_matches_lopdf_on_cycles() {
+        for bytes in [
+            crate::testing::cyclic_outline_pdf(),
+            crate::testing::note_with_popup_pdf("x"),
+            crate::testing::heavy_images_pdf(),
+        ] {
+            let mut ours = Document::load_mem(&bytes).unwrap();
+            let orphan = ours.add_object(Object::Integer(42));
+            let mut theirs = ours.clone();
+            assert!(prune(&mut ours) >= 1);
+            theirs.prune_objects();
+            let keys = |d: &Document| d.objects.keys().copied().collect::<Vec<_>>();
+            assert_eq!(keys(&ours), keys(&theirs));
+            assert!(!ours.objects.contains_key(&orphan));
+        }
     }
 }

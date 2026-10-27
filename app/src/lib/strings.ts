@@ -438,7 +438,7 @@ export const fr = {
   optimizeAction: 'Optimiser',
   optimizeAnalyze: 'Analyser',
   optimizeReport: (before: string, after: string, pct: number, images: number) =>
-    `${before} → ${after} (−${pct} %), ${images} image${images > 1 ? 's' : ''} recomprimée${images > 1 ? 's' : ''}`,
+    `${before} → environ ${after} (−${pct} %), ${images} image${images > 1 ? 's' : ''} recomprimée${images > 1 ? 's' : ''}`,
   optimizeNothing: 'Rien à gagner : le document est déjà optimisé.',
   optimizeDone: 'Optimisation appliquée (annulable avec Ctrl+Z).',
   optimizeSaveHint:
@@ -971,7 +971,7 @@ export const en: Strings = {
   optimizeAction: 'Optimize',
   optimizeAnalyze: 'Analyze',
   optimizeReport: (before: string, after: string, pct: number, images: number) =>
-    `${before} → ${after} (−${pct}%), ${images} image${images > 1 ? 's' : ''} recompressed`,
+    `${before} → about ${after} (−${pct}%), ${images} image${images > 1 ? 's' : ''} recompressed`,
   optimizeNothing: 'Nothing to gain: the document is already optimized.',
   optimizeDone: 'Optimization applied (undo with Ctrl+Z).',
   optimizeSaveHint:

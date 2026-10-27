@@ -131,7 +131,7 @@ impl Document {
         for (&page, path) in pages.iter().zip(&paths) {
             let rendered =
                 self.render_page_opts(page, scale, Rotation::None, spec.with_annotations)?;
-            let bytes = encode(&rendered, spec.format)?;
+            let bytes = encode(&rendered, spec.format, spec.dpi)?;
             write_atomically(path, &bytes)?;
         }
         Ok(paths)
@@ -173,10 +173,16 @@ impl Document {
     }
 }
 
-/// Encode une page rendue dans le format demandé, en mémoire.
-fn encode(page: &crate::render::RenderedPage, format: ImageFormat) -> CoreResult<Vec<u8>> {
+/// Encode une page rendue dans le format demandé, en mémoire, avec sa résolution inscrite
+/// (bloc `pHYs` du PNG, densité JFIF du JPEG) : un logiciel de mise en page ou d'impression
+/// la reprend au lieu de supposer 72 ou 96 dpi (C18, Lot 9).
+fn encode(
+    page: &crate::render::RenderedPage,
+    format: ImageFormat,
+    dpi: u16,
+) -> CoreResult<Vec<u8>> {
     match format {
-        ImageFormat::Png => page.to_png(),
+        ImageFormat::Png => Ok(with_png_density(page.to_png()?, dpi)),
         ImageFormat::Jpeg { quality } => {
             // Le JPEG n'a pas de canal alpha : on aplatit sur blanc.
             let (pixels, _rest) = page.rgba.as_chunks::<4>();
@@ -189,7 +195,9 @@ fn encode(page: &crate::render::RenderedPage, format: ImageFormat) -> CoreResult
                 })
                 .collect();
             let mut out = Cursor::new(Vec::new());
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality)
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
+            encoder.set_pixel_density(image::codecs::jpeg::PixelDensity::dpi(dpi));
+            encoder
                 .write_image(
                     &rgb,
                     page.width_px,
@@ -199,5 +207,56 @@ fn encode(page: &crate::render::RenderedPage, format: ImageFormat) -> CoreResult
                 .map_err(|e| CoreError::Pdfium(format!("encodage JPEG : {e}")))?;
             Ok(out.into_inner())
         }
+    }
+}
+
+/// Insère un bloc `pHYs` (résolution, en pixels par mètre) juste après l'en-tête `IHDR` d'un
+/// PNG : signature (8 octets) puis `IHDR` (4 + 4 + 13 + 4 octets), soit à l'octet 33.
+fn with_png_density(png: Vec<u8>, dpi: u16) -> Vec<u8> {
+    const AFTER_IHDR: usize = 33;
+    if png.len() < AFTER_IHDR || png.get(12..16) != Some(b"IHDR".as_slice()) {
+        return png;
+    }
+    // 1 pouce = 0,0254 m.
+    let ppm = (f64::from(dpi) / 0.0254).round() as u32;
+    let mut chunk = Vec::with_capacity(21);
+    chunk.extend_from_slice(&9u32.to_be_bytes());
+    chunk.extend_from_slice(b"pHYs");
+    chunk.extend_from_slice(&ppm.to_be_bytes());
+    chunk.extend_from_slice(&ppm.to_be_bytes());
+    chunk.push(1); // unité : le mètre
+    let crc = crc32(&chunk[4..]);
+    chunk.extend_from_slice(&crc.to_be_bytes());
+    let mut out = Vec::with_capacity(png.len() + chunk.len());
+    out.extend_from_slice(&png[..AFTER_IHDR]);
+    out.extend_from_slice(&chunk);
+    out.extend_from_slice(&png[AFTER_IHDR..]);
+    out
+}
+
+/// CRC-32 (polynôme 0xEDB88320) des blocs PNG, calculé bit à bit : quelques octets par
+/// image, pas besoin de table.
+///
+/// \[Apprentissage\] Le PNG protège chaque bloc par cette somme de contrôle : un lecteur
+/// rejette un bloc dont le CRC ne correspond pas au type et aux données.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crc32_of_iend_is_the_png_constant() {
+        assert_eq!(crc32(b"IEND"), 0xAE42_6082);
     }
 }

@@ -276,6 +276,108 @@ pub fn direct_info_pdf() -> Vec<u8> {
     out
 }
 
+/// Trois images pour l'optimisation (Lot 9) : une grise **unie** de 2000 × 2000 en Flate
+/// (quelques kilo-octets : un JPEG réduit serait plus gros), une RGB bruitée en Flate (le
+/// JPEG la réduit fortement) et une RGB unie **non compressée**.
+pub fn optimizable_images_pdf() -> Vec<u8> {
+    use lopdf::{Object, Stream};
+    let image = |w: i64, h: i64, cs: &str, data: Vec<u8>, flate: bool| {
+        let mut d = lopdf::Dictionary::new();
+        d.set("Type", Object::Name(b"XObject".to_vec()));
+        d.set("Subtype", Object::Name(b"Image".to_vec()));
+        d.set("Width", w);
+        d.set("Height", h);
+        d.set("ColorSpace", Object::Name(cs.as_bytes().to_vec()));
+        d.set("BitsPerComponent", 8);
+        let mut s = Stream::new(d, data).with_compression(false);
+        if flate {
+            s.compress().expect("compression Flate");
+        }
+        s
+    };
+    let mut seed: u32 = 777;
+    let mut noise = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ((seed >> 24) % 17) as i16 - 8
+    };
+    let noisy: Vec<u8> = (0..800 * 600)
+        .flat_map(|_| [30i16, 120, 200].map(|c| (c + noise()).clamp(0, 255) as u8))
+        .collect();
+    images_page_pdf(vec![
+        image(2000, 2000, "DeviceGray", vec![128u8; 2000 * 2000], true),
+        image(800, 600, "DeviceRGB", noisy, true),
+        image(
+            256,
+            256,
+            "DeviceRGB",
+            [10u8, 200, 90].repeat(256 * 256),
+            false,
+        ),
+    ])
+}
+
+/// Une page qui dessine chaque image de `images` dans un carré de 100 points.
+fn images_page_pdf(images: Vec<lopdf::Stream>) -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    let mut doc = lopdf::Document::with_version("1.7");
+    let mut xobjects = Dictionary::new();
+    let mut content = String::new();
+    for (i, image) in images.into_iter().enumerate() {
+        let id = doc.add_object(image);
+        let name = format!("Im{i}");
+        content.push_str(&format!(
+            "q 100 0 0 100 {} 400 cm /{name} Do Q ",
+            50 + 110 * i
+        ));
+        xobjects.set(name.as_str(), Object::Reference(id));
+    }
+    let content_id = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
+    let mut resources = Dictionary::new();
+    resources.set("XObject", Object::Dictionary(xobjects));
+    let pages_id = doc.new_object_id();
+    let page_id = doc.add_object(Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Page".to_vec())),
+        ("Parent", Object::Reference(pages_id)),
+        (
+            "MediaBox",
+            Object::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]),
+        ),
+        ("Resources", Object::Dictionary(resources)),
+        ("Contents", Object::Reference(content_id)),
+    ]));
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Pages".to_vec())),
+            ("Kids", Object::Array(vec![Object::Reference(page_id)])),
+            ("Count", Object::Integer(1)),
+        ])),
+    );
+    let catalog_id = doc.add_object(Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Catalog".to_vec())),
+        ("Pages", Object::Reference(pages_id)),
+    ]));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
+/// Une page avec un carré rempli en **CMYK** (`k`) de couleur `cmyk` (« c m y k »).
+pub fn cmyk_pdf(cmyk: &str) -> Vec<u8> {
+    let content = format!("{cmyk} k 50 50 200 200 re f");
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R >>".to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un formulaire AcroForm écrit à la main (`/NeedAppearances true`) : texte « nom » (vide),
 /// texte multiligne « adresse », case « ok », groupe radio « choix » (A coché, B), combo
 /// « ville » (Paris, Lyon ; Paris choisi), texte lecture seule « ref », texte requis « email ».

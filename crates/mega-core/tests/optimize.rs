@@ -281,3 +281,37 @@ fn optimize_leaves_masks_transformed_jpegs_and_xmp_alone() {
         "{seen_mask} {seen_dct} {seen_xmp}"
     );
 }
+
+// --- Lot 9 : image plus grosse gardée telle quelle (C5), Flate sans recompression (C6) ----
+
+#[test]
+fn bigger_resized_image_is_not_kept() {
+    let mut doc = Document::from_bytes(mega_core::testing::optimizable_images_pdf(), None).unwrap();
+    doc.optimize(&OptimizeOptions {
+        image_quality: Some(75),
+        max_image_px: Some(1024),
+        compress_streams: false,
+    })
+    .unwrap();
+    let images = images_of(&doc.to_bytes().unwrap());
+    assert!(
+        images.contains(&(2000, "FlateDecode".to_string())),
+        "l'image unie (plus petite en Flate) reste telle quelle : {images:?}"
+    );
+}
+
+#[test]
+fn uncompressed_image_is_flated_without_recompression() {
+    let mut doc = Document::from_bytes(mega_core::testing::optimizable_images_pdf(), None).unwrap();
+    doc.optimize(&OptimizeOptions {
+        image_quality: None,
+        max_image_px: None,
+        compress_streams: true,
+    })
+    .unwrap();
+    let images = images_of(&doc.to_bytes().unwrap());
+    assert!(
+        images.iter().all(|(_, filter)| !filter.is_empty()),
+        "aucune image laissée sans compression : {images:?}"
+    );
+}

@@ -29,7 +29,7 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 }
 
 /// Chaîne de texte PDF : littérale si ASCII, sinon UTF-16BE avec BOM (§7.9.2.2).
-fn pdf_text(s: &str) -> Object {
+pub(crate) fn pdf_text(s: &str) -> Object {
     if s.is_ascii() {
         Object::string_literal(s)
     } else {

@@ -186,6 +186,11 @@ pub enum EditCommand {
         /// Marges et pages.
         spec: crate::overlay::CropSpec,
     },
+    /// Modifie les métadonnées du document (Lot 6).
+    SetMetadata {
+        /// Champs à changer.
+        patch: crate::properties::MetadataPatch,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -254,6 +259,7 @@ impl Command for EditCommand {
             EditCommand::Watermark { .. } => "Filigraner".to_string(),
             EditCommand::PageNumbers { .. } => "Numéroter".to_string(),
             EditCommand::CropPages { .. } => "Recadrer".to_string(),
+            EditCommand::SetMetadata { .. } => "Modifier les métadonnées".to_string(),
         }
     }
 
@@ -345,6 +351,7 @@ impl Command for EditCommand {
             EditCommand::Watermark { spec } => doc.add_watermark(spec),
             EditCommand::PageNumbers { spec } => doc.add_page_numbers(spec),
             EditCommand::CropPages { spec } => doc.crop_pages(spec),
+            EditCommand::SetMetadata { patch } => doc.set_metadata(patch),
         }
     }
 }

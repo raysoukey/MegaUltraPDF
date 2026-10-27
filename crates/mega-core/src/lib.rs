@@ -73,7 +73,7 @@ pub use links::{LinkTarget, PageLink};
 pub use outline::OutlineNode;
 pub use overlay::{Corner, CropSpec, PageNumbering, Watermark};
 pub use pagespec::PageSpec;
-pub use properties::DocumentProperties;
+pub use properties::{DocumentProperties, MetadataPatch};
 pub use render::RenderedPage;
 pub use text::{SearchHit, SearchOptions, TextBox};
 

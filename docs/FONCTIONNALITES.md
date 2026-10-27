@@ -89,7 +89,7 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 - [x] Préférences (langue, thème, zoom, affichage, auteur, position de lecture, récents) [7]
 - [x] Aide intégrée (prise en main, raccourcis, « À propos » avec licences tierces) [7]
 - [x] Installeurs Windows (NSIS/MSI, vérifié de bout en bout), Linux (AppImage/deb) et macOS (dmg, Apple Silicon) construits par la CI (lancement non vérifié) ; version portable ; PDFium embarqué ; association des `.pdf` ; paquets non signés [7]
-- [ ] Ouverture d'un PDF depuis le Finder macOS (événement Apple) [consolidation]
+- [x] Ouverture d'un PDF depuis le Finder macOS (événement `RunEvent::Opened`) [9] — compilé par la CI macOS, vérification sur un vrai Mac à faire
 - [x] Aucun appel réseau, aucune télémétrie (vérifié par test : sources, CSP) [0 → 7]
 - [x] OCR par Tesseract en couche de texte invisible, page par page, annulable (option `ocr`) [8]
 

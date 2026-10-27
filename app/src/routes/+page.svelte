@@ -150,6 +150,7 @@
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenOpen: (() => void) | undefined;
     let unlistenClose: (() => void) | undefined;
     (async () => {
       await loadSettings();
@@ -157,6 +158,13 @@
       if (settings.tesseractPath) void setTesseractPath(settings.tesseractPath).catch(() => {});
       const path = await startupFile().catch(() => null);
       if (path) await openPath(path);
+      try {
+        // macOS : fichiers ouverts depuis le Finder pendant que l'application tourne.
+        const { listen } = await import('@tauri-apps/api/event');
+        unlistenOpen = await listen<string[]>('open-paths', (event) => openPaths(event.payload));
+      } catch {
+        // hors Tauri : pas d'événement
+      }
       try {
         const { getCurrentWebview } = await import('@tauri-apps/api/webview');
         unlisten = await getCurrentWebview().onDragDropEvent((event) => {
@@ -185,6 +193,7 @@
     })();
     return () => {
       unlisten?.();
+      unlistenOpen?.();
       unlistenClose?.();
     };
   });

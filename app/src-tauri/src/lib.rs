@@ -37,6 +37,17 @@ fn pdfium_resource_dir(resources: &Path) -> Option<PathBuf> {
     Some(resources.join("pdfium")).filter(|dir| dir.is_dir())
 }
 
+/// Chemins des fichiers d'une liste d'URL : celles `file://` seulement (espaces et accents
+/// décodés). Sert à l'ouverture depuis le Finder de macOS, qui donne des URL (C33).
+// Utilisée par l'événement macOS seulement (et par son test sur les autres systèmes).
+#[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+fn file_paths(urls: &[tauri::Url]) -> Vec<PathBuf> {
+    urls.iter()
+        .filter(|u| u.scheme() == "file")
+        .filter_map(|u| u.to_file_path().ok())
+        .collect()
+}
+
 /// Point d'entrée de l'application (appelé par `main.rs`).
 ///
 /// Si Tauri ne peut pas démarrer (WebView2 absent, configuration invalide), il n'y a rien
@@ -100,9 +111,25 @@ pub fn run() {
             commands::split_document,
             commands::split_plan
         ]);
-    protocol::register(builder)
-        .run(context)
+    let app = protocol::register(builder)
+        .build(context)
         .expect("erreur au lancement de l'application Tauri");
+    app.run(|handle, event| {
+        // macOS : « Ouvrir avec » / double-clic dans le Finder n'arrive pas en argument de
+        // ligne de commande mais comme événement : on transmet les chemins à l'interface.
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        if let tauri::RunEvent::Opened { urls } = &event {
+            use tauri::Emitter;
+            let paths: Vec<String> = file_paths(urls)
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            if !paths.is_empty() {
+                let _ = handle.emit("open-paths", paths);
+            }
+        }
+        let _ = (handle, event);
+    });
 }
 
 #[cfg(test)]
@@ -123,5 +150,21 @@ mod tests {
             Some(resources.join("pdfium"))
         );
         std::fs::remove_dir_all(&resources).unwrap();
+    }
+
+    /// C33 : les fichiers donnés par le Finder (URL `file://`, espaces encodés) deviennent
+    /// des chemins ; une autre URL est ignorée.
+    #[test]
+    fn opened_urls_become_paths() {
+        let (url, expected) = if cfg!(windows) {
+            ("file:///C:/Mes%20docs/a.pdf", PathBuf::from(r"C:\Mes docs\a.pdf"))
+        } else {
+            ("file:///tmp/Mes%20docs/a.pdf", PathBuf::from("/tmp/Mes docs/a.pdf"))
+        };
+        let urls = vec![
+            tauri::Url::parse(url).unwrap(),
+            tauri::Url::parse("https://example.org/b.pdf").unwrap(),
+        ];
+        assert_eq!(file_paths(&urls), vec![expected]);
     }
 }

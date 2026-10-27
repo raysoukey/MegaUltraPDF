@@ -40,6 +40,8 @@ pub mod attachments;
 pub mod cleanup;
 pub mod compare;
 pub mod content;
+#[cfg(feature = "signature")]
+pub mod digital_signature;
 pub mod document;
 pub mod edit;
 pub mod engine;

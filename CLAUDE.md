@@ -104,3 +104,7 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   et PDFium génère un `/AP` au premier rendu) : la couleur se lit dans les objets ; couleurs
   posées **avant** toute apparence (`FPDFAnnot_SetColor` refuse ensuite) ; apparences
   personnalisées seulement sur `Ink` et `Stamp` ; aucun binding brut (`forbid(unsafe_code)`).
+- Formulaires (ADR-0009) : après `set_value`/`set_checked`, **recharger** le document
+  (`reload_from_bytes`) pour que PDFium régénère l'apparence (`/NeedAppearances`) ; le
+  `set_checked()` d'un bouton radio n'écrit que `/V` du bouton visé (radios en lecture seule
+  jusqu'à `lopdf`) ; `PdfPage::flatten` aplatit aussi les annotations.

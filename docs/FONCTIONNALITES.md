@@ -56,10 +56,10 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 
 ## Formulaires et signature
 
-- [ ] Afficher et remplir les champs AcroForm (texte, cases, radios, listes, dates) [4]
-- [ ] Navigation au clavier entre champs, enregistrement des valeurs [4]
-- [ ] Aplatir le formulaire [4]
-- [ ] Signature visuelle : image ou dessin, placement, enregistrement [4]
+- [x] Afficher et remplir les champs AcroForm : texte et cases remplissables ; radios, listes et combos affichés (modifiables au Lot 5 avec `lopdf`) ; XFA détecté [4]
+- [x] Navigation au clavier entre champs (contrôles HTML natifs), enregistrement des valeurs [4]
+- [x] Aplatir le formulaire [4]
+- [x] Signature visuelle : image ou dessin, placement, enregistrement (contenu de page) [4]
 - [ ] Signature numérique cryptographique (option désactivée par défaut) [7]
 
 ## Édition de contenu

@@ -9,6 +9,7 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [Lot 1 — Lecteur](lot-1.md)
 - [Lot 2 — Pages et documents](lot-2.md)
 - [Lot 3 — Annotations](lot-3.md)
+- [Lot 4 — Formulaires et signature visuelle](lot-4.md)
 
 ## Fiches concept (`/concept <nom>` pour en ajouter une)
 
@@ -22,3 +23,4 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [Traits et objets de trait (`dyn`)](concepts/traits-et-objets-de-trait.md)
 - [`enum` riches et `match` exhaustif](concepts/enums-et-match-exhaustif.md)
 - [Pattern builder](concepts/pattern-builder.md)
+- [`Drop` et ressources natives](concepts/drop-et-ressources-natives.md)

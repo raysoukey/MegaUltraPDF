@@ -322,3 +322,19 @@ fn corrupt_or_huge_image_is_refused() {
         "document inchangé"
     );
 }
+
+/// Séquence de l'application : rendu (environnement de formulaire actif), coche, rendu, relecture.
+#[test]
+fn checkbox_stays_checked_across_renders() {
+    let mut doc = form();
+    doc.render_page(0, 1.0).unwrap();
+    doc.set_field_value(0, 2, &FieldValue::Checked { checked: true })
+        .unwrap();
+    doc.render_page(0, 1.0).unwrap();
+    assert_eq!(doc.form_fields(0).unwrap()[2].checked, Some(true));
+    doc.set_field_value(0, 0, &text("Dupont")).unwrap();
+    doc.render_page(0, 1.0).unwrap();
+    let fields = doc.form_fields(0).unwrap();
+    assert_eq!(fields[0].value.as_deref(), Some("Dupont"));
+    assert_eq!(fields[2].checked, Some(true));
+}

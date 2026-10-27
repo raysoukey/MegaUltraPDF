@@ -69,6 +69,20 @@ stack ». Le programme tourne maintenant dans un thread créé avec 8 Mo
   de confiance ni révocation (réseau exclu), on prouve que le contenu n'a pas changé, pas
   qui a signé.
 - **Vérification croisée** : pyHanko juge nos signatures valides, et nous lisons les siennes.
+- **Un arbre qui se cite lui-même.** La relecture a construit un champ dont `/Kids` le
+  cite deux fois : sans mémoire des nœuds visités (`HashSet<ObjectId>`, `pdf.rs`,
+  `signature_fields`), la lecture faisait 2³³ appels **à l'ouverture** du fichier. Même
+  leçon que les signets cycliques du Lot 2 : un PDF est un graphe, pas un arbre.
+- **Décoder puis réencoder n'est pas neutre.** La crate `der` **trie** un `SET OF` en le
+  lisant ; réencodés, les attributs signés d'une signature tierce non triée ne sont plus
+  les octets signés, et une signature juste paraissait « fausse ». On lit maintenant les
+  octets d'origine (`cms.rs`, `signed_attrs_span`, un petit parcours TLV écrit à la main).
+- **Un échec qui laisse une trace.** `apply` annulait bien la modification refusée, mais
+  pas le drapeau `changed` posé en tête de la méthode : l'enregistrement suivant
+  réécrivait un fichier signé intact. Restaurer **tout** l'état, pas seulement le document.
+- **Ce qui n'est pas signé ne s'affiche pas.** Une révision ajoutée après coup peut
+  redéfinir le dictionnaire de signature (autre motif, autre date) : on n'affiche ses
+  champs que s'il se trouve **avant** le trou de `/Contents`, donc dans les octets signés.
 
 ## Exercices (plus tard, à votre rythme)
 

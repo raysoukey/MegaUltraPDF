@@ -113,7 +113,9 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   incrémentale** (`lopdf::IncrementalDocument`) et se vérifie sur `file_bytes`, jamais sur
   `to_bytes()` (réécriture PDFium). `SignatureStatus::Intact` = intégrité, **pas** identité
   certifiée. Les tests qui datent une signature doivent tomber dans la validité des
-  certificats de test (`fixtures/test-signer*.p12`, mot de passe `test`).
+  certificats de test (`fixtures/test-signer*.p12`, mot de passe `test`). Ne jamais vérifier
+  une signature CMS sur des attributs réencodés (`der` trie un `SET OF`) : octets d'origine
+  (`cms::signed_attrs_span`). Tout parcours d'un graphe PDF garde un ensemble des nœuds visités.
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
   produirait un paquet sans PDFium). Les ressources sont dans la surcouche
   `tauri.release.conf.json` car `tauri-build` les exige à chaque compilation.

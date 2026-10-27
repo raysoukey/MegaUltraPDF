@@ -41,13 +41,18 @@ l'autre d'une pile cryptographique ; aucune ne doit ajouter d'appel réseau.
    largeur fixe puis complétés en place, widget invisible sur la page 1, `/AcroForm
    /SigFlags 3`. Les signatures existantes restent valides. Le fichier produit est revérifié
    avant l'écriture atomique. Table de références reconstruite : réécriture préalable (refus
-   si le fichier est déjà signé). Refus : document chiffré, XFA, certifié sans modification
-   (`/DocMDP` `P = 1`).
+   si le fichier est déjà signé). Refus : document chiffré, XFA, certifié `/DocMDP` avec `P = 1`
+   ou `P = 2` (`P = 2` n'autorise la signature que dans un champ **existant** : en ajouter un
+   casserait la certification).
+   La lecture des signatures est bornée (nœuds visités une fois, plafonds) et n'analyse le
+   fichier que s'il contient `/ByteRange` ; le nom, le motif, le lieu et la date `/M` d'un
+   dictionnaire situé hors des octets signés (redéfini après coup) ne sont pas affichés.
 7. **CMS** : pile RustCrypto stable (`cms` 0.2 avec `builder`, `x509-cert`, `rsa` 0.9,
    `p256`, `sha2`), lecture PKCS#12 par `p12-keystore` (qui apporte la génération « der
    0.8 » : deux générations compilées, seuls des octets DER passent de l'une à l'autre ;
    préféré à des préversions). SHA-256, RSA PKCS#1 v1.5 ou ECDSA P-256, attributs signés
-   `content-type`, `message-digest`, `signing-time`.
+   `content-type`, `message-digest`, `signing-time`. La vérification porte sur les attributs
+   signés **tels qu'écrits** (jamais réencodés : `der` trie un `SET OF` à la lecture).
 8. **Vérifier ≠ certifier.** Le statut `Intact` dit : l'empreinte correspond, la signature
    est juste avec la clé du certificat joint, `content-type` vaut `id-data`, aucun attribut
    obligatoire n'est en double, la date déclarée tombe dans la validité du certificat, une

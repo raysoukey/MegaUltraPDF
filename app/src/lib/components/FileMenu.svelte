@@ -2,6 +2,7 @@
 <script lang="ts">
   import type { OpenDoc } from '$lib/state/documents.svelte';
   import { clearRecent, settings } from '$lib/state/settings.svelte';
+  import { shortcutKeyFor } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
   import { menuNav } from '$lib/actions/menuNav';
 
@@ -48,13 +49,28 @@
     { label: string; action: () => void; needsDoc: boolean; key?: string }[]
   >([
     { label: t.exportTitle, action: onexport, needsDoc: true },
-    { label: t.printTitle, action: onprint, needsDoc: true, key: 'Ctrl+P' },
-    { label: t.properties, action: onproperties, needsDoc: true, key: 'Ctrl+I' },
+    {
+      label: t.printTitle,
+      action: onprint,
+      needsDoc: true,
+      key: shortcutKeyFor('print') ?? undefined,
+    },
+    {
+      label: t.properties,
+      action: onproperties,
+      needsDoc: true,
+      key: shortcutKeyFor('properties') ?? undefined,
+    },
     { label: t.protectTitle, action: onprotect, needsDoc: true },
     { label: t.signMenu, action: onsign, needsDoc: true },
     { label: t.optimizeTitle, action: onoptimize, needsDoc: true },
     { label: t.compareTitle, action: oncompare, needsDoc: true },
-    { label: t.preferencesMenu, action: onpreferences, needsDoc: false, key: 'Ctrl+,' },
+    {
+      label: t.preferencesMenu,
+      action: onpreferences,
+      needsDoc: false,
+      key: shortcutKeyFor('preferences') ?? undefined,
+    },
   ]);
 </script>
 
@@ -77,7 +93,7 @@
     <ul class="dropdown" role="menu" aria-label={t.fileMenu} use:menuNav={{ onclose: close }}>
       <li role="none">
         <button type="button" role="menuitem" onclick={() => pick(onopen)}
-          >{t.openFile} <span class="key">Ctrl+O</span></button
+          >{t.openFile} <span class="key">{shortcutKeyFor('open')}</span></button
         >
       </li>
       {#if settings.recent.length > 0}

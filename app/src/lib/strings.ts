@@ -225,6 +225,8 @@ export const fr = {
     seen: 'VU',
   },
   keyShift: 'Maj',
+  keyCtrl: 'Ctrl',
+  working: 'Traitement en cours…',
   keyNames: {
     Delete: 'Suppr',
     Escape: 'Échap',
@@ -791,6 +793,8 @@ export const en: Strings = {
     seen: 'REVIEWED',
   },
   keyShift: 'Shift',
+  keyCtrl: 'Ctrl',
+  working: 'Working…',
   keyNames: {
     Delete: 'Del',
     Escape: 'Esc',

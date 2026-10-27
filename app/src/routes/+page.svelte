@@ -370,7 +370,7 @@
 <svelte:window onkeydown={onKeydown} />
 
 {#key ui.language}
-  <main>
+  <main aria-busy={docsState.busy}>
     <Toolbar
       {doc}
       onopen={onOpen}
@@ -403,6 +403,9 @@
     {/if}
     {#if doc && searchOpen}
       <SearchBar {doc} onclose={() => (searchOpen = false)} />
+    {/if}
+    {#if docsState.busy}
+      <p class="busy" role="status">{t.working}</p>
     {/if}
     {#if docsState.error}
       <p class="error" role="alert">{docsState.error}</p>

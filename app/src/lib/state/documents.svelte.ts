@@ -74,6 +74,7 @@ import { openErrorMessage } from '$lib/logic/errors';
 import { selectionRects } from '$lib/logic/selection';
 import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
+import { serialQueue } from '$lib/logic/queue';
 import { t } from '$lib/strings';
 import {
   forgetRecent,
@@ -505,19 +506,34 @@ export async function settleEdits(): Promise<void> {
   while (inFlight.length > 0) await Promise.allSettled([...inFlight]);
 }
 
-export async function applyEdit(doc: OpenDoc, command: EditCommand): Promise<boolean> {
-  docsState.error = null;
-  const pending = apiApplyEdit(doc.summary.id, command);
+/**
+ * Éditions, annulations et rétablissements passent **l'un après l'autre** (A23) : deux Ctrl+Z
+ * rapides annulent deux fois, le second voyant l'état laissé par le premier, au lieu
+ * d'afficher « rien à annuler ». Chaque opération est aussi attendue par l'enregistrement
+ * et la fermeture (`inFlight`).
+ */
+const editQueue = serialQueue();
+
+function queued<T>(task: () => Promise<T>): Promise<T> {
+  const pending = editQueue(task);
   inFlight.push(pending);
-  try {
-    afterEdit(doc, await pending);
-    return true;
-  } catch (e) {
-    reportError(t.editError, e);
-    return false;
-  } finally {
-    inFlight = inFlight.filter((p) => p !== pending);
-  }
+  void pending
+    .catch(() => undefined)
+    .finally(() => (inFlight = inFlight.filter((p) => p !== pending)));
+  return pending;
+}
+
+export async function applyEdit(doc: OpenDoc, command: EditCommand): Promise<boolean> {
+  return queued(async () => {
+    docsState.error = null;
+    try {
+      afterEdit(doc, await apiApplyEdit(doc.summary.id, command));
+      return true;
+    } catch (e) {
+      reportError(t.editError, e);
+      return false;
+    }
+  });
 }
 
 /** Valide le champ en cours de saisie (son `change` part au blur) puis attend les éditions. */
@@ -528,21 +544,26 @@ async function flushPendingInput(): Promise<void> {
 }
 
 export async function undo(doc: OpenDoc): Promise<void> {
-  if (!doc.edit.can_undo) return;
-  try {
-    afterEdit(doc, await undoEdit(doc.summary.id));
-  } catch (e) {
-    reportError(t.editError, e);
-  }
+  // L'état est relu **dans** la file : après une annulation précédente, pas avant.
+  await queued(async () => {
+    if (!doc.edit.can_undo) return;
+    try {
+      afterEdit(doc, await undoEdit(doc.summary.id));
+    } catch (e) {
+      reportError(t.editError, e);
+    }
+  });
 }
 
 export async function redo(doc: OpenDoc): Promise<void> {
-  if (!doc.edit.can_redo) return;
-  try {
-    afterEdit(doc, await redoEdit(doc.summary.id));
-  } catch (e) {
-    reportError(t.editError, e);
-  }
+  await queued(async () => {
+    if (!doc.edit.can_redo) return;
+    try {
+      afterEdit(doc, await redoEdit(doc.summary.id));
+    } catch (e) {
+      reportError(t.editError, e);
+    }
+  });
 }
 
 /** Enregistre à son chemin ; un document sans chemin passe par « Enregistrer sous ». */
@@ -654,9 +675,15 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
 export async function ensureAnnotations(doc: OpenDoc, page: number): Promise<Annotation[]> {
   const cached = doc.annotations[page];
   if (cached) return cached;
-  const list = await fetchAnnotations(doc.summary.id, page).catch(() => []);
-  doc.annotations[page] = list;
-  return list;
+  try {
+    const list = await fetchAnnotations(doc.summary.id, page);
+    doc.annotations[page] = list;
+    return list;
+  } catch (e) {
+    // Rien en cache : la prochaine lecture réessaiera (B27).
+    reportError(t.editError, e);
+    return [];
+  }
 }
 
 /**
@@ -770,17 +797,27 @@ export async function deleteSelectedAnnotation(doc: OpenDoc): Promise<void> {
 
 export async function ensureFormInfo(doc: OpenDoc): Promise<FormInfo | null> {
   if (doc.formInfo) return doc.formInfo;
-  const info = await fetchFormInfo(doc.summary.id).catch(() => null);
-  doc.formInfo = info;
-  return info;
+  try {
+    const info = await fetchFormInfo(doc.summary.id);
+    doc.formInfo = info;
+    return info;
+  } catch (e) {
+    reportError(t.editError, e);
+    return null;
+  }
 }
 
 export async function ensureFormFields(doc: OpenDoc, page: number): Promise<FormField[]> {
   const cached = doc.formFields[page];
   if (cached) return cached;
-  const list = await fetchFormFields(doc.summary.id, page).catch(() => []);
-  doc.formFields[page] = list;
-  return list;
+  try {
+    const list = await fetchFormFields(doc.summary.id, page);
+    doc.formFields[page] = list;
+    return list;
+  } catch (e) {
+    reportError(t.editError, e);
+    return [];
+  }
 }
 
 /** Champs de toutes les pages (panneau du formulaire) : une seule requête, sans cache d'erreur. */
@@ -833,9 +870,14 @@ export async function insertSignature(
 export async function ensureObjects(doc: OpenDoc, page: number): Promise<PageObject[]> {
   const cached = doc.pageObjects[page];
   if (cached) return cached;
-  const list = await fetchPageObjects(doc.summary.id, page).catch(() => []);
-  doc.pageObjects[page] = list;
-  return list;
+  try {
+    const list = await fetchPageObjects(doc.summary.id, page);
+    doc.pageObjects[page] = list;
+    return list;
+  } catch (e) {
+    reportError(t.editError, e);
+    return [];
+  }
 }
 
 export function selectObject(doc: OpenDoc, target: { page: number; index: number } | null): void {

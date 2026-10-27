@@ -33,3 +33,14 @@ export function initialPosition(s: PositionSettings, path: string | null): Start
     return { page: remembered.page, scale: remembered.scale, zoomMode: remembered.zoomMode };
   return { page: 0, scale: s.scale, zoomMode: s.defaultZoomMode };
 }
+
+/**
+ * Garde les `keep` positions les plus récemment mémorisées (ordre d'insertion des clés :
+ * mémoriser une position la replace en dernier). Sans borne, les préférences grossiraient
+ * à chaque fichier ouvert (A20).
+ */
+export function boundPositions<T>(positions: Record<string, T>, keep = 100): Record<string, T> {
+  const keys = Object.keys(positions);
+  if (keys.length <= keep) return positions;
+  return Object.fromEntries(keys.slice(keys.length - keep).map((k) => [k, positions[k]]));
+}

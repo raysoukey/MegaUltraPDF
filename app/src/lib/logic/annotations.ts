@@ -3,8 +3,7 @@
 // quadrilatères depuis une sélection de texte, conversions écran → PDF. Tout en points PDF
 // sauf mention contraire.
 
-import type { Annotation, AnnotationKind, PageSize, Rect, Rotation } from '$lib/api';
-import { cssPointToPdf, type CssRect } from './geometry';
+import type { Annotation, AnnotationKind, Rect } from '$lib/api';
 import type { Pt } from './tools';
 
 export type HandleId = 'nw' | 'ne' | 'sw' | 'se' | 'move';
@@ -111,15 +110,6 @@ export function noteIconRect(a: Annotation): Rect {
     w: NOTE_ICON_SIZE,
     h: NOTE_ICON_SIZE,
   };
-}
-
-/** Rectangle CSS de la page affichée → rectangle PDF, quelle que soit la rotation. */
-export function toPdfRect(css: CssRect, page: PageSize, scale: number, rotation: Rotation): Rect {
-  const a = cssPointToPdf(css.left, css.top, page, scale, rotation);
-  const b = cssPointToPdf(css.left + css.width, css.top + css.height, page, scale, rotation);
-  const x = Math.min(a.x, b.x);
-  const y = Math.min(a.y, b.y);
-  return { x, y, w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
 }
 
 /** Index à sélectionner après un déplacement : une note garde le sien, une forme recréée

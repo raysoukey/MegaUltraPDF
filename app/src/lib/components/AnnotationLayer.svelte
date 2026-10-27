@@ -3,7 +3,7 @@
   import type { Annotation, Rect } from '$lib/api';
   import { handlesFor, hitTest, noteIconRect, resize, type HandleId } from '$lib/logic/annotations';
   import { cssPointToPdf, pdfRectToCss, type CssRect } from '$lib/logic/geometry';
-  import { isContentTool } from '$lib/logic/content';
+  import { isContentTool, rectFromCorners } from '$lib/logic/content';
   import {
     beginDraft,
     extendDraft,
@@ -96,12 +96,7 @@
   }
   function draftRect(d: Draft): Rect {
     const [a, b = a] = d.points;
-    return {
-      x: Math.min(a.x, b.x),
-      y: Math.min(a.y, b.y),
-      w: Math.abs(a.x - b.x),
-      h: Math.abs(a.y - b.y),
-    };
+    return rectFromCorners(a, b);
   }
 
   function commit(d: Draft, contents: string) {

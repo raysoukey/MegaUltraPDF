@@ -79,3 +79,42 @@ export function pageAtScroll(
   }
   return layout.length - 1;
 }
+
+/** Une page à monter dans la visionneuse, avec sa priorité de rendu. */
+export interface RenderSlot {
+  index: number;
+  priority: 'visible' | 'prefetch';
+  interactive: boolean;
+}
+
+/**
+ * Les pages à monter, **une entrée par page** : visibles d'abord (interactives), puis celles
+ * préchargées. Une seule liste, clé = numéro de page : une page qui passe de « préchargée » à
+ * « visible » garde son composant (pas de clignotement, A15).
+ */
+export function pageSlots(visible: number[], prefetch: number[]): RenderSlot[] {
+  const seen = new Set(visible);
+  return [
+    ...visible.map((index) => ({ index, priority: 'visible' as const, interactive: true })),
+    ...prefetch
+      .filter((index) => !seen.has(index))
+      .map((index) => ({ index, priority: 'prefetch' as const, interactive: false })),
+  ];
+}
+
+/**
+ * Molette en mode page unique (A16) : page suivante (`1`) quand on pousse vers le bas en
+ * bas de la page, précédente (`-1`) vers le haut en haut ; sinon `0` (on défile la page).
+ */
+export function wheelPageStep(
+  deltaY: number,
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+): -1 | 0 | 1 {
+  const atTop = scrollTop <= 1;
+  const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+  if (deltaY > 0 && atBottom) return 1;
+  if (deltaY < 0 && atTop) return -1;
+  return 0;
+}

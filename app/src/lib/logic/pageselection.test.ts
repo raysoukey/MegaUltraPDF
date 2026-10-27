@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { clickSelection, moveTarget, reorder, shiftAfterInsert } from './pageselection';
+import { clickSelection, moveTarget, reorder, shiftAfterInsert, slotAtY } from './pageselection';
 
 describe('clickSelection', () => {
   it('plain click selects only the clicked page and sets the anchor', () => {
@@ -64,5 +64,20 @@ describe('shiftAfterInsert', () => {
     expect(shiftAfterInsert([1, 3], 1, 1)).toEqual([2, 4]);
     expect(shiftAfterInsert([0, 4], 2, 3)).toEqual([0, 7]);
     expect(shiftAfterInsert([], 0, 1)).toEqual([]);
+  });
+});
+
+describe('slotAtY (A22)', () => {
+  // Trois vignettes de 100 px, espacées de 20 px.
+  const tops = [0, 120, 240];
+  const heights = [100, 100, 100];
+  it('a drop between two thumbnails goes between them, not at the end', () => {
+    expect(slotAtY(110, tops, heights)).toBe(1);
+    expect(slotAtY(230, tops, heights)).toBe(2);
+  });
+  it('upper half before the page, lower half after', () => {
+    expect(slotAtY(30, tops, heights)).toBe(0);
+    expect(slotAtY(80, tops, heights)).toBe(1);
+    expect(slotAtY(400, tops, heights)).toBe(3);
   });
 });

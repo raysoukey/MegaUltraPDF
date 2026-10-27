@@ -95,7 +95,7 @@
               </tr>
             {/each}
             <tr><td class="keys"><kbd>{t.ctrlWheel}</kbd></td><td>{t.zoomIn} / {t.zoomOut}</td></tr>
-            <tr><td class="keys"><kbd>Ctrl+C</kbd></td><td>{t.copy}</td></tr>
+            <tr><td class="keys"><kbd>{t.keyCtrl}+C</kbd></td><td>{t.copy}</td></tr>
           </tbody>
         </table>
       {:else}

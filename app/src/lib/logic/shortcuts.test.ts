@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { actionFor, shortcutHelp } from './shortcuts';
+import { actionFor, shortcutHelp, shortcutKeyFor } from './shortcuts';
+import { fr } from '$lib/strings';
+// @ts-expect-error type error without @types/node package (comme vite.config.js)
+import { readdirSync, readFileSync } from 'node:fs';
 
 const key = (k: string, mods: Partial<{ ctrl: boolean; shift: boolean; alt: boolean }> = {}) => ({
   key: k,
@@ -66,5 +69,30 @@ describe('shortcutHelp', () => {
     expect(new Set(actions).size).toBe(actions.length);
     expect(shortcutHelp().find((h) => h.action === 'open')?.keys).toContain('Ctrl+O');
     expect(shortcutHelp().every((h) => h.label.length > 0)).toBe(true);
+  });
+});
+
+describe('shortcut labels (A13, B10)', () => {
+  it('are built from the shortcut table and the translated key names', () => {
+    expect(shortcutKeyFor('open')).toBe(`${fr.keyCtrl}+O`);
+    expect(shortcutKeyFor('saveAs')).toBe(`${fr.keyCtrl}+${fr.keyShift}+S`);
+    expect(shortcutKeyFor('toolNote')).toBe('N');
+  });
+  it('no component hard-codes a « Ctrl+ » label', () => {
+    const root = new URL('../../../../', import.meta.url);
+    const dirs = ['app/src/lib/components', 'app/src/routes'];
+    const offenders = dirs.flatMap((dir) =>
+      (readdirSync(new URL(dir, root), { recursive: true, encoding: 'utf8' }) as string[])
+        .filter((f) => f.endsWith('.svelte'))
+        .map((f) => `${dir}/${f.replaceAll('\\', '/')}`)
+        .filter((p) =>
+          (readFileSync(new URL(p, root), 'utf8') as string)
+            .split('\n')
+            // Les commentaires peuvent citer une touche ; seul le texte affiché compte.
+            .filter((line) => !/^\s*(\/\/|\/\*|\*|<!--)/.test(line))
+            .some((line) => /Ctrl\+/.test(line)),
+        ),
+    );
+    expect(offenders).toEqual([]);
   });
 });

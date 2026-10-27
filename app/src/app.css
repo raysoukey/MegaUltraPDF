@@ -9,6 +9,8 @@
   --text: #1d1d1f;
   --muted: #5d5d62;
   --accent: #2563eb;
+  /* Texte sur la couleur d'accent (boutons principaux, onglet actif) : ≥ 4,5:1. */
+  --on-accent: #ffffff;
   --accent-soft: rgba(37, 99, 235, 0.18);
   --danger-bg: #fde8e8;
   --danger-text: #8a1c1c;
@@ -28,6 +30,7 @@
     --text: #ececef;
     --muted: #a0a0a8;
     --accent: #60a5fa;
+    --on-accent: #0b1220;
     --accent-soft: rgba(96, 165, 250, 0.22);
     --danger-bg: #3b1d1d;
     --danger-text: #fca5a5;
@@ -44,6 +47,7 @@
   --text: #ececef;
   --muted: #a0a0a8;
   --accent: #60a5fa;
+  --on-accent: #0b1220;
   --accent-soft: rgba(96, 165, 250, 0.22);
   --danger-bg: #3b1d1d;
   --danger-text: #fca5a5;
@@ -159,5 +163,5 @@ select {
 
 .dialog .actions .primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }

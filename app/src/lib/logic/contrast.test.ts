@@ -26,6 +26,11 @@ describe('theme tokens', () => {
       expect(contrastRatio(tk['--danger-text'], tk['--danger-bg'])).toBeGreaterThanOrEqual(4.5);
       // Contour de focus et éléments d'interface : 3:1 (WCAG 1.4.11).
       expect(contrastRatio(tk['--accent'], tk['--panel'])).toBeGreaterThanOrEqual(3);
+      // Texte posé sur la couleur d'accent (boutons principaux, onglet actif).
+      expect(contrastRatio(tk['--on-accent'], tk['--accent'])).toBeGreaterThanOrEqual(4.5);
     });
   }
+  it('the system dark block declares the same tokens as the explicit dark theme', () => {
+    expect(themeTokens(css, 'dark-system')).toEqual(themeTokens(css, 'dark'));
+  });
 });

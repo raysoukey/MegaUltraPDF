@@ -17,7 +17,7 @@
 
   let { onclose }: { onclose: () => void } = $props();
 
-  type Simple = 'theme' | 'zoomMode' | 'viewMode' | 'author' | 'restorePositions';
+  type Simple = 'theme' | 'defaultZoomMode' | 'viewMode' | 'author' | 'restorePositions';
 
   /** Modifie un réglage simple puis l'enregistre (sauvegarde différée). */
   function set<K extends Simple>(key: K, value: (typeof settings)[K]) {
@@ -59,8 +59,8 @@
       <label for="pref-zoom">{t.prefZoom}</label>
       <select
         id="pref-zoom"
-        value={settings.zoomMode}
-        onchange={(e) => set('zoomMode', e.currentTarget.value as ZoomMode)}
+        value={settings.defaultZoomMode}
+        onchange={(e) => set('defaultZoomMode', e.currentTarget.value as ZoomMode)}
       >
         <option value="fitWidth">{t.fitWidth}</option>
         <option value="fitPage">{t.fitPage}</option>

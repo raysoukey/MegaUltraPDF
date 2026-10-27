@@ -16,6 +16,10 @@ export const fr = {
   pages: (n: number) => `${n} page${n > 1 ? 's' : ''}`,
   pageOf: (n: number, total: number) => `Page ${n} / ${total}`,
   openError: (message: string) => `Impossible d'ouvrir le document : ${message}`,
+  errorKinds: {
+    io: 'fichier introuvable ou illisible.',
+    invalid_pdf: 'ce fichier n’est pas un PDF valide, ou il est endommagé.',
+  },
   passwordRequired: 'Ce document est protégé par un mot de passe.',
   wrongPassword: 'Mot de passe incorrect.',
   passwordPrompt: 'Mot de passe du document',
@@ -136,6 +140,13 @@ export const fr = {
   licenseVersion: 'Version',
   licenseLicense: 'Licence',
   licenseSeeFile: 'voir fichier',
+  stamps: {
+    approved: 'APPROUVÉ',
+    draft: 'BROUILLON',
+    confidential: 'CONFIDENTIEL',
+    rejected: 'REFUSÉ',
+    seen: 'VU',
+  },
   keyShift: 'Maj',
   keyNames: {
     Delete: 'Suppr',
@@ -495,6 +506,10 @@ export const en: Strings = {
   pages: (n: number) => `${n} page${n > 1 ? 's' : ''}`,
   pageOf: (n: number, total: number) => `Page ${n} of ${total}`,
   openError: (message: string) => `Cannot open the document: ${message}`,
+  errorKinds: {
+    io: 'the file cannot be found or read.',
+    invalid_pdf: 'this file is not a valid PDF, or it is damaged.',
+  },
   passwordRequired: 'This document is password-protected.',
   wrongPassword: 'Wrong password.',
   passwordPrompt: 'Document password',
@@ -615,6 +630,13 @@ export const en: Strings = {
   licenseVersion: 'Version',
   licenseLicense: 'Licence',
   licenseSeeFile: 'see file',
+  stamps: {
+    approved: 'APPROVED',
+    draft: 'DRAFT',
+    confidential: 'CONFIDENTIAL',
+    rejected: 'REJECTED',
+    seen: 'REVIEWED',
+  },
   keyShift: 'Shift',
   keyNames: {
     Delete: 'Del',

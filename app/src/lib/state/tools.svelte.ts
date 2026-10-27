@@ -3,7 +3,7 @@
 // diffèrent : un surlignage est jaune et translucide, une forme rouge et opaque…).
 
 import type { Color, Style } from '$lib/api';
-import type { Tool } from '$lib/logic/tools';
+import type { StampId, Tool } from '$lib/logic/tools';
 
 export type StyleFamily = 'markup' | 'shape' | 'text' | 'note';
 
@@ -34,19 +34,16 @@ const DEFAULTS: Record<StyleFamily, Style> = {
   note: { color: YELLOW, fill: null, opacity: 1, stroke_width: 1, font_size: 12 },
 };
 
-/** Libellés des tampons prédéfinis. */
-export const STAMPS = ['APPROUVÉ', 'BROUILLON', 'CONFIDENTIEL', 'REFUSÉ', 'VU'] as const;
-
 interface ToolState {
   tool: Tool;
   styles: Record<StyleFamily, Style>;
-  stamp: string;
+  stamp: StampId;
 }
 
 export const toolState = $state<ToolState>({
   tool: 'select',
   styles: structuredClone(DEFAULTS),
-  stamp: STAMPS[1],
+  stamp: 'draft',
 });
 
 export function setTool(tool: Tool): void {
@@ -64,6 +61,6 @@ export function updateStyle(patch: Partial<Style>): void {
   toolState.styles[family] = { ...toolState.styles[family], ...patch };
 }
 
-export function setStamp(label: string): void {
-  toolState.stamp = label;
+export function setStamp(id: StampId): void {
+  toolState.stamp = id;
 }

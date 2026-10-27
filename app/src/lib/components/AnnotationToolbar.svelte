@@ -9,7 +9,8 @@
     type OpenDoc,
   } from '$lib/state/documents.svelte';
   import { saveSettings, settings } from '$lib/state/settings.svelte';
-  import { currentStyle, setStamp, setTool, STAMPS, toolState } from '$lib/state/tools.svelte';
+  import { currentStyle, setStamp, setTool, toolState } from '$lib/state/tools.svelte';
+  import { STAMP_IDS, stampLabel, type StampId } from '$lib/logic/tools';
   import { t } from '$lib/strings';
   import ContentToolbar from './ContentToolbar.svelte';
   import StylePicker from './StylePicker.svelte';
@@ -70,10 +71,10 @@
       <select
         aria-label={t.stampLabel}
         value={toolState.stamp}
-        onchange={(e) => setStamp((e.currentTarget as HTMLSelectElement).value)}
+        onchange={(e) => setStamp((e.currentTarget as HTMLSelectElement).value as StampId)}
       >
-        {#each STAMPS as s (s)}
-          <option value={s}>{s}</option>
+        {#each STAMP_IDS as s (s)}
+          <option value={s}>{stampLabel(s)}</option>
         {/each}
       </select>
     {/if}

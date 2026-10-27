@@ -63,6 +63,7 @@ import {
 import { quadsFromSelection, selectionAfterMove } from '$lib/logic/annotations';
 import { fileName } from '$lib/logic/labels';
 import { initialPosition } from '$lib/logic/position';
+import { openErrorMessage } from '$lib/logic/errors';
 import { selectionRects } from '$lib/logic/selection';
 import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
@@ -228,7 +229,7 @@ export async function openPath(path: string, password?: string): Promise<boolean
         docsState.passwordPrompt = { path, error: t.wrongPassword };
       } else {
         if (e.kind === 'io') forgetRecent(path);
-        docsState.error = t.openError(e.message);
+        docsState.error = openErrorMessage(e);
       }
     } else {
       docsState.error = t.openError(String(e));

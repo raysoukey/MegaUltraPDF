@@ -32,6 +32,11 @@ export interface Settings {
   language: LanguagePreference;
   /** Rouvrir un fichier à la page et au zoom où on l'avait laissé. */
   restorePositions: boolean;
+  /**
+   * Zoom d'ouverture d'un fichier inconnu, choisi dans les préférences. Distinct de
+   * `zoomMode`, que chaque zoom met à jour (dernier zoom utilisé).
+   */
+  defaultZoomMode: ZoomMode;
 }
 
 const DEFAULTS: Settings = {
@@ -45,6 +50,7 @@ const DEFAULTS: Settings = {
   author: '',
   language: 'system',
   restorePositions: true,
+  defaultZoomMode: 'fitWidth',
 };
 
 const STORE_FILE = 'settings.json';

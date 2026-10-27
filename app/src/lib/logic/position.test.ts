@@ -4,7 +4,9 @@ import { initialPosition } from './position';
 
 const base = {
   scale: 1.25,
-  zoomMode: 'fitWidth' as const,
+  // Le dernier zoom utilisé (« custom ») ne doit pas remplacer le zoom choisi pour l'ouverture.
+  zoomMode: 'custom' as const,
+  defaultZoomMode: 'fitWidth' as const,
   restorePositions: true,
   positions: { 'C:/a.pdf': { page: 7, scale: 2, zoomMode: 'custom' as const } },
 };
@@ -20,6 +22,13 @@ describe('initialPosition', () => {
       zoomMode: 'fitWidth',
     });
     expect(initialPosition(base, null)).toEqual({ page: 0, scale: 1.25, zoomMode: 'fitWidth' });
+  });
+  it('uses the last scale when the preferred opening zoom is "last zoom used"', () => {
+    expect(initialPosition({ ...base, defaultZoomMode: 'custom' }, 'C:/b.pdf')).toEqual({
+      page: 0,
+      scale: 1.25,
+      zoomMode: 'custom',
+    });
   });
   it('ignores the remembered position when restorePositions is off', () => {
     expect(initialPosition({ ...base, restorePositions: false }, 'C:/a.pdf')).toEqual({

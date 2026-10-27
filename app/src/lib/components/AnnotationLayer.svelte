@@ -9,6 +9,7 @@
     extendDraft,
     finishDraft,
     isDrawingTool,
+    stampLabel,
     type Draft,
     type Pt,
   } from '$lib/logic/tools';
@@ -138,7 +139,7 @@
       const d = beginDraft(tool, p);
       if (!d) return;
       if (tool === 'stamp') {
-        commit(d, toolState.stamp);
+        commit(d, stampLabel(toolState.stamp));
         return;
       }
       // Note et texte : la saisie s'ouvre au relâchement (un champ ouvert pendant le

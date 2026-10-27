@@ -21,8 +21,18 @@ export function contrastRatio(a: string, b: string): number {
  * Les jetons `--nom: #rrggbb;` d'un thème : le bloc `:root { … }` pour le clair, le bloc
  * `:root[data-theme='dark'] { … }` pour le sombre.
  */
-export function themeTokens(css: string, theme: 'light' | 'dark'): Record<string, string> {
-  const marker = theme === 'light' ? ':root {' : ":root[data-theme='dark'] {";
+export function themeTokens(
+  css: string,
+  theme: 'light' | 'dark' | 'dark-system',
+): Record<string, string> {
+  // `dark-system` : le bloc appliqué quand le système est en sombre (`@media`), qui doit
+  // rester identique au thème sombre choisi explicitement.
+  const marker =
+    theme === 'light'
+      ? ':root {'
+      : theme === 'dark'
+        ? ":root[data-theme='dark'] {"
+        : ":root:not([data-theme='light']) {";
   const start = css.indexOf(marker);
   const block = start < 0 ? '' : css.slice(start, css.indexOf('}', start));
   const tokens: Record<string, string> = {};

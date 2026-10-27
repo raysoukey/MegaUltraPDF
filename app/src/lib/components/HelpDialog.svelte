@@ -150,7 +150,7 @@
   }
   .tabs [aria-selected='true'] {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
   .panel {
     max-height: 55vh;

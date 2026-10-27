@@ -24,6 +24,7 @@
     ontogglesearch,
     onproperties,
     onhelp,
+    onpreferences,
     onmerge,
     onsplit,
     onexport,
@@ -40,6 +41,7 @@
     ontogglesearch: () => void;
     onproperties: () => void;
     onhelp: () => void;
+    onpreferences: () => void;
     onmerge: () => void;
     onsplit: () => void;
     onexport: () => void;
@@ -87,6 +89,7 @@
       {onprotect}
       {onoptimize}
       {oncompare}
+      {onpreferences}
     />
     <button
       aria-label={t.sidebar}
@@ -239,11 +242,8 @@
       <option value="light">{t.themeLight}</option>
       <option value="dark">{t.themeDark}</option>
     </select>
-    <button
-      aria-label={t.shortcutsHelp}
-      type="button"
-      title="{t.shortcutsHelp} (F1)"
-      onclick={onhelp}>?</button
+    <button aria-label={t.helpTitle} type="button" title="{t.helpTitle} (F1)" onclick={onhelp}
+      >?</button
     >
   </div>
 </header>

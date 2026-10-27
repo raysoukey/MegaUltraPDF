@@ -21,7 +21,8 @@
   import PasswordDialog from '$lib/components/PasswordDialog.svelte';
   import PropertiesDialog from '$lib/components/PropertiesDialog.svelte';
   import SearchBar from '$lib/components/SearchBar.svelte';
-  import ShortcutsHelp from '$lib/components/ShortcutsHelp.svelte';
+  import HelpDialog from '$lib/components/HelpDialog.svelte';
+  import PreferencesDialog from '$lib/components/PreferencesDialog.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import SplitDialog from '$lib/components/SplitDialog.svelte';
   import Tabs from '$lib/components/Tabs.svelte';
@@ -80,6 +81,7 @@
   let searchOpen = $state(false);
   let propertiesOpen = $state(false);
   let helpOpen = $state(false);
+  let preferencesOpen = $state(false);
   let mergeOpen = $state(false);
   let splitOpen = $state(false);
   let watermarkOpen = $state(false);
@@ -216,9 +218,13 @@
     // Ctrl+P n'imprime jamais la fenêtre telle quelle (impression native du WebView) : seule
     // la vue d'impression le fait, même si un dialogue est ouvert.
     if (action === 'print') e.preventDefault();
-    // Un dialogue modal garde le clavier pour lui (sauf Échap).
+    // Un dialogue modal garde le clavier pour lui (sauf Échap ; F1 referme l'aide).
     if (
       (docsState.closePrompt ||
+        docsState.passwordPrompt ||
+        propertiesOpen ||
+        preferencesOpen ||
+        (helpOpen && action !== 'help') ||
         mergeOpen ||
         splitOpen ||
         editing ||
@@ -317,6 +323,9 @@
       case 'help':
         helpOpen = !helpOpen;
         break;
+      case 'preferences':
+        preferencesOpen = true;
+        break;
       case 'properties':
         if (doc) propertiesOpen = true;
         break;
@@ -340,6 +349,7 @@
         else if (mergeOpen) mergeOpen = false;
         else if (splitOpen) splitOpen = false;
         else if (helpOpen) helpOpen = false;
+        else if (preferencesOpen) preferencesOpen = false;
         else if (propertiesOpen) propertiesOpen = false;
         else if (docsState.passwordPrompt) cancelPassword();
         else if (searchOpen) searchOpen = false;
@@ -365,6 +375,7 @@
       ontogglesearch={() => (searchOpen = !searchOpen)}
       onproperties={() => (propertiesOpen = true)}
       onhelp={() => (helpOpen = true)}
+      onpreferences={() => (preferencesOpen = true)}
       onmerge={() => (mergeOpen = true)}
       onsplit={() => doc && (splitOpen = true)}
       onexport={() => doc && (exportOpen = true)}
@@ -421,7 +432,10 @@
       <PropertiesDialog {doc} onclose={() => (propertiesOpen = false)} />
     {/if}
     {#if helpOpen}
-      <ShortcutsHelp onclose={() => (helpOpen = false)} />
+      <HelpDialog onclose={() => (helpOpen = false)} />
+    {/if}
+    {#if preferencesOpen}
+      <PreferencesDialog onclose={() => (preferencesOpen = false)} />
     {/if}
     {#if mergeOpen}
       <MergeDialog onclose={() => (mergeOpen = false)} />

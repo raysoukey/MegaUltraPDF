@@ -49,6 +49,10 @@ describe('actionFor', () => {
     expect(actionFor(key('Delete'))).toBe('deleteAnnotation');
     expect(actionFor(key('d', { ctrl: true, shift: true }))).toBe('split');
   });
+  it('opens the preferences with Ctrl+, (Lot 7)', () => {
+    expect(actionFor(key(',', { ctrl: true }))).toBe('preferences');
+    expect(actionFor(key(','))).toBeNull();
+  });
   it('ignores unknown or wrongly modified keys', () => {
     expect(actionFor(key('o'))).toBeNull();
     expect(actionFor(key('r', { ctrl: true }))).toBeNull();

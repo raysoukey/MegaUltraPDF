@@ -15,6 +15,7 @@
     onprotect,
     onoptimize,
     oncompare,
+    onpreferences,
   }: {
     doc: OpenDoc | null;
     onopen: () => void;
@@ -25,6 +26,7 @@
     onprotect: () => void;
     onoptimize: () => void;
     oncompare: () => void;
+    onpreferences: () => void;
   } = $props();
 
   let open = $state(false);
@@ -47,6 +49,7 @@
     { label: t.protectTitle, action: onprotect, needsDoc: true },
     { label: t.optimizeTitle, action: onoptimize, needsDoc: true },
     { label: t.compareTitle, action: oncompare, needsDoc: true },
+    { label: t.preferencesMenu, action: onpreferences, needsDoc: false, key: 'Ctrl+,' },
   ]);
 </script>
 

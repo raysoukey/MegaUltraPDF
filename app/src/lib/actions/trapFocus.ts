@@ -10,9 +10,12 @@ import { nextFocus } from '$lib/logic/focus';
 const FOCUSABLE =
   'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
 
-/** Un élément peut-il recevoir le focus maintenant ? (ni désactivé, ni caché). */
+/**
+ * Un élément peut-il recevoir le focus par Tab maintenant ? Ni désactivé, ni caché, ni
+ * sorti de l'ordre de tabulation (`tabindex="-1"`, ex. les onglets inactifs de l'aide).
+ */
 function usable(el: HTMLElement): boolean {
-  if ((el as HTMLButtonElement).disabled) return false;
+  if ((el as HTMLButtonElement).disabled || el.tabIndex < 0) return false;
   if (el.closest('[hidden], [inert]')) return false;
   return el.getClientRects().length > 0;
 }

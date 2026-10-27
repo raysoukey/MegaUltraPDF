@@ -80,6 +80,54 @@ export const fr = {
   copied: 'Texte copié.',
   loading: 'Chargement…',
   ctrlWheel: 'Ctrl+molette',
+  // Préférences et aide (Lot 7)
+  preferencesMenu: 'Préférences…',
+  preferencesTitle: 'Préférences',
+  prefLanguage: 'Langue',
+  languageSystem: 'Langue du système',
+  languageFr: 'Français',
+  languageEn: 'English',
+  prefZoom: 'Zoom à l’ouverture',
+  prefZoomCustom: 'Dernier zoom utilisé',
+  prefView: 'Affichage',
+  prefAuthor: 'Nom d’auteur des annotations',
+  prefRestore: 'Rouvrir chaque fichier à la page et au zoom où je l’ai laissé',
+  prefRecent: (n: number) =>
+    n === 0 ? 'Aucun fichier récent' : n === 1 ? '1 fichier récent' : `${n} fichiers récents`,
+  helpTitle: 'Aide',
+  helpTabStart: 'Prise en main',
+  helpTabShortcuts: 'Raccourcis',
+  helpTabAbout: 'À propos',
+  helpSections: [
+    {
+      title: 'Ouvrir et lire',
+      body: 'Ouvrez un PDF avec Ctrl+O, le menu Fichier ou en le glissant sur la fenêtre. Plusieurs documents s’ouvrent en onglets. La barre latérale montre les vignettes, les signets, les annotations, les champs et les pièces jointes.',
+    },
+    {
+      title: 'Annoter',
+      body: 'Sélectionnez du texte puis surlignez (H), soulignez (U) ou barrez (K). Les outils note (N), texte (T) et dessin (D) se placent d’un clic sur la page. Double-cliquez une annotation pour la modifier.',
+    },
+    {
+      title: 'Remplir un formulaire',
+      body: 'Cliquez dans un champ pour le remplir. Le panneau Champs les liste tous ; une signature manuscrite se dessine dans un champ de signature. Enregistrez avec Ctrl+S.',
+    },
+    {
+      title: 'Éditer les pages et le contenu',
+      body: 'Les vignettes permettent de réordonner, pivoter, supprimer ou extraire des pages. Fusionnez (Ctrl+M) et scindez (Ctrl+Maj+D) des documents. Les outils de contenu déplacent ou suppriment texte et images, ajoutent un filigrane, une numérotation ou un recadrage, et caviardent définitivement.',
+    },
+    {
+      title: 'Exporter et imprimer',
+      body: 'Le menu Fichier exporte les pages en images ou le texte, imprime (Ctrl+P), compare deux documents et optimise la taille du fichier.',
+    },
+    {
+      title: 'Protéger',
+      body: 'Fichier ▸ Protéger chiffre le document (AES-256) avec un mot de passe d’ouverture et des permissions. Un document protégé s’ouvre avec son mot de passe et peut être déprotégé.',
+    },
+  ],
+  aboutVersion: (v: string) => (v ? `Version ${v}` : ''),
+  aboutTagline: 'Lecteur et éditeur PDF libre, sans publicité ni télémétrie.',
+  aboutLicense: 'Logiciel libre sous licence GPL-3.0-or-later.',
+  aboutPdfium: 'Rendu PDF : PDFium (Google), licence BSD-3-Clause.',
   keyShift: 'Maj',
   keyNames: {
     Delete: 'Suppr',
@@ -422,6 +470,7 @@ export const fr = {
     toolInk: 'Outil Dessiner',
     deleteAnnotation: 'Supprimer l’annotation ou l’objet sélectionné',
     print: 'Imprimer',
+    preferences: 'Préférences',
   },
 };
 
@@ -502,6 +551,54 @@ export const en: Strings = {
   copied: 'Text copied.',
   loading: 'Loading…',
   ctrlWheel: 'Ctrl+wheel',
+  // Preferences and help (Lot 7)
+  preferencesMenu: 'Preferences…',
+  preferencesTitle: 'Preferences',
+  prefLanguage: 'Language',
+  languageSystem: 'System language',
+  languageFr: 'Français',
+  languageEn: 'English',
+  prefZoom: 'Zoom when opening',
+  prefZoomCustom: 'Last zoom used',
+  prefView: 'Display',
+  prefAuthor: 'Author name for annotations',
+  prefRestore: 'Reopen each file at the page and zoom where I left it',
+  prefRecent: (n: number) =>
+    n === 0 ? 'No recent files' : n === 1 ? '1 recent file' : `${n} recent files`,
+  helpTitle: 'Help',
+  helpTabStart: 'Getting started',
+  helpTabShortcuts: 'Shortcuts',
+  helpTabAbout: 'About',
+  helpSections: [
+    {
+      title: 'Open and read',
+      body: 'Open a PDF with Ctrl+O, the File menu or by dropping it on the window. Several documents open as tabs. The sidebar shows thumbnails, bookmarks, annotations, form fields and attachments.',
+    },
+    {
+      title: 'Annotate',
+      body: 'Select text, then highlight (H), underline (U) or strike it out (K). The note (N), text (T) and drawing (D) tools are placed with a click on the page. Double-click an annotation to edit it.',
+    },
+    {
+      title: 'Fill in a form',
+      body: 'Click a field to fill it in. The Fields panel lists them all; a handwritten signature is drawn in a signature field. Save with Ctrl+S.',
+    },
+    {
+      title: 'Edit pages and content',
+      body: 'Thumbnails let you reorder, rotate, delete or extract pages. Merge (Ctrl+M) and split (Ctrl+Shift+D) documents. The content tools move or delete text and images, add a watermark, page numbers or a crop, and redact permanently.',
+    },
+    {
+      title: 'Export and print',
+      body: 'The File menu exports pages as images or the text, prints (Ctrl+P), compares two documents and optimises the file size.',
+    },
+    {
+      title: 'Protect',
+      body: 'File ▸ Protect encrypts the document (AES-256) with an open password and permissions. A protected document opens with its password and can be unprotected.',
+    },
+  ],
+  aboutVersion: (v: string) => (v ? `Version ${v}` : ''),
+  aboutTagline: 'Free PDF reader and editor, with no ads and no telemetry.',
+  aboutLicense: 'Free software under the GPL-3.0-or-later licence.',
+  aboutPdfium: 'PDF rendering: PDFium (Google), BSD-3-Clause licence.',
   keyShift: 'Shift',
   keyNames: {
     Delete: 'Del',
@@ -841,6 +938,7 @@ export const en: Strings = {
     toolInk: 'Draw tool',
     deleteAnnotation: 'Delete the selected annotation or object',
     print: 'Print',
+    preferences: 'Preferences',
   },
 };
 

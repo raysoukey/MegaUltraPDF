@@ -119,5 +119,106 @@
   },
   {
     "shot": "01-clavier.png"
+  },
+  {
+    "key": ",",
+    "ctrl": true
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent === 'Préférences'",
+    "label": "Ctrl+, ouvre les préférences"
+  },
+  {
+    "eval": "(() => { const s = document.getElementById('pref-language'); s.value = 'en'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "langue : anglais"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "!!document.querySelector('button[aria-haspopup=menu][title=\"File\"]') && document.documentElement.lang === 'en'",
+    "label": "barre d'outils et menus en anglais"
+  },
+  {
+    "assert": "document.querySelectorAll('.tabs-bar [role=tab], nav [role=tab], [role=tablist] [role=tab]').length >= 1 && document.querySelectorAll('.page img').length >= 1",
+    "label": "le document reste ouvert"
+  },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent === 'Preferences'",
+    "label": "le dialogue reste ouvert, traduit"
+  },
+  {
+    "shot": "02-anglais.png"
+  },
+  {
+    "eval": "(() => { const s = document.getElementById('pref-language'); s.value = 'fr'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "langue : français"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "!!document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]') && document.documentElement.lang === 'fr'",
+    "label": "retour au français"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "!document.querySelector('[role=dialog]')",
+    "label": "Échap ferme les préférences"
+  },
+  {
+    "eval": "(() => { window.__w = document.querySelector('.page').getBoundingClientRect().width; return window.__w; })()",
+    "label": "largeur de page avant"
+  },
+  {
+    "key": "F1"
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelectorAll('[role=dialog] [role=tab]').length === 3",
+    "label": "F1 : aide avec trois onglets"
+  },
+  {
+    "key": "r"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "document.querySelector('.page').getBoundingClientRect().width === window.__w",
+    "label": "une touche simple dans l'aide ne pivote pas le document"
+  },
+  {
+    "click": "#help-tab-about"
+  },
+  {
+    "wait": 600
+  },
+  {
+    "assert": "(() => { const p = document.getElementById('help-panel').textContent; return /Version \\d+\\.\\d+\\.\\d+/.test(p) && p.includes('PDFium'); })()",
+    "label": "À propos : version et PDFium"
+  },
+  {
+    "shot": "03-a-propos.png"
+  },
+  {
+    "key": "F1"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "!document.querySelector('[role=dialog]')",
+    "label": "F1 referme l'aide"
   }
 ]

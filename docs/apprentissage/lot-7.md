@@ -70,6 +70,20 @@ peuvent chacune échouer sans imbriquer deux `if`.
 désinstallation (`uninstall.exe /S`). PDFium n'était que dans `pdfium/` et
 `MEGA_PDFIUM_DIR` vide : le rendu prouve que la recherche dans les ressources fonctionne.
 
+## La relecture a trouvé
+
+- **Un effet qui relit trop** : `$effect(() => { void ui.language; for (d of docs) d.scrollRequest = d.page })`
+  devait ne réagir qu'à la langue, mais Svelte suit **toute** valeur réactive lue dans
+  l'effet, donc chaque `d.page`. Comme le défilement change `d.page`, l'effet se relançait
+  et faisait sauter la vue. Leçon : un effet n'a pas de liste de dépendances déclarée ;
+  pour « une seule fois à la création », `onMount` (`Viewer.svelte`) ; sinon `untrack(...)`.
+- **Le focus a une origine** : un élément de menu qui disparaît ne peut pas recevoir le focus
+  au retour ; on rend le focus au bouton du menu avant d'ouvrir le dialogue.
+- **Une notice de licence se livre** : un tableau « nom, version, MIT » ne suffit pas, le
+  texte (avec le copyright) doit accompagner le binaire.
+- **Lire des fichiers venus d'ailleurs, c'est lire des données non fiables** : ne pas suivre
+  les liens symboliques (`DirEntry::file_type`), plafonner la lecture (`Read::take`).
+
 ## Exercices (plus tard, à votre rythme)
 
 1. `strings.ts` : retirez une clé du dictionnaire `en` et lancez `pnpm --dir app check`.

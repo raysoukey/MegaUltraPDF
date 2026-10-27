@@ -34,6 +34,18 @@
     "publisher": "MegaUltraPDF",
     "shortDescription": "Lecteur et éditeur PDF libre",
     "category": "Productivity",
+    "fileAssociations": [
+      {
+        "ext": ["pdf"],
+        "mimeType": "application/pdf",
+        "name": "PDF",
+        "description": "Document PDF",
+        "role": "Viewer"
+      }
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "license": "GPL-3.0-or-later",
     "icon": [
       "icons/32x32.png",

@@ -6,7 +6,10 @@ Cargo compile le même code selon des **profils** : `dev` (rapide à compiler, l
 l'exécution, plein d'informations de débogage) et `release` (optimisé, plus long à
 compiler). Le code peut savoir dans quel profil il est compilé (`cfg!(debug_assertions)`)
 ou pour quel système (`cfg!(windows)`, `#[cfg(target_os = …)]`), et se comporter
-différemment **sans test à l'exécution** : la branche inutile n'est même pas dans le binaire.
+différemment. Attention à la nuance : `#[cfg(…)]` retire l'élément **avant** la compilation
+(il n'existe pas dans le binaire), alors que `cfg!(…)` n'est qu'un booléen constant — les
+deux branches du `if` sont compilées et vérifiées, et c'est l'optimiseur qui supprime
+ensuite la branche morte.
 Distribuer, c'est enfin livrer à côté du binaire ce qu'il ne contient pas (ici la
 bibliothèque PDFium) et lui dire où le trouver.
 
@@ -33,7 +36,8 @@ if cfg!(debug_assertions) {
 
 `env!("CARGO_MANIFEST_DIR")` est le chemin du dépôt **sur la machine qui compile** : utile
 pour trouver `vendor/pdfium/` pendant `cargo test`, absurde chez l'utilisateur. En `release`,
-`cfg!(debug_assertions)` vaut `false` et ce chemin n'est jamais embarqué.
+`cfg!(debug_assertions)` vaut `false` : ce chemin n'est jamais utilisé (la branche est
+compilée mais morte, et l'optimiseur la retire du binaire).
 
 ### 3. Pas de console en `release` (`app/src-tauri/src/main.rs:3`)
 

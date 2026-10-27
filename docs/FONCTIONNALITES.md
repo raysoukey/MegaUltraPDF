@@ -88,7 +88,8 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 - [x] Accessibilité : menus au clavier, piège de focus dans les dialogues, noms accessibles, contour de focus, contrastes ≥ 4,5:1 vérifiés par test [7]
 - [x] Préférences (langue, thème, zoom, affichage, auteur, position de lecture, récents) [7]
 - [x] Aide intégrée (prise en main, raccourcis, « À propos » avec licences tierces) [7]
-- [x] Installeurs Windows (NSIS/MSI), Linux (AppImage/deb), macOS (dmg, Apple Silicon) ; version portable ; PDFium embarqué ; paquets non signés [7]
+- [x] Installeurs Windows (NSIS/MSI, vérifié de bout en bout), Linux (AppImage/deb) et macOS (dmg, Apple Silicon) construits par la CI (lancement non vérifié) ; version portable ; PDFium embarqué ; association des `.pdf` ; paquets non signés [7]
+- [ ] Ouverture d'un PDF depuis le Finder macOS (événement Apple) [8]
 - [x] Aucun appel réseau, aucune télémétrie (vérifié par test : sources, CSP) [0 → 7]
 - [ ] OCR (option désactivée par défaut) [8]
 

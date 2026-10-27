@@ -81,8 +81,10 @@ fn dev_library_dir() -> Option<PathBuf> {
     // En développement seulement : `vendor/pdfium/<triple>/` à la racine du workspace
     // (`CARGO_MANIFEST_DIR` vaut `<racine>/crates/mega-core`, on remonte de deux niveaux).
     // \[Apprentissage\] `cfg!(debug_assertions)` vaut `true` en profil `dev`, `false` en
-    // `release` : le chemin absolu de la machine de compilation n'est ainsi jamais embarqué
-    // dans un binaire distribué (il apparaîtrait dans le message « bibliothèque introuvable »).
+    // `release` : le chemin absolu de la machine de compilation n'est ainsi jamais utilisé par
+    // un binaire distribué (il apparaîtrait dans le message « bibliothèque introuvable »). Les
+    // deux branches sont compilées ; l'optimiseur retire la branche morte (`#[cfg]`, lui,
+    // retirerait le code avant même la compilation).
     if cfg!(debug_assertions) {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")

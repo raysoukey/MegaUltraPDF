@@ -60,6 +60,33 @@ s'utilisaient qu'à la souris, et PDFium n'était trouvé qu'à côté de l'exé
 8. **OCR et signature numérique cryptographique forment un Lot 8** (fonctionnalités
    optionnelles) : dépendances natives ou cryptographiques qui méritent leur propre relecture.
 
+## Passe de correction (relecture du lot)
+
+- Le `$effect` qui ramenait chaque visionneuse à sa page après un changement de langue
+  relisait tous les `doc.page` : chaque défilement qui changeait de page faisait sauter la vue
+  au haut de la page. Remplacé par `onMount(() => goToPage(doc, doc.page))` dans
+  `Viewer.svelte` (couvre aussi le changement d'onglet) ; étape de défilement dans
+  `finition.json`.
+- Focus : un dialogue ouvert depuis un menu rend le focus au bouton du menu ; le dialogue
+  lui-même est focalisable (`tabindex="-1"`), si bien qu'un clic sur son texte ne laisse pas
+  Maj+Tab s'échapper ; `summary` et le panneau de l'aide sont atteignables au clavier.
+- Jeton `--on-accent` (texte sur la couleur d'accent ≥ 4,5:1, testé) ; réglage
+  `defaultZoomMode` distinct du dernier zoom utilisé ; erreurs `io` / `invalid_pdf`
+  traduites par leur `kind` ; tampons à identifiant stable, libellé dans la langue courante.
+- `THIRD_PARTY_LICENSES.md` contient désormais les **textes** des licences (fichiers
+  `LICENSE*`, `COPYING*`, `NOTICE*` de chaque paquet, liens symboliques ignorés, 256 Kio
+  maximum par fichier, clôtures Markdown non contournables).
+- `release.yml` : une étiquette poussée doit égaler `v<version>`, et une release déjà
+  publiée n'est jamais modifiée. Association des fichiers `.pdf` dans les paquets ;
+  signature ad hoc (`signingIdentity: "-"`) du paquet macOS.
+
+Limites assumées : les libellés d'annuler/rétablir viennent du cœur Rust et restent en
+français (comme les messages d'erreur détaillés) ; les paquets Linux et macOS sont construits
+par la CI mais leur lancement n'a pas été vérifié sur une machine réelle ; sous macOS, un PDF
+ouvert depuis le Finder arrive par un événement Apple (non traité : l'application s'ouvre
+sans le fichier) ; la seconde ouverture d'un PDF sous Windows/Linux lance une seconde
+fenêtre.
+
 ## Conséquences
 
 - Ajouter une chaîne = l'ajouter dans les deux dictionnaires, sinon `pnpm check` échoue.

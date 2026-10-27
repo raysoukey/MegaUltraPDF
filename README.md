@@ -26,7 +26,9 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 
 Les paquets sont produits par la CI (`.github/workflows/release.yml`) et joints aux releases
 GitHub : installeur NSIS ou MSI et version portable (zip) pour Windows, deb et AppImage pour
-Linux, dmg pour macOS (Apple Silicon). PDFium est inclus.
+Linux, dmg pour macOS (Apple Silicon). PDFium est inclus. L'installeur Windows est vérifié
+de bout en bout ; les paquets Linux et macOS sont construits par la CI mais pas encore
+essayés sur une machine réelle.
 
 Les paquets ne sont **pas signés** : Windows affiche un avertissement SmartScreen
 (« Informations complémentaires » puis « Exécuter quand même ») ; macOS demande d'ouvrir

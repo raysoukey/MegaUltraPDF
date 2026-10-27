@@ -712,6 +712,39 @@ pub fn cyclic_outline_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Un PDF **hostile** pour la lecture des signatures : un champ `/FT /Sig` dont `/Kids`
+/// le cite deux fois lui-même, et que `/Fields` cite trois fois. Sans mémoire des nœuds
+/// visités, le parcours ferait des milliards d'appels.
+pub fn cyclic_signature_fields_pdf() -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 4 0 R 4 0 R] >> >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        "<< /FT /Sig /T (Boucle) /V 5 0 R /Kids [4 0 R 4 0 R] >>".to_string(),
+        "<< /Type /Sig /SubFilter /adbe.pkcs7.detached /ByteRange [0 1 2 3] /Contents <00> >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Un document **certifié** (`/Perms /DocMDP`) dont les modifications permises valent `p`
+/// (1 : aucune ; 2 : remplir les formulaires et signer ; 3 : aussi annoter). La signature
+/// de certification elle-même est factice : seul le niveau de permission compte ici.
+pub fn certified_pdf(p: i64) -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Perms << /DocMDP 4 0 R >> >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        format!(
+            "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached \
+             /ByteRange [0 0 0 0] /Contents <00> /Reference [<< /Type /SigRef \
+             /TransformMethod /DocMDP /TransformParams << /Type /TransformParams /P {p} \
+             /V /1.2 >> >>] >>"
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,
 /// avec une table `xref` aux positions exactes.
 fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {

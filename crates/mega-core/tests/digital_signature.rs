@@ -405,3 +405,76 @@ fn signature_fields_do_not_count_as_fillable_form_fields() {
     let form_signed = Document::from_bytes(sign(fixture("form.pdf"), &rsa()), None).unwrap();
     assert_eq!(form_signed.form_info().unwrap().field_count, form_before);
 }
+
+// --- Relecture du Lot 8 : entrées hostiles et cas limites -------------------------------
+
+/// Une édition refusée ne doit pas faire croire que le document a changé : l'enregistrement
+/// suivant écrit les octets signés tels quels.
+#[test]
+fn a_refused_edit_does_not_rewrite_a_signed_file_on_save() {
+    let signed = sign(fixture("simple.pdf"), &rsa());
+    let mut doc = Document::from_bytes(signed.clone(), None).unwrap();
+    assert!(
+        doc.apply(&EditCommand::DeletePages { pages: vec![99] })
+            .is_err()
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("copie.pdf");
+    doc.save_as(&path).unwrap();
+    assert!(std::fs::read(&path).unwrap() == signed, "octets inchangés");
+}
+
+/// Un arbre de champs qui se cite lui-même est lu une seule fois (pas de boucle infinie).
+#[test]
+fn self_referencing_signature_fields_are_read_once() {
+    let list = signatures(&mega_core::testing::cyclic_signature_fields_pdf()).unwrap();
+    assert_eq!(list.len(), 1, "{list:?}");
+}
+
+/// Sans `/ByteRange` nulle part, aucune signature possible : pas d'analyse du fichier.
+#[test]
+fn a_file_without_any_byte_range_has_no_signatures() {
+    assert_eq!(signatures(b"pas un PDF").unwrap(), vec![]);
+}
+
+/// Certifié sans modification (P = 1) ou « formulaires et signature » seulement (P = 2) :
+/// ajouter un **nouveau** champ de signature casserait la certification, donc refus.
+#[test]
+fn certified_documents_that_forbid_new_fields_are_refused() {
+    for (p, refused) in [(1, true), (2, true), (3, false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut doc = Document::from_bytes(mega_core::testing::certified_pdf(p), None).unwrap();
+        let result = doc.sign_to(dir.path().join("signe.pdf"), &rsa(), &options());
+        assert_eq!(result.is_err(), refused, "P = {p} : {result:?}");
+    }
+}
+
+/// Un motif réécrit dans une révision ajoutée après la signature n'est pas signé : il ne
+/// doit pas s'afficher sous la signature.
+#[test]
+fn display_data_rewritten_after_signing_is_not_shown() {
+    use lopdf::{IncrementalDocument, Object};
+    let signed = sign(fixture("simple.pdf"), &rsa());
+    let prev = lopdf::Document::load_mem(&signed).unwrap();
+    let sig_id = *prev
+        .objects
+        .iter()
+        .find(|(_, o)| {
+            o.as_dict()
+                .is_ok_and(|d| d.get(b"Type").ok() == Some(&Object::Name(b"Sig".to_vec())))
+        })
+        .unwrap()
+        .0;
+    let mut inc = IncrementalDocument::create_from(signed.clone(), prev);
+    inc.opt_clone_object_to_new_document(sig_id).unwrap();
+    inc.new_document
+        .get_dictionary_mut(sig_id)
+        .unwrap()
+        .set("Reason", Object::string_literal("Falsifie"));
+    let mut forged = Vec::new();
+    inc.save_to(&mut forged).unwrap();
+    let info = only(signatures(&forged).unwrap());
+    assert_eq!(info.status, SignatureStatus::Intact, "{info:?}");
+    assert!(!info.covers_whole_document);
+    assert_eq!(info.reason, None, "motif non signé masqué");
+}

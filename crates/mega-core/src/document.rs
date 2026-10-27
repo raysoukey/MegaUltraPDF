@@ -177,8 +177,6 @@ impl Document {
         Ok(PdfPageIndex::from(index))
     }
 
-    /// Remplace le document PDFium sous-jacent (annuler / rétablir) ; l'ancien est libéré
-    /// sous le jeton que l'appelant tient.
     /// Le document ne correspond plus aux octets du fichier : le prochain enregistrement le
     /// réécrira. Appelée en tête de **toute** méthode publique qui modifie le document
     /// (appels directs du CLI compris), en plus de `apply`.
@@ -192,6 +190,8 @@ impl Document {
         &self.file_bytes
     }
 
+    /// Remplace le document PDFium sous-jacent (annuler / rétablir) ; l'ancien est libéré
+    /// sous le jeton que l'appelant tient.
     pub(crate) fn replace_inner(&mut self, inner: PdfDocument<'static>) {
         self.inner = Some(inner);
     }

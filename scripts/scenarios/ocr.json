@@ -55,6 +55,19 @@
     "label": "lancer la reconnaissance"
   },
   {
+    "wait": 400
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 200
+  },
+  {
+    "assert": "!!document.querySelector('[role=dialog]')",
+    "label": "Échap pendant la reconnaissance ne ferme pas le dialogue"
+  },
+  {
     "wait": 15000
   },
   {

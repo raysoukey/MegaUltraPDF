@@ -319,6 +319,24 @@ fn never_saved_document_stays_modified_through_undo() {
     assert!(!doc.is_modified());
 }
 
+/// Un document jamais enregistré (fusion) est réécrit et nettoyé à l'enregistrement, pas
+/// recopié tel que la fusion l'a produit.
+#[test]
+fn never_saved_document_is_rewritten_on_save() {
+    let mut bytes = three().to_bytes().unwrap();
+    bytes.extend_from_slice(b"%MARQUEUR-DE-FUSION\n");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    doc.mark_never_saved();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fusion.pdf");
+    doc.save_as(&path).unwrap();
+    let written = std::fs::read(&path).unwrap();
+    assert!(
+        !written.windows(19).any(|w| w == b"%MARQUEUR-DE-FUSION"),
+        "le fichier doit être réécrit"
+    );
+}
+
 // ---- Lot 3 : annotations ----
 
 #[test]

@@ -9,13 +9,18 @@
   import { ocrPage, pagesWithText, showNotice, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
 
-  let { doc, onclose }: { doc: OpenDoc; onclose: () => void } = $props();
+  // `running` est lié par la page : Échap ne ferme pas le dialogue pendant la reconnaissance
+  // (la boucle continuerait sans affichage ni bouton Arrêter).
+  let {
+    doc,
+    onclose,
+    running = $bindable(false),
+  }: { doc: OpenDoc; onclose: () => void; running?: boolean } = $props();
 
   let status = $state<OcrStatus | null>(null);
   let withText = $state<boolean[]>([]);
   let chosen = $state<string[]>([]);
   let scope = $state<OcrScope>('untexted');
-  let running = $state(false);
   let stopRequested = false;
   let progress = $state('');
   let message = $state('');

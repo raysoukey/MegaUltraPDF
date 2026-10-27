@@ -147,22 +147,70 @@ pub fn sign_digest(
     content_info.to_der().map_err(failed)
 }
 
-/// Longueur DER d'un élément (en-tête compris) lue dans son en-tête : un `/Contents` de PDF
-/// est complété de zéros qu'un décodeur DER strict refuserait.
-fn der_length(bytes: &[u8]) -> Option<usize> {
-    let first = *bytes.get(1)?;
-    if first < 0x80 {
-        return Some(2 + usize::from(first));
-    }
-    let count = usize::from(first & 0x7f);
-    if count == 0 || count > 4 {
+/// Un élément DER (longueur définie) qui commence en `pos` : son étiquette, le début de son
+/// contenu et sa fin (exclue). `None` s'il déborde de `bytes` ou s'il est mal formé.
+fn element(bytes: &[u8], pos: usize) -> Option<(u8, usize, usize)> {
+    let tag = *bytes.get(pos)?;
+    let first = *bytes.get(pos.checked_add(1)?)?;
+    let (header, len) = if first < 0x80 {
+        (2, usize::from(first))
+    } else {
+        let count = usize::from(first & 0x7f);
+        if count == 0 || count > 4 {
+            return None;
+        }
+        let mut len = 0usize;
+        for i in 0..count {
+            len = (len << 8) | usize::from(*bytes.get(pos.checked_add(2 + i)?)?);
+        }
+        (2 + count, len)
+    };
+    let start = pos.checked_add(header)?;
+    let end = start.checked_add(len)?;
+    (end <= bytes.len()).then_some((tag, start, end))
+}
+
+/// Position (début, fin) des attributs signés `[0] IMPLICIT` du premier signataire, **tels
+/// qu'ils sont écrits** dans la structure CMS : c'est sur ces octets-là (étiquette remplacée
+/// par celle d'un SET, `0x31`) que porte la signature (RFC 5652 §5.4). Les décoder puis les
+/// réencoder les trierait (règle DER des SET) et fausserait la vérification d'une signature
+/// dont les attributs ne sont pas dans l'ordre DER.
+fn signed_attrs_span(der: &[u8]) -> Option<(usize, usize)> {
+    // ContentInfo ::= SEQUENCE { contentType, [0] EXPLICIT SignedData }
+    let (0x30, content_info, _) = element(der, 0)? else {
         return None;
+    };
+    let (_, _, after_type) = element(der, content_info)?;
+    let (0xA0, explicit, _) = element(der, after_type)? else {
+        return None;
+    };
+    // SignedData ::= SEQUENCE { version, digestAlgorithms, encapContentInfo,
+    //                           [0] certificates OPTIONAL, [1] crls OPTIONAL, signerInfos }
+    let (0x30, signed_data, _) = element(der, explicit)? else {
+        return None;
+    };
+    let mut pos = signed_data;
+    for _ in 0..3 {
+        pos = element(der, pos)?.2;
     }
-    let mut len = 0usize;
-    for i in 0..count {
-        len = (len << 8) | usize::from(*bytes.get(2 + i)?);
+    while let Some((0xA0 | 0xA1, _, end)) = element(der, pos) {
+        pos = end;
     }
-    Some(2 + count + len)
+    let (0x31, signer_infos, _) = element(der, pos)? else {
+        return None;
+    };
+    // SignerInfo ::= SEQUENCE { version, sid, digestAlgorithm, [0] signedAttrs, … }
+    let (0x30, signer_info, _) = element(der, signer_infos)? else {
+        return None;
+    };
+    let mut pos = signer_info;
+    for _ in 0..3 {
+        pos = element(der, pos)?.2;
+    }
+    let (0xA0, _, end) = element(der, pos)? else {
+        return None;
+    };
+    Some((pos, end))
 }
 
 /// Nom commun (CN) d'un certificat, sinon son sujet complet.
@@ -198,10 +246,13 @@ pub fn verify(der: &[u8], digest: &[u8]) -> CmsCheck {
         signed_at: None,
         status: unsupported("structure CMS illisible"),
     };
-    let Some(len) = der_length(der).filter(|l| *l <= der.len()) else {
+    // Un `/Contents` de PDF est complété de zéros qu'un décodeur DER strict refuserait : on
+    // ne garde que l'élément annoncé par l'en-tête.
+    let Some((_, _, len)) = element(der, 0) else {
         return check;
     };
-    let Ok(content_info) = ContentInfo::from_der(&der[..len]) else {
+    let der = &der[..len];
+    let Ok(content_info) = ContentInfo::from_der(der) else {
         return check;
     };
     if content_info.content_type != ID_SIGNED_DATA {
@@ -231,7 +282,7 @@ pub fn verify(der: &[u8], digest: &[u8]) -> CmsCheck {
     check.signed_at = signing_time(info);
     check.status = match certificate {
         None => invalid("certificat du signataire absent"),
-        Some(cert) => verify_signer(info, cert, digest),
+        Some(cert) => verify_signer(der, info, cert, digest),
     };
     check
 }
@@ -299,13 +350,18 @@ fn signing_time(info: &SignerInfo) -> Option<i64> {
     i64::try_from(when.unix_duration().as_secs()).ok()
 }
 
-fn verify_signer(info: &SignerInfo, cert: &Certificate, digest: &[u8]) -> SignatureStatus {
+fn verify_signer(
+    der: &[u8],
+    info: &SignerInfo,
+    cert: &Certificate,
+    digest: &[u8],
+) -> SignatureStatus {
     if info.digest_alg.oid != ID_SHA256 {
         return unsupported("algorithme d'empreinte autre que SHA-256");
     }
-    let Some(signed_attrs) = info.signed_attrs.as_ref() else {
+    if info.signed_attrs.is_none() {
         return unsupported("signature sans attributs signés");
-    };
+    }
     let Some(stated) =
         attribute(info, ID_MESSAGE_DIGEST).and_then(|v| v.decode_as::<OctetString>().ok())
     else {
@@ -333,10 +389,12 @@ fn verify_signer(info: &SignerInfo, cert: &Certificate, digest: &[u8]) -> Signat
             return invalid("date de signature hors de la période de validité du certificat");
         }
     }
-    // Ce qui est signé : les attributs signés encodés comme un SET (étiquette 0x31).
-    let Ok(message) = signed_attrs.to_der() else {
-        return invalid("attributs signés illisibles");
+    // Ce qui est signé : les attributs signés **tels qu'écrits**, étiquette d'un SET (0x31).
+    let Some((start, end)) = signed_attrs_span(der) else {
+        return unsupported("attributs signés introuvables dans la structure CMS");
     };
+    let mut message = der[start..end].to_vec();
+    message[0] = 0x31;
     let Ok(spki_der) = cert.tbs_certificate.subject_public_key_info.to_der() else {
         return invalid("clé publique illisible");
     };
@@ -373,5 +431,59 @@ fn verify_signer(info: &SignerInfo, cert: &Certificate, digest: &[u8]) -> Signat
         }
     } else {
         unsupported("algorithme de signature non pris en charge")
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::digital_signature::{SigningIdentity, SigningKey};
+    use rsa::signature::{SignatureEncoding, Signer};
+
+    /// Une signature tierce dont les attributs signés ne sont **pas** dans l'ordre DER (le
+    /// signataire a signé les octets tels qu'il les a écrits) reste intègre.
+    #[test]
+    fn signed_attributes_are_verified_on_their_original_bytes() {
+        let p12 = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/test-signer.p12"
+        ))
+        .unwrap();
+        let identity = SigningIdentity::from_pkcs12(&p12, "test").unwrap();
+        let SigningKey::Rsa(key) = &identity.key else {
+            panic!("clé RSA attendue");
+        };
+        let digest = [7u8; 32];
+        let mut der = sign_digest(&identity, &digest, 1_800_000_000).unwrap();
+        let old_signature = {
+            let info = ContentInfo::from_der(&der).unwrap();
+            let signed = info.content.decode_as::<SignedData>().unwrap();
+            let signer = signed.signer_infos.0.iter().next().unwrap().clone();
+            signer.signature.as_bytes().to_vec()
+        };
+        // Les attributs, dans l'ordre inverse : même longueur, ordre non DER.
+        let (start, end) = signed_attrs_span(&der).unwrap();
+        let (_, content, _) = element(&der, start).unwrap();
+        let mut attributes = Vec::new();
+        let mut pos = content;
+        while pos < end {
+            let (_, _, next) = element(&der, pos).unwrap();
+            attributes.push(der[pos..next].to_vec());
+            pos = next;
+        }
+        assert_eq!(attributes.len(), 3);
+        attributes.reverse();
+        der[content..end].copy_from_slice(&attributes.concat());
+        // Nouvelle signature des octets tels qu'écrits (étiquette d'un SET).
+        let mut message = der[start..end].to_vec();
+        message[0] = 0x31;
+        let new_signature = key.sign(&message).to_vec();
+        let at = der
+            .windows(old_signature.len())
+            .position(|w| w == old_signature.as_slice())
+            .unwrap();
+        der[at..at + new_signature.len()].copy_from_slice(&new_signature);
+        assert_eq!(verify(&der, &digest).status, SignatureStatus::Intact);
     }
 }

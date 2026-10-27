@@ -89,6 +89,9 @@
   let watermarkOpen = $state(false);
   let ocrOpen = $state(false);
   let signOpen = $state(false);
+  // Vrai pendant une reconnaissance ou une signature : Échap n'interrompt pas l'opération.
+  let ocrRunning = $state(false);
+  let signBusy = $state(false);
   let numberingOpen = $state(false);
   let cropOpen = $state(false);
   let exportOpen = $state(false);
@@ -337,8 +340,8 @@
         else if (doc?.textInsertRequest) cancelTextInsert(doc);
         else if (doc?.redactRequest) cancelRedact(doc);
         else if (watermarkOpen) watermarkOpen = false;
-        else if (ocrOpen) ocrOpen = false;
-        else if (signOpen) signOpen = false;
+        else if (ocrOpen) ocrOpen = ocrRunning;
+        else if (signOpen) signOpen = signBusy;
         else if (numberingOpen) numberingOpen = false;
         else if (cropOpen) cropOpen = false;
         else if (printOpen) printOpen = false;
@@ -459,10 +462,10 @@
       <RedactConfirmDialog {doc} />
     {/if}
     {#if doc && ocrOpen}
-      <OcrDialog {doc} onclose={() => (ocrOpen = false)} />
+      <OcrDialog {doc} bind:running={ocrRunning} onclose={() => (ocrOpen = false)} />
     {/if}
     {#if doc && signOpen}
-      <SignDialog {doc} onclose={() => (signOpen = false)} />
+      <SignDialog {doc} bind:busy={signBusy} onclose={() => (signOpen = false)} />
     {/if}
     {#if doc && watermarkOpen}
       <WatermarkDialog {doc} onclose={() => (watermarkOpen = false)} />

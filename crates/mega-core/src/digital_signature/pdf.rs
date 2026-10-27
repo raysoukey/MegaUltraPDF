@@ -17,12 +17,15 @@
 //! plages et on recopie la signature en hexadécimal dans l'espace réservé. Des tranches
 //! d'octets (`&out[..a]`, `&out[b..]`) et des indices : pas de magie.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use lopdf::xref::XrefEntry;
 use lopdf::{
     Dictionary, Document as LoDocument, IncrementalDocument, Object, ObjectId, StringFormat,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{SignatureStatus, SigningIdentity, cms, sha256};
 use crate::document::Document;
@@ -38,6 +41,13 @@ const CONTENTS_MARGIN: usize = 512;
 /// Espace réservé d'une valeur de `/ByteRange` : dix chiffres, soit des fichiers jusqu'à
 /// ~9 Go (au-delà de la limite de 4 Gio de `lopdf`).
 const PLACEHOLDER: i64 = 9_999_999_999;
+
+/// Plafond de nœuds référencés visités dans l'arbre des champs : un fichier hostile ne peut
+/// pas faire durer la lecture indéfiniment.
+const MAX_FIELD_NODES: usize = 10_000;
+
+/// Plafond de signatures vérifiées dans un fichier (chacune hache presque tout le fichier).
+const MAX_SIGNATURES: usize = 64;
 
 /// Informations facultatives écrites dans le dictionnaire de signature.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +148,19 @@ fn acroform(doc: &LoDocument) -> Option<&Dictionary> {
 struct SigField<'a> {
     name: String,
     value: &'a Dictionary,
+    /// Position dans le fichier de l'objet qui contient ce dictionnaire (lui-même s'il est
+    /// référencé, sinon le champ) ; `None` si elle est inconnue (flux d'objets).
+    holder_offset: Option<usize>,
+}
+
+/// Position dans le fichier de la définition **la plus récente** de l'objet `id`.
+fn object_offset(doc: &LoDocument, id: ObjectId) -> Option<usize> {
+    match doc.reference_table.get(id.0)? {
+        XrefEntry::Normal { offset, generation } if *generation == id.1 => {
+            usize::try_from(*offset).ok()
+        }
+        _ => None,
+    }
 }
 
 /// Parcourt l'arbre des champs (`/Fields`, `/Kids`) et retient les champs de signature
@@ -145,15 +168,30 @@ struct SigField<'a> {
 fn signature_fields(doc: &LoDocument) -> Vec<SigField<'_>> {
     fn walk<'a>(
         doc: &'a LoDocument,
-        node: &'a Dictionary,
+        object: &'a Object,
         parent_name: &str,
         parent_ft: Option<&'a [u8]>,
         depth: usize,
+        seen: &mut HashSet<ObjectId>,
         out: &mut Vec<SigField<'a>>,
     ) {
-        if depth > 32 {
+        if depth > 32 || seen.len() > MAX_FIELD_NODES || out.len() >= MAX_SIGNATURES {
             return;
         }
+        // Un nœud référencé n'est visité qu'une fois : un `/Kids` qui se cite lui-même, ou un
+        // champ cité deux fois, ne fait pas boucler la lecture.
+        let node_id = match object {
+            Object::Reference(id) => {
+                if !seen.insert(*id) {
+                    return;
+                }
+                Some(*id)
+            }
+            _ => None,
+        };
+        let Some(node) = dict(doc, object) else {
+            return;
+        };
         let partial = text_of(node.get(b"T").ok()).unwrap_or_default();
         let name = match (parent_name.is_empty(), partial.is_empty()) {
             (_, true) => parent_name.to_string(),
@@ -166,22 +204,27 @@ fn signature_fields(doc: &LoDocument) -> Vec<SigField<'_>> {
             .and_then(|o| o.as_name().ok())
             .or(parent_ft);
         if ft == Some(b"Sig".as_slice())
-            && let Some(value) = node.get(b"V").ok().and_then(|v| dict(doc, v))
+            && let Ok(v) = node.get(b"V")
+            && let Some(value) = dict(doc, v)
         {
+            let holder = match v {
+                Object::Reference(id) => Some(*id),
+                _ => node_id,
+            };
             out.push(SigField {
                 name: name.clone(),
                 value,
+                holder_offset: holder.and_then(|id| object_offset(doc, id)),
             });
         }
         if let Ok(kids) = node.get(b"Kids").and_then(Object::as_array) {
             for kid in kids {
-                if let Some(child) = dict(doc, kid) {
-                    walk(doc, child, &name, ft, depth + 1, out);
-                }
+                walk(doc, kid, &name, ft, depth + 1, seen, out);
             }
         }
     }
     let mut out = Vec::new();
+    let mut seen = HashSet::new();
     let Some(form) = acroform(doc) else {
         return out;
     };
@@ -194,9 +237,7 @@ fn signature_fields(doc: &LoDocument) -> Vec<SigField<'_>> {
         return out;
     };
     for field in fields {
-        if let Some(node) = dict(doc, field) {
-            walk(doc, node, "", None, 0, &mut out);
-        }
+        walk(doc, field, "", None, 0, &mut seen, &mut out);
     }
     out
 }
@@ -253,8 +294,12 @@ fn contents_bytes(bytes: &[u8], a: usize, b: usize) -> Result<Vec<u8>, &'static 
         .collect())
 }
 
+/// Empreintes déjà calculées, par plage `(a, b, c)` : deux champs qui désignent la même
+/// plage ne font pas hacher deux fois le fichier.
+type DigestCache = HashMap<(usize, usize, usize), [u8; 32]>;
+
 /// Vérifie une signature (dictionnaire `/V`) contre les octets du fichier.
-fn check_one(bytes: &[u8], field: &SigField<'_>) -> SignatureInfo {
+fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> SignatureInfo {
     let value = field.value;
     let sub_filter = value
         .get(b"SubFilter")
@@ -292,10 +337,23 @@ fn check_one(bytes: &[u8], field: &SigField<'_>) -> SignatureInfo {
             return info;
         }
     };
-    let mut signed = Vec::with_capacity(a + c);
-    signed.extend_from_slice(&bytes[..a]);
-    signed.extend_from_slice(&bytes[b..b + c]);
-    let check = cms::verify(&der, &sha256(&signed));
+    // Le dictionnaire doit faire partie des octets signés (il commence avant le trou qu'il
+    // contient). Sinon, une révision ajoutée après la signature l'a redéfini : son nom, son
+    // motif, son lieu et sa date `/M` ne sont pas signés et ne sont donc pas affichés.
+    if !field.holder_offset.is_some_and(|offset| offset < a) {
+        info.signer = None;
+        info.signed_at = None;
+        info.reason = None;
+        info.location = None;
+    }
+    // Empreinte des deux plages, sans recopier le fichier.
+    let digest = *digests.entry((a, b, c)).or_insert_with(|| {
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes[..a]);
+        hasher.update(&bytes[b..b + c]);
+        hasher.finalize().into()
+    });
+    let check = cms::verify(&der, &digest);
     if check.signer.is_some() {
         info.signer = check.signer;
     }
@@ -315,14 +373,21 @@ pub fn signatures(bytes: &[u8]) -> CoreResult<Vec<SignatureInfo>> {
 }
 
 fn signatures_with(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<SignatureInfo>> {
+    // Toute signature vérifiable a son `/ByteRange` écrit en clair dans le fichier (le trou
+    // de `/Contents` doit s'y trouver) : sans ce mot, pas besoin d'analyser tout le PDF, ce
+    // qui retarderait l'affichage de chaque document ouvert.
+    if !bytes.windows(10).any(|w| w == b"/ByteRange") {
+        return Ok(Vec::new());
+    }
     let doc = match password {
         Some(p) => LoDocument::load_mem_with_options(bytes, lopdf::LoadOptions::with_password(p)),
         None => LoDocument::load_mem(bytes),
     }
     .map_err(structure)?;
+    let mut digests = DigestCache::new();
     Ok(signature_fields(&doc)
         .iter()
-        .map(|field| check_one(bytes, field))
+        .map(|field| check_one(bytes, field, &mut digests))
         .collect())
 }
 
@@ -342,8 +407,13 @@ fn top_level_names(doc: &LoDocument) -> Vec<String> {
         .collect()
 }
 
-/// Refus propres à la signature : document chiffré, formulaire XFA, document certifié sans
-/// modification autorisée (`/DocMDP` avec `P = 1`).
+/// Refus propres à la signature : document chiffré, formulaire XFA, document certifié qui
+/// n'autorise pas l'ajout d'un champ de signature (`/DocMDP` avec `P = 1` ou `P = 2`).
+///
+/// `P = 2` permet de « remplir les formulaires et signer », mais seulement dans des champs
+/// de signature **existants** : Acrobat juge l'ajout d'un nouveau champ comme une
+/// modification interdite, qui casserait la certification. Signer un champ vide existant
+/// n'est pas encore pris en charge, d'où le refus.
 fn refuse_unsignable(doc: &LoDocument) -> CoreResult<()> {
     if doc.is_encrypted() || doc.was_encrypted() {
         return Err(refused(
@@ -372,12 +442,12 @@ fn refuse_unsignable(doc: &LoDocument) -> CoreResult<()> {
                     .and_then(|t| dict(doc, t))
                     .and_then(|t| t.get(b"P").ok())
                     .and_then(|p| p.as_i64().ok())
-                    == Some(1)
+                    .is_some_and(|p| p == 1 || p == 2)
             })
         });
     if certified_locked {
         return Err(refused(
-            "document certifié sans modification autorisée : impossible d'y ajouter une signature",
+            "document certifié : y ajouter un champ de signature casserait sa certification",
         ));
     }
     Ok(())

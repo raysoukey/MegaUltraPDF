@@ -529,12 +529,16 @@ impl Document {
         let label = self.label_for(command);
         let before = self.to_bytes()?;
         let password_before = self.password().map(str::to_string);
+        let changed_before = self.changed;
         if let Err(e) = command.apply(self) {
             // Une commande peut échouer après avoir commencé à modifier le document
             // (plusieurs appels PDFium) : on revient à l'instantané pris juste avant,
             // ce qui rend le contrat « inchangé en cas d'erreur » vrai pour toute commande.
+            // Le drapeau `changed` aussi (posé en tête par la méthode refusée) : sinon
+            // l'enregistrement suivant réécrirait un fichier intact, signatures comprises.
             self.set_password(password_before);
             self.reload_from_bytes(before)?;
+            self.changed = changed_before;
             return Err(e);
         }
         if !self.history.redo.is_empty() {
@@ -624,6 +628,8 @@ impl Document {
     /// « modifié » tant qu'un « Enregistrer sous » n'a pas eu lieu, quoi qu'on annule.
     pub fn mark_never_saved(&mut self) {
         self.history.saved_position = None;
+        // Ses octets sont ceux de la fusion, jamais nettoyés : « Enregistrer » les réécrit.
+        self.changed = true;
     }
 
     /// Vrai si une étape peut être annulée.

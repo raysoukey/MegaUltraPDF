@@ -9,14 +9,18 @@
   import { settings } from '$lib/state/settings.svelte';
   import { t } from '$lib/strings';
 
-  let { doc, onclose }: { doc: OpenDoc; onclose: () => void } = $props();
+  // `busy` est lié par la page : Échap ne ferme pas le dialogue pendant la signature.
+  let {
+    doc,
+    onclose,
+    busy = $bindable(false),
+  }: { doc: OpenDoc; onclose: () => void; busy?: boolean } = $props();
 
   let certificate = $state<string | null>(null);
   let password = $state('');
   let reason = $state('');
   let location = $state('');
   let contact = $state(settings.author);
-  let busy = $state(false);
   let error = $state('');
 
   const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;

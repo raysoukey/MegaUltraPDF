@@ -403,3 +403,43 @@ fn annotations_request_and_cache_invalidation() {
         "le cache de rendu doit être invalidé par l'ajout d'une annotation"
     );
 }
+
+// ---- Lot 4 : formulaires ----
+
+#[test]
+fn form_requests() {
+    use mega_core::{EditCommand, FieldValue, FormType};
+    let handle = PdfService::spawn();
+    let id = handle
+        .open_bytes(mega_core::testing::form_pdf(), None)
+        .unwrap()
+        .id;
+    let info = handle.form_info(id).unwrap();
+    assert_eq!(info.form_type, FormType::AcroForm);
+    assert_eq!(info.field_count, 8);
+    assert_eq!(handle.form_fields(id, 0).unwrap().len(), 8);
+    let before = handle
+        .render_png(request(id, 0, 0, Priority::Visible))
+        .unwrap();
+    let (_, state) = handle
+        .apply(
+            id,
+            EditCommand::SetFieldValue {
+                page: 0,
+                index: 0,
+                value: FieldValue::Text {
+                    text: "Dupont".to_string(),
+                },
+            },
+        )
+        .unwrap();
+    assert!(state.modified);
+    assert_eq!(
+        handle.form_fields(id, 0).unwrap()[0].value.as_deref(),
+        Some("Dupont")
+    );
+    let after = handle
+        .render_png(request(id, 0, 0, Priority::Visible))
+        .unwrap();
+    assert_ne!(before, after, "cache de rendu invalidé");
+}

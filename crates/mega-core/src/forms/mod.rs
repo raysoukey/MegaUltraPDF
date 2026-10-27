@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
 use crate::engine;
-use crate::error::CoreResult;
+use crate::error::{CoreError, CoreResult};
 use crate::geometry::Rect;
 
 /// Nature du formulaire d'un document.
@@ -92,6 +92,22 @@ pub struct FormField {
     pub password: bool,
 }
 
+/// Valeur à écrire dans un champ.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FieldValue {
+    /// Texte (champ texte).
+    Text {
+        /// Le texte.
+        text: String,
+    },
+    /// Coché ou non (case à cocher).
+    Checked {
+        /// L'état.
+        checked: bool,
+    },
+}
+
 /// Résumé du formulaire d'un document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FormInfo {
@@ -124,6 +140,74 @@ impl Document {
         })
     }
 
+    /// Écrit une valeur dans le champ `index` de la page.
+    ///
+    /// Texte → champ texte ; `Checked` → case à cocher. Lecture seule, radio, combo, liste,
+    /// bouton : refusés (radios, combos et listes : Lot 5). Après l'écriture le
+    /// document est **rechargé** depuis ses octets : PDFium ne régénère l'apparence d'un
+    /// champ texte qu'au chargement (si le formulaire déclare `/NeedAppearances`).
+    pub fn set_field_value(&mut self, page: u16, index: u16, value: &FieldValue) -> CoreResult<()> {
+        {
+            let _guard = engine::guard();
+            let pdf_page = self
+                .inner()
+                .pages()
+                .get(self.checked_index_unlocked(page)?)?;
+            let count = pdf_page.annotations().len();
+            if usize::from(index) >= count {
+                return Err(invalid(&format!(
+                    "champ {index} introuvable (la page a {count} annotations)"
+                )));
+            }
+            let mut ann = pdf_page.annotations().get(usize::from(index))?;
+            let Some(field) = ann.as_form_field_mut() else {
+                return Err(invalid("cette annotation n'est pas un champ de formulaire"));
+            };
+            match (field, value) {
+                (PdfFormField::Text(t), FieldValue::Text { text }) => {
+                    if t.is_read_only() {
+                        return Err(invalid("ce champ est en lecture seule"));
+                    }
+                    t.set_value(text)?;
+                }
+                (PdfFormField::Checkbox(c), FieldValue::Checked { checked }) => {
+                    if c.is_read_only() {
+                        return Err(invalid("ce champ est en lecture seule"));
+                    }
+                    c.set_checked(*checked)?;
+                }
+                (PdfFormField::RadioButton(_), _) => {
+                    // pdfium-render n'écrit que `/V` du bouton cliqué : l'état `/AS` des
+                    // autres boutons du groupe ne bouge pas, le fichier deviendrait
+                    // incohérent (deux boutons cochés). Réglage complet au Lot 5 (`lopdf`).
+                    return Err(invalid(
+                        "les boutons radio ne sont pas modifiables dans cette version",
+                    ));
+                }
+                (PdfFormField::ComboBox(_) | PdfFormField::ListBox(_), _) => {
+                    return Err(invalid(
+                        "les listes déroulantes ne sont pas modifiables dans cette version",
+                    ));
+                }
+                _ => return Err(invalid("valeur incompatible avec ce champ")),
+            }
+        }
+        self.reload_from_bytes(self.to_bytes()?)
+    }
+
+    /// Aplatit toutes les pages : champs et annotations deviennent du contenu fixe.
+    pub fn flatten_all(&mut self) -> CoreResult<()> {
+        {
+            let _guard = engine::guard();
+            let count = self.count_unlocked();
+            for i in 0..count {
+                let mut page = self.inner().pages().get(self.checked_index_unlocked(i)?)?;
+                page.flatten()?;
+            }
+        }
+        self.reload_from_bytes(self.to_bytes()?)
+    }
+
     /// Les champs de la page `page`, dans l'ordre de `/Annots`.
     pub fn form_fields(&self, page: u16) -> CoreResult<Vec<FormField>> {
         let _guard = engine::guard();
@@ -146,6 +230,10 @@ impl Document {
         }
         Ok(out)
     }
+}
+
+fn invalid(msg: &str) -> CoreError {
+    CoreError::InvalidOperation(msg.to_string())
 }
 
 /// Nom, lecture seule, requis : communs à tous les genres (trait `PdfFormFieldCommon`).

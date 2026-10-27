@@ -403,3 +403,36 @@ fn annotation_commands_undo_and_labels() {
     );
     assert_eq!(doc.undo_label().as_deref(), Some("Supprimer : Rectangle"));
 }
+
+// ---- Lot 4 : formulaires ----
+
+#[test]
+fn form_commands_are_undoable() {
+    use mega_core::FieldValue;
+    let mut doc = Document::from_bytes(mega_core::testing::form_pdf(), None).unwrap();
+    doc.apply(&EditCommand::SetFieldValue {
+        page: 0,
+        index: 0,
+        value: FieldValue::Text {
+            text: "Dupont".to_string(),
+        },
+    })
+    .unwrap();
+    assert_eq!(doc.undo_label().as_deref(), Some("Remplir : nom"));
+    assert_eq!(
+        doc.form_fields(0).unwrap()[0].value.as_deref(),
+        Some("Dupont")
+    );
+    doc.undo().unwrap();
+    assert_eq!(doc.form_fields(0).unwrap()[0].value.as_deref(), Some(""));
+    doc.redo().unwrap();
+    doc.apply(&EditCommand::FlattenForm).unwrap();
+    assert_eq!(doc.undo_label().as_deref(), Some("Aplatir le formulaire"));
+    assert!(doc.form_fields(0).unwrap().is_empty());
+    doc.undo().unwrap();
+    assert_eq!(doc.form_fields(0).unwrap().len(), 8);
+    assert_eq!(
+        doc.form_fields(0).unwrap()[0].value.as_deref(),
+        Some("Dupont")
+    );
+}

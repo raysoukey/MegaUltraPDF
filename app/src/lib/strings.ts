@@ -80,6 +80,15 @@ export const fr = {
   copied: 'Texte copié.',
   loading: 'Chargement…',
   ctrlWheel: 'Ctrl+molette',
+  keyShift: 'Maj',
+  keyNames: {
+    Delete: 'Suppr',
+    Escape: 'Échap',
+    Home: 'Début',
+    End: 'Fin',
+    PageDown: 'Page suiv.',
+    PageUp: 'Page préc.',
+  } as Record<string, string>,
   // Édition (Lot 2)
   modifiedMarker: '•',
   editGroup: 'Édition',
@@ -493,6 +502,15 @@ export const en: Strings = {
   copied: 'Text copied.',
   loading: 'Loading…',
   ctrlWheel: 'Ctrl+wheel',
+  keyShift: 'Shift',
+  keyNames: {
+    Delete: 'Del',
+    Escape: 'Esc',
+    Home: 'Home',
+    End: 'End',
+    PageDown: 'Page Down',
+    PageUp: 'Page Up',
+  } as Record<string, string>,
   // Editing (Lot 2)
   modifiedMarker: '•',
   editGroup: 'Editing',

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { menuNav } from '$lib/actions/menuNav';
   import type { Tool } from '$lib/logic/tools';
   import { deleteSelectedObject, type OpenDoc } from '$lib/state/documents.svelte';
   import { setTool, toolState } from '$lib/state/tools.svelte';
@@ -24,6 +25,12 @@
     { tool: 'redact', glyph: '▬' },
   ];
   let menuOpen = $state(false);
+  let trigger: HTMLButtonElement | undefined = $state();
+
+  function closeMenu(refocus: boolean) {
+    menuOpen = false;
+    if (refocus) trigger?.focus();
+  }
   const hint = $derived(
     toolState.tool === 'objects' ? t.objectHint : toolState.tool === 'image' ? t.imageTool : null,
   );
@@ -49,7 +56,7 @@
     type="button"
     disabled={!doc.selectedObject}
     aria-label={t.deleteObject}
-    title="{t.deleteObject} (Suppr)"
+    title="{t.deleteObject} ({t.keyNames.Delete})"
     onclick={() => deleteSelectedObject(doc)}>🗑</button
   >
   {#if hint}
@@ -60,21 +67,33 @@
       type="button"
       aria-haspopup="menu"
       aria-expanded={menuOpen}
+      bind:this={trigger}
+      onkeydown={(e) => {
+        if (e.key === 'ArrowDown' && !menuOpen) {
+          e.preventDefault();
+          menuOpen = true;
+        }
+      }}
       onclick={() => (menuOpen = !menuOpen)}>{t.contentMenu} ▾</button
     >
     {#if menuOpen}
-      <ul class="dropdown" role="menu" onmouseleave={() => (menuOpen = false)}>
-        <li>
+      <ul
+        class="dropdown"
+        role="menu"
+        aria-label={t.contentMenu}
+        use:menuNav={{ onclose: closeMenu }}
+      >
+        <li role="none">
           <button type="button" role="menuitem" onclick={() => pick(onwatermark)}
             >{t.watermarkTitle}…</button
           >
         </li>
-        <li>
+        <li role="none">
           <button type="button" role="menuitem" onclick={() => pick(onnumbering)}
             >{t.numberingTitle}…</button
           >
         </li>
-        <li>
+        <li role="none">
           <button type="button" role="menuitem" onclick={() => pick(oncrop)}>{t.cropTitle}…</button>
         </li>
       </ul>

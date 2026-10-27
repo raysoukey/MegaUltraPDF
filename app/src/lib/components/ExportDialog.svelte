@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { pickDirectory, pickSaveFile } from '$lib/api';
   import { scopePages, type PageScope } from '$lib/logic/content';
   import { defaultPrefix, exportProblems } from '$lib/logic/export';
@@ -76,86 +77,88 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <form
-    class="dialog"
-    aria-labelledby="export-title"
-    onsubmit={(e) => {
-      e.preventDefault();
-      run();
-    }}
-  >
-    <h2 id="export-title">{t.exportTitle}</h2>
-    <div class="tabs" role="tablist">
-      <button
-        type="button"
-        role="tab"
-        bind:this={firstTab}
-        aria-selected={mode === 'images'}
-        class:active={mode === 'images'}
-        onclick={() => (mode = 'images')}>{t.exportImages}</button
-      >
-      <button
-        type="button"
-        role="tab"
-        aria-selected={mode === 'text'}
-        class:active={mode === 'text'}
-        onclick={() => (mode = 'text')}>{t.exportText}</button
-      >
-    </div>
-    <PageScopeSelect {doc} bind:value={scope} />
-    {#if mode === 'images'}
-      <label class="row">
-        {t.exportFormat}
-        <select bind:value={format}>
-          <option value="png">PNG</option>
-          <option value="jpeg">JPEG</option>
-        </select>
-      </label>
-      {#if format === 'jpeg'}
-        <label class="row">
-          {t.exportQuality}
-          <input type="number" min="10" max="100" bind:value={quality} />
-        </label>
-      {/if}
-      <label class="row">
-        {t.exportDpi}
-        <select bind:value={dpi}>
-          {#each [72, 96, 150, 200, 300, 600] as d (d)}
-            <option value={d}>{d}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="row">
-        {t.exportPrefix}
-        <input type="text" bind:value={prefix} />
-      </label>
-      <label class="row check">
-        <input type="checkbox" bind:checked={withAnnotations} />
-        {t.exportWithAnnotations}
-      </label>
-      <label class="row check">
-        <input type="checkbox" bind:checked={force} />
-        {t.exportOverwrite}
-      </label>
-      <div class="row">
-        <button type="button" onclick={chooseDir}>{t.chooseFolder}</button>
-        <span class="dir" title={dir ?? ''}>{dir ? fileName(dir) : t.noFolderChosen}</span>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="export-title" use:trapFocus>
+    <form
+      class="dialog-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        run();
+      }}
+    >
+      <h2 id="export-title">{t.exportTitle}</h2>
+      <div class="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          bind:this={firstTab}
+          aria-selected={mode === 'images'}
+          class:active={mode === 'images'}
+          onclick={() => (mode = 'images')}>{t.exportImages}</button
+        >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === 'text'}
+          class:active={mode === 'text'}
+          onclick={() => (mode = 'text')}>{t.exportText}</button
+        >
       </div>
-    {:else}
-      <label class="row check">
-        <input type="checkbox" bind:checked={separators} />
-        {t.exportSeparators}
-      </label>
-      <p class="muted">{t.exportTextHint}</p>
-    {/if}
-    {#if error}
-      <p class="error" role="alert">{error}</p>
-    {/if}
-    <div class="actions">
-      <button type="button" onclick={onclose}>{t.cancel}</button>
-      <button type="submit" class="primary" disabled={!canExport || busy}>{t.exportAction}</button>
-    </div>
-  </form>
+      <PageScopeSelect {doc} bind:value={scope} />
+      {#if mode === 'images'}
+        <label class="row">
+          {t.exportFormat}
+          <select bind:value={format}>
+            <option value="png">PNG</option>
+            <option value="jpeg">JPEG</option>
+          </select>
+        </label>
+        {#if format === 'jpeg'}
+          <label class="row">
+            {t.exportQuality}
+            <input type="number" min="10" max="100" bind:value={quality} />
+          </label>
+        {/if}
+        <label class="row">
+          {t.exportDpi}
+          <select bind:value={dpi}>
+            {#each [72, 96, 150, 200, 300, 600] as d (d)}
+              <option value={d}>{d}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="row">
+          {t.exportPrefix}
+          <input type="text" bind:value={prefix} />
+        </label>
+        <label class="row check">
+          <input type="checkbox" bind:checked={withAnnotations} />
+          {t.exportWithAnnotations}
+        </label>
+        <label class="row check">
+          <input type="checkbox" bind:checked={force} />
+          {t.exportOverwrite}
+        </label>
+        <div class="row">
+          <button type="button" onclick={chooseDir}>{t.chooseFolder}</button>
+          <span class="dir" title={dir ?? ''}>{dir ? fileName(dir) : t.noFolderChosen}</span>
+        </div>
+      {:else}
+        <label class="row check">
+          <input type="checkbox" bind:checked={separators} />
+          {t.exportSeparators}
+        </label>
+        <p class="muted">{t.exportTextHint}</p>
+      {/if}
+      {#if error}
+        <p class="error" role="alert">{error}</p>
+      {/if}
+      <div class="actions">
+        <button type="button" onclick={onclose}>{t.cancel}</button>
+        <button type="submit" class="primary" disabled={!canExport || busy}>{t.exportAction}</button
+        >
+      </div>
+    </form>
+  </div>
 </div>
 
 <style>

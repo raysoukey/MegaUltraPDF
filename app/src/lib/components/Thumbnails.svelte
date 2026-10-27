@@ -179,13 +179,36 @@
 <div class="panel">
   <div class="actions" role="toolbar" aria-label={t.pageActions}>
     <span class="count">{count > 0 ? t.selectedPages(count) : t.currentPageTarget}</span>
-    <button type="button" title={t.rotateLeft} onclick={() => rotate(-1)}>↺</button>
-    <button type="button" title={t.rotateRight} onclick={() => rotate(1)}>↻</button>
-    <button type="button" title={t.deletePages} onclick={remove}>🗑</button>
-    <button type="button" title={t.insertBlankBefore} onclick={() => insertBlank(false)}>⬆︎▭</button>
-    <button type="button" title={t.insertBlankAfter} onclick={() => insertBlank(true)}>▭⬇︎</button>
-    <button type="button" title={t.insertFromFile} onclick={insertFromFile}>📄+</button>
-    <button type="button" title={t.extractPages} onclick={extract}>⤓</button>
+    <button aria-label={t.rotateLeft} type="button" title={t.rotateLeft} onclick={() => rotate(-1)}
+      >↺</button
+    >
+    <button aria-label={t.rotateRight} type="button" title={t.rotateRight} onclick={() => rotate(1)}
+      >↻</button
+    >
+    <button aria-label={t.deletePages} type="button" title={t.deletePages} onclick={remove}
+      >🗑</button
+    >
+    <button
+      aria-label={t.insertBlankBefore}
+      type="button"
+      title={t.insertBlankBefore}
+      onclick={() => insertBlank(false)}>⬆︎▭</button
+    >
+    <button
+      aria-label={t.insertBlankAfter}
+      type="button"
+      title={t.insertBlankAfter}
+      onclick={() => insertBlank(true)}>▭⬇︎</button
+    >
+    <button
+      aria-label={t.insertFromFile}
+      type="button"
+      title={t.insertFromFile}
+      onclick={insertFromFile}>📄+</button
+    >
+    <button aria-label={t.extractPages} type="button" title={t.extractPages} onclick={extract}
+      >⤓</button
+    >
   </div>
   <div
     class="list"

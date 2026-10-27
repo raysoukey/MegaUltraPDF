@@ -89,6 +89,7 @@
       {oncompare}
     />
     <button
+      aria-label={t.sidebar}
       type="button"
       class:active={settings.sidebarOpen}
       aria-pressed={settings.sidebarOpen}
@@ -102,6 +103,7 @@
 
   <div class="group" aria-label={t.pageInputLabel}>
     <button
+      aria-label={t.previousPage}
       type="button"
       disabled={!doc || doc.page === 0}
       title={t.previousPage}
@@ -119,6 +121,7 @@
     </form>
     <span class="muted">/ {doc ? doc.summary.page_count : '–'}</span>
     <button
+      aria-label={t.nextPage}
       type="button"
       disabled={!doc || doc.page >= doc.summary.page_count - 1}
       title={t.nextPage}
@@ -128,6 +131,7 @@
 
   <div class="group">
     <button
+      aria-label={t.zoomOut}
       type="button"
       disabled={!doc}
       title="{t.zoomOut} (Ctrl+-)"
@@ -135,12 +139,14 @@
     >
     <span class="zoom">{doc ? zoomPercent(doc) : '–'}</span>
     <button
+      aria-label={t.zoomIn}
       type="button"
       disabled={!doc}
       title="{t.zoomIn} (Ctrl++)"
       onclick={() => doc && setScale(doc, nextZoom(doc.scale, 1), 'custom')}>+</button
     >
     <button
+      aria-label={t.fitWidth}
       type="button"
       disabled={!doc}
       class:active={doc?.zoomMode === 'fitWidth'}
@@ -148,6 +154,7 @@
       onclick={onfitwidth}>↔</button
     >
     <button
+      aria-label={t.fitPage}
       type="button"
       disabled={!doc}
       class:active={doc?.zoomMode === 'fitPage'}
@@ -155,12 +162,14 @@
       onclick={onfitpage}>▢</button
     >
     <button
+      aria-label={t.rotate}
       type="button"
       disabled={!doc}
       title="{t.rotate} (R)"
       onclick={() => doc && rotateDoc(doc)}>⟳</button
     >
     <button
+      aria-label={settings.viewMode === 'continuous' ? t.viewSingle : t.viewContinuous}
       type="button"
       disabled={!doc}
       title={settings.viewMode === 'continuous' ? t.viewSingle : t.viewContinuous}
@@ -170,18 +179,21 @@
 
   <div class="group" aria-label={t.editGroup}>
     <button
+      aria-label={doc?.edit.undo_label ? t.undoLabel(doc.edit.undo_label) : t.undo}
       type="button"
       disabled={!doc || !doc.edit.can_undo}
       title="{doc?.edit.undo_label ? t.undoLabel(doc.edit.undo_label) : t.undo} (Ctrl+Z)"
       onclick={() => doc && undo(doc)}>↶</button
     >
     <button
+      aria-label={doc?.edit.redo_label ? t.redoLabel(doc.edit.redo_label) : t.redo}
       type="button"
       disabled={!doc || !doc.edit.can_redo}
       title="{doc?.edit.redo_label ? t.redoLabel(doc.edit.redo_label) : t.redo} (Ctrl+Y)"
       onclick={() => doc && redo(doc)}>↷</button
     >
     <button
+      aria-label={t.save}
       type="button"
       disabled={!doc}
       class:attention={doc?.edit.modified}
@@ -191,21 +203,32 @@
     <button
       type="button"
       disabled={!doc}
-      title="{t.saveAs} (Ctrl+Maj+S)"
+      title="{t.saveAs} (Ctrl+{t.keyShift}+S)"
       onclick={() => doc && saveAs(doc)}>{t.saveAs}</button
     >
     <button type="button" title="{t.mergeTitle} (Ctrl+M)" onclick={onmerge}>{t.merge}…</button>
-    <button type="button" disabled={!doc} title="{t.splitTitle} (Ctrl+Maj+D)" onclick={onsplit}
-      >{t.split}…</button
+    <button
+      type="button"
+      disabled={!doc}
+      title="{t.splitTitle} (Ctrl+{t.keyShift}+D)"
+      onclick={onsplit}>{t.split}…</button
     >
   </div>
 
   <div class="group right">
-    <button type="button" disabled={!doc} title="{t.search} (Ctrl+F)" onclick={ontogglesearch}
-      >🔍</button
+    <button
+      aria-label={t.search}
+      type="button"
+      disabled={!doc}
+      title="{t.search} (Ctrl+F)"
+      onclick={ontogglesearch}>🔍</button
     >
-    <button type="button" disabled={!doc} title="{t.properties} (Ctrl+I)" onclick={onproperties}
-      >ⓘ</button
+    <button
+      aria-label={t.properties}
+      type="button"
+      disabled={!doc}
+      title="{t.properties} (Ctrl+I)"
+      onclick={onproperties}>ⓘ</button
     >
     <select
       aria-label={t.theme}
@@ -216,7 +239,12 @@
       <option value="light">{t.themeLight}</option>
       <option value="dark">{t.themeDark}</option>
     </select>
-    <button type="button" title="{t.shortcutsHelp} (F1)" onclick={onhelp}>?</button>
+    <button
+      aria-label={t.shortcutsHelp}
+      type="button"
+      title="{t.shortcutsHelp} (F1)"
+      onclick={onhelp}>?</button
+    >
   </div>
 </header>
 

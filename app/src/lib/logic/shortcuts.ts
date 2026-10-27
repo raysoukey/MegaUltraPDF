@@ -105,8 +105,8 @@ export function actionFor(event: KeyLike): Action | null {
 function label(b: Binding): string {
   const parts: string[] = [];
   if (b.ctrl) parts.push('Ctrl');
-  if (b.shift) parts.push('Maj');
-  parts.push(b.key.length === 1 ? b.key.toUpperCase() : b.key);
+  if (b.shift) parts.push(t.keyShift);
+  parts.push(b.key.length === 1 ? b.key.toUpperCase() : (t.keyNames[b.key] ?? b.key));
   return parts.join('+');
 }
 

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { t } from '$lib/strings';
 
   let {
@@ -18,7 +19,13 @@
 </script>
 
 <div class="dialog-backdrop" role="presentation">
-  <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="close-title">
+  <div
+    class="dialog"
+    role="alertdialog"
+    aria-modal="true"
+    use:trapFocus
+    aria-labelledby="close-title"
+  >
     <h2 id="close-title">{t.closeModifiedTitle}</h2>
     <p>{t.closeModifiedQuestion(name)}</p>
     <div class="actions">

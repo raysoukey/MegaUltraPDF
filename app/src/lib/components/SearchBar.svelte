@@ -70,18 +70,22 @@
   >
   <span class="count" aria-live="polite">{count}</span>
   <button
+    aria-label={t.searchPrev}
     type="button"
-    title="{t.searchPrev} (Maj+F3)"
+    title="{t.searchPrev} ({t.keyShift}+F3)"
     disabled={!doc.search?.hits.length}
     onclick={() => stepSearch(doc, -1)}>▲</button
   >
   <button
+    aria-label={t.searchNext}
     type="button"
     title="{t.searchNext} (F3)"
     disabled={!doc.search?.hits.length}
     onclick={() => stepSearch(doc, 1)}>▼</button
   >
-  <button type="button" title="{t.close} (Échap)" onclick={close}>×</button>
+  <button type="button" title="{t.close} ({t.keyNames.Escape})" aria-label={t.close} onclick={close}
+    >×</button
+  >
 </div>
 
 <style>

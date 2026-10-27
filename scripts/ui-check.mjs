@@ -80,7 +80,7 @@ function modifiers(step) {
   return (step.alt ? 1 : 0) | (step.ctrl ? 2 : 0) | (step.shift ? 8 : 0);
 }
 
-const VIRTUAL_KEYS = { Enter: 13, Escape: 27, Home: 36, End: 35, PageUp: 33, PageDown: 34, F1: 112, F3: 114 };
+const VIRTUAL_KEYS = { Tab: 9, ArrowUp: 38, ArrowDown: 40, Enter: 13, Escape: 27, Home: 36, End: 35, PageUp: 33, PageDown: 34, F1: 112, F3: 114 };
 
 async function pressKey(step) {
   const key = step.key;

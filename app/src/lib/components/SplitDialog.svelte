@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { isAppError, pickDirectory, splitDocument, splitPlan, type SplitMode } from '$lib/api';
   import { fileName } from '$lib/logic/labels';
   import { showNotice, type OpenDoc } from '$lib/state/documents.svelte';
@@ -77,65 +78,66 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <form
-    class="dialog"
-    aria-labelledby="split-title"
-    onsubmit={(e) => {
-      e.preventDefault();
-      split();
-    }}
-  >
-    <h2 id="split-title">{t.splitTitle}</h2>
-    <fieldset>
-      <legend>{t.splitMode}</legend>
-      <label>
-        <input type="radio" name="split-mode" value="every" bind:group={kind} />
-        {t.splitEvery}
-        <input
-          type="number"
-          min="1"
-          max={doc.summary.page_count}
-          bind:value={every}
-          disabled={kind !== 'every'}
-          aria-label={t.splitEveryLabel}
-        />
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="split-title" use:trapFocus>
+    <form
+      class="dialog-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        split();
+      }}
+    >
+      <h2 id="split-title">{t.splitTitle}</h2>
+      <fieldset>
+        <legend>{t.splitMode}</legend>
+        <label>
+          <input type="radio" name="split-mode" value="every" bind:group={kind} />
+          {t.splitEvery}
+          <input
+            type="number"
+            min="1"
+            max={doc.summary.page_count}
+            bind:value={every}
+            disabled={kind !== 'every'}
+            aria-label={t.splitEveryLabel}
+          />
+        </label>
+        <label>
+          <input type="radio" name="split-mode" value="ranges" bind:group={kind} />
+          {t.splitRanges}
+          <input
+            type="text"
+            bind:value={spec}
+            placeholder={t.splitRangesPlaceholder}
+            disabled={kind !== 'ranges'}
+            aria-label={t.splitRanges}
+          />
+        </label>
+        <label>
+          <input type="radio" name="split-mode" value="bookmarks" bind:group={kind} />
+          {t.splitBookmarks}
+        </label>
+      </fieldset>
+      <p class="preview" aria-live="polite">
+        {#if error}
+          <span class="error">{error}</span>
+        {:else if plan}
+          {t.splitPreview(plan.length)}
+        {/if}
+      </p>
+      <label class="row">
+        {t.splitPrefix}
+        <input type="text" bind:value={prefix} />
       </label>
-      <label>
-        <input type="radio" name="split-mode" value="ranges" bind:group={kind} />
-        {t.splitRanges}
-        <input
-          type="text"
-          bind:value={spec}
-          placeholder={t.splitRangesPlaceholder}
-          disabled={kind !== 'ranges'}
-          aria-label={t.splitRanges}
-        />
-      </label>
-      <label>
-        <input type="radio" name="split-mode" value="bookmarks" bind:group={kind} />
-        {t.splitBookmarks}
-      </label>
-    </fieldset>
-    <p class="preview" aria-live="polite">
-      {#if error}
-        <span class="error">{error}</span>
-      {:else if plan}
-        {t.splitPreview(plan.length)}
-      {/if}
-    </p>
-    <label class="row">
-      {t.splitPrefix}
-      <input type="text" bind:value={prefix} />
-    </label>
-    <div class="row">
-      <button type="button" onclick={chooseDir}>{t.chooseFolder}</button>
-      <span class="dir" title={outDir ?? ''}>{outDir ?? t.noFolderChosen}</span>
-    </div>
-    <div class="actions">
-      <button type="button" onclick={onclose}>{t.cancel}</button>
-      <button type="submit" class="primary" disabled={!plan || !outDir || busy}>{t.split}</button>
-    </div>
-  </form>
+      <div class="row">
+        <button type="button" onclick={chooseDir}>{t.chooseFolder}</button>
+        <span class="dir" title={outDir ?? ''}>{outDir ?? t.noFolderChosen}</span>
+      </div>
+      <div class="actions">
+        <button type="button" onclick={onclose}>{t.cancel}</button>
+        <button type="submit" class="primary" disabled={!plan || !outDir || busy}>{t.split}</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <style>

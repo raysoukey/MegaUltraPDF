@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { documentProperties, fileSize, type DocumentProperties } from '$lib/api';
   import { formatPdfDate } from '$lib/logic/labels';
   import { ensureSecurity, setMetadata, type OpenDoc } from '$lib/state/documents.svelte';
@@ -79,61 +80,62 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <form
-    class="dialog"
-    aria-labelledby="props-title"
-    onsubmit={(e) => {
-      e.preventDefault();
-      save();
-    }}
-  >
-    <h2 id="props-title">{t.properties}</h2>
-    {#if info === null}
-      <p>{t.loading}</p>
-    {:else}
-      <label class="field">
-        {t.propTitle}
-        <input type="text" bind:value={title} maxlength="1024" disabled={readOnly} />
-      </label>
-      <label class="field">
-        {t.propAuthor}
-        <input type="text" bind:value={author} maxlength="1024" disabled={readOnly} />
-      </label>
-      <label class="field">
-        {t.propSubject}
-        <input type="text" bind:value={subject} maxlength="1024" disabled={readOnly} />
-      </label>
-      <label class="field">
-        {t.propKeywords}
-        <input type="text" bind:value={keywords} maxlength="1024" disabled={readOnly} />
-      </label>
-      {#if readOnly}
-        <p class="muted">{t.metadataReadOnlyEncrypted}</p>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="props-title" use:trapFocus>
+    <form
+      class="dialog-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        save();
+      }}
+    >
+      <h2 id="props-title">{t.properties}</h2>
+      {#if info === null}
+        <p>{t.loading}</p>
+      {:else}
+        <label class="field">
+          {t.propTitle}
+          <input type="text" bind:value={title} maxlength="1024" disabled={readOnly} />
+        </label>
+        <label class="field">
+          {t.propAuthor}
+          <input type="text" bind:value={author} maxlength="1024" disabled={readOnly} />
+        </label>
+        <label class="field">
+          {t.propSubject}
+          <input type="text" bind:value={subject} maxlength="1024" disabled={readOnly} />
+        </label>
+        <label class="field">
+          {t.propKeywords}
+          <input type="text" bind:value={keywords} maxlength="1024" disabled={readOnly} />
+        </label>
+        {#if readOnly}
+          <p class="muted">{t.metadataReadOnlyEncrypted}</p>
+        {/if}
+        <table>
+          <tbody>
+            {#each rows as [label, value] (label)}
+              <tr><th scope="row">{label}</th><td>{value}</td></tr>
+            {/each}
+            {#if doc.security}
+              <tr>
+                <th scope="row">{t.securityTitle}</th>
+                <td>
+                  {doc.security.encrypted ? t.securityProtected : t.securityOpen}
+                  {#if doc.security.encrypted}
+                    · {t.securityPermissions(doc.security.permissions)}
+                  {/if}
+                </td>
+              </tr>
+            {/if}
+          </tbody>
+        </table>
       {/if}
-      <table>
-        <tbody>
-          {#each rows as [label, value] (label)}
-            <tr><th scope="row">{label}</th><td>{value}</td></tr>
-          {/each}
-          {#if doc.security}
-            <tr>
-              <th scope="row">{t.securityTitle}</th>
-              <td>
-                {doc.security.encrypted ? t.securityProtected : t.securityOpen}
-                {#if doc.security.encrypted}
-                  · {t.securityPermissions(doc.security.permissions)}
-                {/if}
-              </td>
-            </tr>
-          {/if}
-        </tbody>
-      </table>
-    {/if}
-    <div class="actions">
-      <button type="button" onclick={onclose}>{t.close}</button>
-      <button type="submit" class="primary" disabled={!changed || busy}>{t.save}</button>
-    </div>
-  </form>
+      <div class="actions">
+        <button type="button" onclick={onclose}>{t.close}</button>
+        <button type="submit" class="primary" disabled={!changed || busy}>{t.save}</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <style>

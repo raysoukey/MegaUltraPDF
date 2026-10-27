@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { cropMarginsValid, scopePages, type PageScope } from '$lib/logic/content';
   import { cropPages, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
@@ -46,36 +47,37 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <form
-    class="dialog"
-    aria-labelledby="crop-title"
-    onsubmit={(e) => {
-      e.preventDefault();
-      apply();
-    }}
-  >
-    <h2 id="crop-title">{t.cropTitle}</h2>
-    <fieldset>
-      <legend>{t.cropMargins}</legend>
-      <div class="grid">
-        <label
-          >{t.cropLeft}<input type="number" min="0" bind:this={first} bind:value={left} /></label
-        >
-        <label>{t.cropTop}<input type="number" min="0" bind:value={top} /></label>
-        <label>{t.cropRight}<input type="number" min="0" bind:value={right} /></label>
-        <label>{t.cropBottom}<input type="number" min="0" bind:value={bottom} /></label>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="crop-title" use:trapFocus>
+    <form
+      class="dialog-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        apply();
+      }}
+    >
+      <h2 id="crop-title">{t.cropTitle}</h2>
+      <fieldset>
+        <legend>{t.cropMargins}</legend>
+        <div class="grid">
+          <label
+            >{t.cropLeft}<input type="number" min="0" bind:this={first} bind:value={left} /></label
+          >
+          <label>{t.cropTop}<input type="number" min="0" bind:value={top} /></label>
+          <label>{t.cropRight}<input type="number" min="0" bind:value={right} /></label>
+          <label>{t.cropBottom}<input type="number" min="0" bind:value={bottom} /></label>
+        </div>
+        <button type="button" onclick={reset}>{t.cropReset}</button>
+      </fieldset>
+      {#if !valid}
+        <p class="error" role="alert">{t.cropInvalid}</p>
+      {/if}
+      <PageScopeSelect {doc} bind:value={scope} />
+      <div class="actions">
+        <button type="button" onclick={onclose}>{t.cancel}</button>
+        <button type="submit" class="primary" disabled={!valid || busy}>{t.crop}</button>
       </div>
-      <button type="button" onclick={reset}>{t.cropReset}</button>
-    </fieldset>
-    {#if !valid}
-      <p class="error" role="alert">{t.cropInvalid}</p>
-    {/if}
-    <PageScopeSelect {doc} bind:value={scope} />
-    <div class="actions">
-      <button type="button" onclick={onclose}>{t.cancel}</button>
-      <button type="submit" class="primary" disabled={!valid || busy}>{t.crop}</button>
-    </div>
-  </form>
+    </form>
+  </div>
 </div>
 
 <style>

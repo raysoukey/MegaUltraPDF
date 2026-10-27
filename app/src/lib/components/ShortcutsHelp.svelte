@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { shortcutHelp } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
 
@@ -11,7 +12,7 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
+  <div class="dialog" role="dialog" aria-modal="true" use:trapFocus aria-labelledby="help-title">
     <h2 id="help-title">{t.shortcutsHelp}</h2>
     <table>
       <tbody>

@@ -29,7 +29,7 @@
   } = $props();
 
   const TOOLS: { tool: Tool; glyph: string; key: string }[] = [
-    { tool: 'select', glyph: '⬚', key: 'Échap' },
+    { tool: 'select', glyph: '⬚', key: 'Escape' },
     { tool: 'note', glyph: '🗨', key: 'N' },
     { tool: 'text', glyph: 'T', key: 'T' },
     { tool: 'ink', glyph: '✎', key: 'D' },
@@ -62,7 +62,7 @@
         class:active={toolState.tool === item.tool}
         aria-pressed={toolState.tool === item.tool}
         aria-label={t.tool[item.tool]}
-        title="{t.tool[item.tool]}{item.key ? ` (${item.key})` : ''}"
+        title="{t.tool[item.tool]}{item.key ? ` (${t.keyNames[item.key] ?? item.key})` : ''}"
         onclick={() => setTool(item.tool)}>{item.glyph}</button
       >
     {/each}
@@ -105,7 +105,7 @@
       type="button"
       disabled={!doc.selectedAnnotation}
       aria-label={t.deleteAnnotation}
-      title="{t.deleteAnnotation} (Suppr)"
+      title="{t.deleteAnnotation} ({t.keyNames.Delete})"
       onclick={() => deleteSelectedAnnotation(doc)}>🗑</button
     >
     <input

@@ -3,6 +3,7 @@
   import type { OpenDoc } from '$lib/state/documents.svelte';
   import { clearRecent, settings } from '$lib/state/settings.svelte';
   import { t } from '$lib/strings';
+  import { menuNav } from '$lib/actions/menuNav';
 
   let {
     doc,
@@ -27,7 +28,12 @@
   } = $props();
 
   let open = $state(false);
+  let trigger: HTMLButtonElement | undefined = $state();
 
+  function close(refocus: boolean) {
+    open = false;
+    if (refocus) trigger?.focus();
+  }
   function pick(action: () => void) {
     open = false;
     action();
@@ -50,20 +56,27 @@
     aria-haspopup="menu"
     aria-expanded={open}
     title={t.fileMenu}
+    bind:this={trigger}
+    onkeydown={(e) => {
+      if (e.key === 'ArrowDown' && !open) {
+        e.preventDefault();
+        open = true;
+      }
+    }}
     onclick={() => (open = !open)}>{t.fileMenu} ▾</button
   >
   {#if open}
-    <ul class="dropdown" role="menu" onmouseleave={() => (open = false)}>
-      <li>
+    <ul class="dropdown" role="menu" aria-label={t.fileMenu} use:menuNav={{ onclose: close }}>
+      <li role="none">
         <button type="button" role="menuitem" onclick={() => pick(onopen)}
           >{t.openFile} <span class="key">Ctrl+O</span></button
         >
       </li>
       {#if settings.recent.length > 0}
-        <li class="separator"></li>
-        <li class="muted">{t.recentFiles}</li>
+        <li class="separator" role="separator"></li>
+        <li class="muted" role="none">{t.recentFiles}</li>
         {#each settings.recent.slice(0, 8) as path (path)}
-          <li>
+          <li role="none">
             <button
               type="button"
               role="menuitem"
@@ -72,15 +85,15 @@
             >
           </li>
         {/each}
-        <li>
+        <li role="none">
           <button type="button" role="menuitem" onclick={() => pick(clearRecent)}
             >{t.clearRecent}</button
           >
         </li>
       {/if}
-      <li class="separator"></li>
+      <li class="separator" role="separator"></li>
       {#each entries as e (e.label)}
-        <li>
+        <li role="none">
           <button
             type="button"
             role="menuitem"

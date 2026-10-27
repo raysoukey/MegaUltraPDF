@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import type { FontFamily, TextStyle } from '$lib/api';
   import { cancelTextInsert, insertText, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
@@ -43,44 +44,51 @@
 </script>
 
 <div class="dialog-backdrop" role="presentation">
-  <form
+  <div
     class="dialog"
+    role="dialog"
+    aria-modal="true"
     aria-labelledby="text-insert-title"
-    onsubmit={(e) => {
-      e.preventDefault();
-      apply();
-    }}
+    use:trapFocus
   >
-    <h2 id="text-insert-title">{t.textInsertTitle}</h2>
-    <label class="col">
-      {t.textInsertText}
-      <textarea bind:this={area} bind:value={text} rows="3" onkeydown={onKey}></textarea>
-    </label>
-    <label class="row">
-      {t.fontFamily}
-      <select bind:value={family}>
-        {#each ['helvetica', 'times', 'courier'] as f (f)}
-          <option value={f}>{t.fontFamilies[f]}</option>
-        {/each}
-      </select>
-    </label>
-    <div class="row">
-      <label><input type="checkbox" bind:checked={bold} /> {t.bold}</label>
-      <label><input type="checkbox" bind:checked={italic} /> {t.italic}</label>
-      <label>
-        {t.fontSize}
-        <input type="number" min="4" max="400" step="1" bind:value={size} />
+    <form
+      class="dialog-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        apply();
+      }}
+    >
+      <h2 id="text-insert-title">{t.textInsertTitle}</h2>
+      <label class="col">
+        {t.textInsertText}
+        <textarea bind:this={area} bind:value={text} rows="3" onkeydown={onKey}></textarea>
       </label>
-      <label>
-        {t.color}
-        <input type="color" bind:value={color} />
+      <label class="row">
+        {t.fontFamily}
+        <select bind:value={family}>
+          {#each ['helvetica', 'times', 'courier'] as f (f)}
+            <option value={f}>{t.fontFamilies[f]}</option>
+          {/each}
+        </select>
       </label>
-    </div>
-    <div class="actions">
-      <button type="button" onclick={() => cancelTextInsert(doc)}>{t.cancel}</button>
-      <button type="submit" class="primary" disabled={!canApply || busy}>{t.insert}</button>
-    </div>
-  </form>
+      <div class="row">
+        <label><input type="checkbox" bind:checked={bold} /> {t.bold}</label>
+        <label><input type="checkbox" bind:checked={italic} /> {t.italic}</label>
+        <label>
+          {t.fontSize}
+          <input type="number" min="4" max="400" step="1" bind:value={size} />
+        </label>
+        <label>
+          {t.color}
+          <input type="color" bind:value={color} />
+        </label>
+      </div>
+      <div class="actions">
+        <button type="button" onclick={() => cancelTextInsert(doc)}>{t.cancel}</button>
+        <button type="submit" class="primary" disabled={!canApply || busy}>{t.insert}</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <style>

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { comparePages, isAppError, type ComparedPages } from '$lib/api';
   import { displayName, docsState, openPath, type OpenDoc } from '$lib/state/documents.svelte';
   import { pickPdfFiles } from '$lib/api';
@@ -68,7 +69,13 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="compare-title">
+  <div
+    class="dialog wide"
+    role="dialog"
+    aria-modal="true"
+    use:trapFocus
+    aria-labelledby="compare-title"
+  >
     <h2 id="compare-title">{t.compareTitle}</h2>
     <div class="row">
       <span>{t.compareWith}</span>
@@ -84,9 +91,21 @@
       <button type="button" onclick={openOther}>{t.compareOpenFile}</button>
     </div>
     <div class="row">
-      <button type="button" disabled={page === 0} onclick={() => step(-1)}>‹</button>
+      <button
+        type="button"
+        aria-label={t.previousPage}
+        title={t.previousPage}
+        disabled={page === 0}
+        onclick={() => step(-1)}>‹</button
+      >
       <span>{t.pageOf(page + 1, maxPage + 1)}</span>
-      <button type="button" disabled={page >= maxPage} onclick={() => step(1)}>›</button>
+      <button
+        type="button"
+        aria-label={t.nextPage}
+        title={t.nextPage}
+        disabled={page >= maxPage}
+        onclick={() => step(1)}>›</button
+      >
       <button type="button" class="primary" disabled={!other || busy} onclick={compare}
         >{t.compareAction}</button
       >

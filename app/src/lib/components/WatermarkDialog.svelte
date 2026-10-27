@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { trapFocus } from '$lib/actions/trapFocus';
   import { scopePages, type PageScope } from '$lib/logic/content';
   import { addWatermark, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
@@ -48,42 +49,49 @@
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onclose()}
 >
-  <form
+  <div
     class="dialog"
+    role="dialog"
+    aria-modal="true"
     aria-labelledby="watermark-title"
-    onsubmit={(e) => {
-      e.preventDefault();
-      apply();
-    }}
+    use:trapFocus
   >
-    <h2 id="watermark-title">{t.watermarkTitle}</h2>
-    <label class="row">
-      {t.watermarkText}
-      <input type="text" bind:this={first} bind:value={text} maxlength="200" />
-    </label>
-    <label class="row">
-      {t.watermarkSize}
-      <input type="number" min="4" max="400" bind:value={size} />
-    </label>
-    <label class="row">
-      {t.opacity}
-      <input type="range" min="0.05" max="1" step="0.05" bind:value={opacity} />
-      <span class="muted">{Math.round(opacity * 100)} %</span>
-    </label>
-    <label class="row">
-      {t.watermarkAngle}
-      <input type="number" min="-90" max="90" bind:value={angle} />
-    </label>
-    <label class="row">
-      {t.color}
-      <input type="color" bind:value={color} />
-    </label>
-    <PageScopeSelect {doc} bind:value={scope} />
-    <div class="actions">
-      <button type="button" onclick={onclose}>{t.cancel}</button>
-      <button type="submit" class="primary" disabled={!canApply || busy}>{t.apply}</button>
-    </div>
-  </form>
+    <form
+      class="dialog-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        apply();
+      }}
+    >
+      <h2 id="watermark-title">{t.watermarkTitle}</h2>
+      <label class="row">
+        {t.watermarkText}
+        <input type="text" bind:this={first} bind:value={text} maxlength="200" />
+      </label>
+      <label class="row">
+        {t.watermarkSize}
+        <input type="number" min="4" max="400" bind:value={size} />
+      </label>
+      <label class="row">
+        {t.opacity}
+        <input type="range" min="0.05" max="1" step="0.05" bind:value={opacity} />
+        <span class="muted">{Math.round(opacity * 100)} %</span>
+      </label>
+      <label class="row">
+        {t.watermarkAngle}
+        <input type="number" min="-90" max="90" bind:value={angle} />
+      </label>
+      <label class="row">
+        {t.color}
+        <input type="color" bind:value={color} />
+      </label>
+      <PageScopeSelect {doc} bind:value={scope} />
+      <div class="actions">
+        <button type="button" onclick={onclose}>{t.cancel}</button>
+        <button type="submit" class="primary" disabled={!canApply || busy}>{t.apply}</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <style>

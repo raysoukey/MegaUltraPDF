@@ -135,7 +135,7 @@ export const fr = {
   aboutThirdParty: (crates: number, npm: number) =>
     `Composants tiers : ${crates} crates Rust, ${npm} paquets npm`,
   aboutNotices:
-    'Les textes complets des licences sont livrés avec l’application (pdfium/LICENSE, THIRD_PARTY_LICENSES.md).',
+    'Les textes complets des licences sont livrés avec l’application : THIRD_PARTY_LICENSES.md (composants tiers) et la notice placée à côté de la bibliothèque PDFium.',
   licenseName: 'Composant',
   licenseVersion: 'Version',
   licenseLicense: 'Licence',
@@ -625,7 +625,7 @@ export const en: Strings = {
   aboutThirdParty: (crates: number, npm: number) =>
     `Third-party components: ${crates} Rust crates, ${npm} npm packages`,
   aboutNotices:
-    'The full licence texts ship with the application (pdfium/LICENSE, THIRD_PARTY_LICENSES.md).',
+    'The full licence texts ship with the application: THIRD_PARTY_LICENSES.md (third-party components) and the notice next to the PDFium library.',
   licenseName: 'Component',
   licenseVersion: 'Version',
   licenseLicense: 'Licence',

@@ -1,0 +1,19 @@
+[
+  { "wait": 1800 },
+  { "assert": "(() => { const r = document.querySelector('.page[data-page=\\'0\\']').getBoundingClientRect(); return r.width > r.height; })()", "label": "page tournée affichée en paysage" },
+  { "assert": "document.querySelectorAll('.form-layer input').length === 1", "label": "le champ « nom » est là" },
+  { "assert": "(() => { const page = document.querySelector('.page[data-page=\\'0\\']').getBoundingClientRect(); const f = document.querySelector('.form-layer input').getBoundingClientRect(); return f.left - page.left > page.width * 0.75 && f.height > f.width; })()", "label": "le champ est à droite, vertical (espace affiché)" },
+  { "shot": "01-tournee.png" },
+
+  { "click": "button[aria-label='Rectangle']" },
+  { "drag": ".page[data-page='0'] .annotation-layer", "from": [100, 100], "to": [200, 160] },
+  { "wait": 2000 },
+  { "assert": "document.querySelectorAll('.annotation-layer .handle').length === 4", "label": "rectangle créé et sélectionné" },
+  { "assert": "(() => { const layer = document.querySelector('.page[data-page=\\'0\\'] .annotation-layer').getBoundingClientRect(); const o = document.querySelector('.annotation-layer .outline').getBoundingClientRect(); return Math.abs(o.left - layer.left - 100) < 8 && Math.abs(o.top - layer.top - 100) < 8 && Math.abs(o.width - 100) < 10 && Math.abs(o.height - 60) < 10; })()", "label": "l'annotation est là où elle a été tracée" },
+  { "shot": "02-annotation.png" },
+
+  { "key": "s", "ctrl": true },
+  { "wait": 2500 },
+  { "assert": "!document.querySelector('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').textContent.trim().endsWith('•')", "label": "enregistré" },
+  { "assert": "(() => { const layer = document.querySelector('.page[data-page=\\'0\\'] .annotation-layer').getBoundingClientRect(); const o = document.querySelector('.annotation-layer .outline').getBoundingClientRect(); return Math.abs(o.left - layer.left - 100) < 8 && Math.abs(o.top - layer.top - 100) < 8; })()", "label": "toujours au même endroit après enregistrement" }
+]

@@ -64,14 +64,14 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 
 ## Édition de contenu
 
-- [ ] Insérer du texte (police, taille, couleur) [5]
-- [ ] Insérer des images [5]
-- [ ] Déplacer / supprimer des objets de page [5]
-- [ ] Modifier le texte existant quand c'est possible, avec avertissement sur les limites [5]
-- [ ] Caviardage réel (contenu supprimé) [5]
-- [ ] Filigrane texte ou image [5]
-- [ ] Numérotation des pages, en-têtes et pieds de page [5]
-- [ ] Recadrage des pages [5]
+- [x] Insérer du texte (police, taille, couleur ; Standard 14, WinAnsi) [5]
+- [x] Insérer des images [5]
+- [x] Déplacer / supprimer des objets de page [5]
+- [x] Modifier le texte existant quand c'est possible (même police, même position) [5]
+- [x] Caviardage réel (objets texte/image et annotations retirés du fichier, cache noir) [5]
+- [x] Filigrane texte (flux `lopdf`, opacité, inclinaison) ; filigrane image reporté [5]
+- [x] Numérotation des pages, en-têtes et pieds de page (modèle `{n}`, `{total}`, `{titre}`) [5]
+- [x] Recadrage des pages (marges, `/CropBox`) [5]
 
 ## Export, impression, sécurité
 

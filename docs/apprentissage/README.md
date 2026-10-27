@@ -12,6 +12,9 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [Lot 4 — Formulaires et signature visuelle](lot-4.md)
 - [Lot 5 — Édition de contenu](lot-5.md)
 - [Lot 6 — Export, impression, sécurité](lot-6.md)
+- [Lot 7 — Finition et distribution](lot-7.md)
+- [Lot 8 — OCR et signature numérique](lot-8.md)
+- [Lot 9 — Consolidation](lot-9.md)
 
 ## Fiches concept (`/concept <nom>` pour en ajouter une)
 

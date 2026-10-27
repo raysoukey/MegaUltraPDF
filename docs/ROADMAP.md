@@ -15,6 +15,6 @@ Légende : ✅ terminé · 🚧 en cours · ⬜ à venir. Démarrer un lot : `/l
 | 6 | Export, impression, sécurité | Export images/texte, impression via le WebView, métadonnées, chiffrement (`lopdf`), optimisation | ✅ |
 | 7 | Finition et distribution | i18n FR/EN, accessibilité, préférences, aide, « À propos » et licences, installeurs (bundler Tauri), version portable, workflow de release | ✅ |
 | 8 | Options avancées (désactivées par défaut) | OCR (couche de texte invisible, feature `ocr`), signature numérique cryptographique et vérification des signatures (feature `signature`) | ✅ |
-| 9 | Consolidation | Constats mineurs reportés des Lots 0 à 8 (sécurité du caviardage, CLI, annotations, formulaires, polices, métadonnées, signatures, OCR, service, interface, accessibilité, distribution) ; v0.9.0 | 🚧 |
+| 9 | Consolidation | Constats mineurs reportés des Lots 0 à 8 (sécurité du caviardage, CLI, annotations, formulaires, polices, métadonnées, signatures, OCR, service, interface, accessibilité, distribution) ; v0.9.0 | ✅ |
 
 Référence complète : `docs/superpowers/specs/2026-10-26-megaultrapdf-design.md`, §5.

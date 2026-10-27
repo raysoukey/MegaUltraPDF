@@ -5,6 +5,7 @@
   import { pageUrl } from '$lib/pageUrl';
   import { type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
+  import AnnotationLayer from './AnnotationLayer.svelte';
   import LinkLayer from './LinkLayer.svelte';
   import TextLayer from './TextLayer.svelte';
 
@@ -98,6 +99,7 @@
   {#if interactive}
     <LinkLayer {doc} {index} {onnavigate} />
     <TextLayer {doc} {index} />
+    <AnnotationLayer {doc} {index} />
   {/if}
 </div>
 

@@ -2,6 +2,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { pickPdfFiles, startupFile } from '$lib/api';
+  import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
   import CloseConfirmDialog from '$lib/components/CloseConfirmDialog.svelte';
   import MergeDialog from '$lib/components/MergeDialog.svelte';
   import PasswordDialog from '$lib/components/PasswordDialog.svelte';
@@ -19,6 +20,7 @@
   import {
     activeDoc,
     cancelPassword,
+    deleteSelectedAnnotation,
     displayName,
     docById,
     docsState,
@@ -34,12 +36,14 @@
     save,
     saveAs,
     setScale,
+    selectAnnotation,
     setSelection,
     showNotice,
     stepSearch,
     undo,
   } from '$lib/state/documents.svelte';
   import { flushSettings, loadSettings, settings } from '$lib/state/settings.svelte';
+  import { setTool, toolState } from '$lib/state/tools.svelte';
   import { t } from '$lib/strings';
   import { applyTheme } from '$lib/theme';
 
@@ -119,6 +123,11 @@
       (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !typing) {
       copySelection();
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !typing && doc?.selectedAnnotation) {
+      e.preventDefault();
+      deleteSelectedAnnotation(doc);
       return;
     }
     const action = actionFor({
@@ -213,6 +222,8 @@
         else if (propertiesOpen) propertiesOpen = false;
         else if (docsState.passwordPrompt) cancelPassword();
         else if (searchOpen) searchOpen = false;
+        else if (toolState.tool !== 'select') setTool('select');
+        else if (doc?.selectedAnnotation) selectAnnotation(doc, null);
         else if (doc?.selection) setSelection(doc, null);
         break;
     }
@@ -235,6 +246,9 @@
     onsplit={() => doc && (splitOpen = true)}
   />
   <Tabs />
+  {#if doc}
+    <AnnotationToolbar {doc} />
+  {/if}
   {#if doc && searchOpen}
     <SearchBar {doc} onclose={() => (searchOpen = false)} />
   {/if}

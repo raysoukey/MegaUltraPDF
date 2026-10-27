@@ -3,6 +3,7 @@
 // document passe par le backend ; ici on ne garde que ce qu'il faut pour l'afficher.
 
 import {
+  annotations as fetchAnnotations,
   applyEdit as apiApplyEdit,
   closeDocument,
   extractPages,
@@ -18,8 +19,12 @@ import {
   searchDocument,
   setGeneration,
   textLayer,
+  type Annotation,
+  type AnnotationKind,
   type DocumentSummary,
   type EditCommand,
+  type NewAnnotation,
+  type Rect,
   type EditResult,
   type EditState,
   type OutlineNode,
@@ -28,7 +33,9 @@ import {
   type SearchHit,
   type TextBox,
 } from '$lib/api';
+import { quadsFromSelection } from '$lib/logic/annotations';
 import { fileName } from '$lib/logic/labels';
+import { selectionRects } from '$lib/logic/selection';
 import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
 import { t } from '$lib/strings';
@@ -67,6 +74,10 @@ export interface OpenDoc {
   edit: EditState;
   /** Pages sélectionnées dans les vignettes (index 0). */
   selectedPages: number[];
+  /** Annotations par page (cache vidé à chaque édition). */
+  annotations: Record<number, Annotation[]>;
+  /** Annotation sélectionnée dans le calque ou le panneau. */
+  selectedAnnotation: { page: number; index: number } | null;
 }
 
 export interface PasswordPrompt {
@@ -154,6 +165,8 @@ export async function openPath(path: string, password?: string): Promise<boolean
       search: null,
       edit: { ...UNTOUCHED },
       selectedPages: [],
+      annotations: {},
+      selectedAnnotation: null,
     });
     docsState.activeId = summary.id;
     docsState.passwordPrompt = null;
@@ -399,6 +412,8 @@ function afterEdit(doc: OpenDoc, result: EditResult): void {
   doc.selection = null;
   doc.search = null;
   doc.selectedPages = doc.selectedPages.filter((p) => p < result.summary.page_count);
+  doc.annotations = {};
+  doc.selectedAnnotation = null;
   doc.page = Math.min(doc.page, Math.max(0, result.summary.page_count - 1));
   nextGeneration(doc);
 }
@@ -513,6 +528,8 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
       // Un document fusionné n'existe pas encore sur disque : il est « modifié » d'emblée.
       edit: { ...UNTOUCHED, modified: true },
       selectedPages: [],
+      annotations: {},
+      selectedAnnotation: null,
     });
     docsState.activeId = summary.id;
     return true;
@@ -522,6 +539,99 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
   } finally {
     docsState.busy = false;
   }
+}
+
+// ---- Annotations (Lot 3) ----
+
+export async function ensureAnnotations(doc: OpenDoc, page: number): Promise<Annotation[]> {
+  const cached = doc.annotations[page];
+  if (cached) return cached;
+  const list = await fetchAnnotations(doc.summary.id, page).catch(() => []);
+  doc.annotations[page] = list;
+  return list;
+}
+
+export function selectAnnotation(
+  doc: OpenDoc,
+  target: { page: number; index: number } | null,
+): void {
+  doc.selectedAnnotation = target;
+}
+
+/** Ajoute une annotation ; la nouvelle annotation (en fin de tableau) devient sélectionnée. */
+export async function addAnnotation(
+  doc: OpenDoc,
+  page: number,
+  annotation: NewAnnotation,
+): Promise<boolean> {
+  const before = (doc.annotations[page] ?? (await ensureAnnotations(doc, page))).length;
+  const ok = await applyEdit(doc, { kind: 'add_annotation', page, annotation });
+  if (ok) doc.selectedAnnotation = { page, index: before };
+  return ok;
+}
+
+export async function deleteAnnotation(
+  doc: OpenDoc,
+  page: number,
+  index: number,
+): Promise<boolean> {
+  return applyEdit(doc, { kind: 'delete_annotation', page, index });
+}
+
+export async function updateAnnotation(
+  doc: OpenDoc,
+  page: number,
+  index: number,
+  annotation: NewAnnotation,
+): Promise<boolean> {
+  return applyEdit(doc, { kind: 'update_annotation', page, index, annotation });
+}
+
+/** Déplace / redimensionne ; l'annotation recréée (formes, texte) finit en fin de tableau. */
+export async function moveAnnotation(
+  doc: OpenDoc,
+  page: number,
+  index: number,
+  rect: Rect,
+): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'move_annotation', page, index, rect });
+  if (ok) {
+    const list = await ensureAnnotations(doc, page);
+    // Une note garde son index ; une forme recréée est la dernière.
+    const kept = list.find((a) => a.index === index && a.kind === 'note');
+    doc.selectedAnnotation = kept ? { page, index } : { page, index: list.length - 1 };
+  }
+  return ok;
+}
+
+/** Marque le texte sélectionné (surligner, souligner, barrer). */
+export async function annotateSelection(
+  doc: OpenDoc,
+  kind: AnnotationKind,
+  style: NewAnnotation['style'],
+  author: string,
+): Promise<boolean> {
+  const sel = doc.selection;
+  if (!sel) return false;
+  const boxes = doc.textLayers[sel.page] ?? [];
+  const rects = quadsFromSelection(selectionRects(boxes, sel.from, sel.to));
+  if (rects.length === 0) return false;
+  const ok = await addAnnotation(doc, sel.page, {
+    kind,
+    geometry: { kind: 'quads', rects },
+    style,
+    contents: '',
+    author,
+  });
+  if (ok) doc.selection = null;
+  return ok;
+}
+
+/** Supprime l'annotation sélectionnée, s'il y en a une. */
+export async function deleteSelectedAnnotation(doc: OpenDoc): Promise<void> {
+  const sel = doc.selectedAnnotation;
+  if (!sel) return;
+  await deleteAnnotation(doc, sel.page, sel.index);
 }
 
 export function setSelectedPages(doc: OpenDoc, pages: number[]): void {

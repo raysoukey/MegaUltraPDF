@@ -7,6 +7,7 @@ import {
   noteIconRect,
   quadsFromSelection,
   resize,
+  toNewAnnotation,
   toPdfRect,
 } from './annotations';
 
@@ -102,5 +103,28 @@ describe('toPdfRect', () => {
     expect(r).toEqual({ x: 0, y: 0, w: 10, h: 20 });
     const r2 = toPdfRect({ left: 180, top: 90, width: 20, height: 10 }, page, 2, 'cw90');
     expect(r2).toEqual({ x: 45, y: 90, w: 5, h: 10 });
+  });
+});
+
+describe('toNewAnnotation', () => {
+  it('rebuilds a creation request from a read annotation, with safe defaults', () => {
+    const a = ann(2, { x: 1, y: 2, w: 30, h: 40 }, 'text');
+    a.contents = 'Essai';
+    a.font_size = 14;
+    expect(toNewAnnotation(a)).toEqual({
+      kind: 'text',
+      geometry: { kind: 'rect', rect: { x: 1, y: 2, w: 30, h: 40 } },
+      style: {
+        color: { r: 0, g: 0, b: 0 },
+        fill: null,
+        opacity: 1,
+        stroke_width: 1,
+        font_size: 14,
+      },
+      contents: 'Essai',
+      author: '',
+    });
+    expect(toNewAnnotation(ann(0, { x: 0, y: 0, w: 1, h: 1 }, 'link'))).toBeNull();
+    expect(toNewAnnotation(ann(0, { x: 0, y: 0, w: 1, h: 1 }, 'ink'))).toBeNull();
   });
 });

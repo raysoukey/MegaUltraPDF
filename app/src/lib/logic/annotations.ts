@@ -3,7 +3,7 @@
 // quadrilatères depuis une sélection de texte, conversions écran → PDF. Tout en points PDF
 // sauf mention contraire.
 
-import type { Annotation, PageSize, Rect, Rotation } from '$lib/api';
+import type { Annotation, NewAnnotation, PageSize, Rect, Rotation } from '$lib/api';
 import { cssPointToPdf, type CssRect } from './geometry';
 import type { Pt } from './tools';
 
@@ -120,4 +120,46 @@ export function toPdfRect(css: CssRect, page: PageSize, scale: number, rotation:
   const x = Math.min(a.x, b.x);
   const y = Math.min(a.y, b.y);
   return { x, y, w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
+}
+
+/** Demande de création équivalente à une annotation lue (pour la modifier) ; `null` si
+ *  le genre n'est pas recréable (lien, champ, inconnu) ou si sa géométrie est inconnue. */
+export function toNewAnnotation(a: Annotation): NewAnnotation | null {
+  let geometry: NewAnnotation['geometry'];
+  switch (a.kind) {
+    case 'note':
+    case 'text':
+    case 'stamp':
+      geometry = { kind: 'rect', rect: a.rect };
+      break;
+    case 'highlight':
+    case 'underline':
+    case 'strike_out':
+    case 'squiggly':
+      geometry = { kind: 'quads', rects: a.quads };
+      break;
+    case 'rect':
+    case 'ellipse':
+    case 'line':
+    case 'arrow':
+    case 'ink':
+      if (!a.geometry) return null;
+      geometry = a.geometry;
+      break;
+    default:
+      return null;
+  }
+  return {
+    kind: a.kind,
+    geometry,
+    style: {
+      color: a.color ?? { r: 0, g: 0, b: 0 },
+      fill: a.fill,
+      opacity: a.opacity,
+      stroke_width: a.stroke_width > 0 ? a.stroke_width : 1,
+      font_size: a.font_size ?? 12,
+    },
+    contents: a.contents ?? '',
+    author: a.author ?? '',
+  };
 }

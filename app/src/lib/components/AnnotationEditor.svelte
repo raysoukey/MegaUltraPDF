@@ -1,7 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import type { Annotation, Color } from '$lib/api';
-  import { toNewAnnotation } from '$lib/logic/annotations';
+  import type { AnnotationPatch, Annotation, Color } from '$lib/api';
   import { updateAnnotation, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
 
@@ -13,15 +12,17 @@
   }: { doc: OpenDoc; page: number; annotation: Annotation; onclose: () => void } = $props();
 
   // svelte-ignore state_referenced_locally
-  const base = toNewAnnotation(annotation);
-  // svelte-ignore state_referenced_locally
   let contents = $state(annotation.contents ?? '');
   // svelte-ignore state_referenced_locally
   let author = $state(annotation.author ?? '');
-  let color = $state(hex(base?.style.color ?? { r: 0, g: 0, b: 0 }));
-  let opacity = $state(base?.style.opacity ?? 1);
-  let strokeWidth = $state(base?.style.stroke_width ?? 1);
-  let fontSize = $state(base?.style.font_size ?? 12);
+  // svelte-ignore state_referenced_locally
+  let color = $state(hex(annotation.color ?? { r: 0, g: 0, b: 0 }));
+  // svelte-ignore state_referenced_locally
+  let opacity = $state(annotation.opacity);
+  // svelte-ignore state_referenced_locally
+  let strokeWidth = $state(annotation.stroke_width > 0 ? annotation.stroke_width : 1);
+  // svelte-ignore state_referenced_locally
+  let fontSize = $state(annotation.font_size ?? 12);
   let busy = $state(false);
   let first: HTMLTextAreaElement | undefined = $state();
 
@@ -29,11 +30,10 @@
     first?.focus();
   });
 
+  const isNote = $derived(annotation.kind === 'note');
   const isShape = $derived(['rect', 'ellipse', 'line', 'arrow', 'ink'].includes(annotation.kind));
   const isText = $derived(annotation.kind === 'text' || annotation.kind === 'stamp');
-  const hasContents = $derived(
-    annotation.kind === 'note' || annotation.kind === 'text' || annotation.kind === 'stamp',
-  );
+  const hasContents = $derived(isNote || isText);
 
   function hex(c: Color): string {
     return '#' + [c.r, c.g, c.b].map((v) => v.toString(16).padStart(2, '0')).join('');
@@ -46,22 +46,33 @@
     };
   }
 
+  /** Seuls les champs modifiés partent vers Rust, qui conserve le reste. */
+  function buildPatch(): AnnotationPatch {
+    const patch: AnnotationPatch = {};
+    if (hasContents && contents !== (annotation.contents ?? '')) patch.contents = contents;
+    if (author !== (annotation.author ?? '')) patch.author = author;
+    if (!isNote) {
+      const c = fromHex(color);
+      const before = annotation.color;
+      if (!before || before.r !== c.r || before.g !== c.g || before.b !== c.b) patch.color = c;
+      if (Math.abs(opacity - annotation.opacity) > 1e-6) patch.opacity = opacity;
+      if (isShape && Math.abs(strokeWidth - annotation.stroke_width) > 1e-6)
+        patch.stroke_width = strokeWidth;
+      if (isText && Math.abs(fontSize - (annotation.font_size ?? 12)) > 1e-6)
+        patch.font_size = fontSize;
+    }
+    return patch;
+  }
+
   async function submit(e: Event) {
     e.preventDefault();
-    if (!base) return;
+    const patch = buildPatch();
+    if (Object.keys(patch).length === 0) {
+      onclose();
+      return;
+    }
     busy = true;
-    const ok = await updateAnnotation(doc, page, annotation.index, {
-      ...base,
-      contents,
-      author,
-      style: {
-        ...base.style,
-        color: fromHex(color),
-        opacity,
-        stroke_width: strokeWidth,
-        font_size: fontSize,
-      },
-    });
+    const ok = await updateAnnotation(doc, page, annotation.index, patch);
     busy = false;
     if (ok) onclose();
   }
@@ -77,7 +88,7 @@
       <h2 id="ann-title">
         {t.editAnnotation} — {t.annotationKind[annotation.kind] ?? annotation.kind}
       </h2>
-      {#if !base}
+      {#if !annotation.editable}
         <p>{t.annotationNotEditable}</p>
       {:else}
         {#if hasContents}
@@ -115,7 +126,8 @@
       {/if}
       <div class="actions">
         <button type="button" onclick={onclose}>{t.cancel}</button>
-        <button type="submit" class="primary" disabled={!base || busy}>{t.ok}</button>
+        <button type="submit" class="primary" disabled={!annotation.editable || busy}>{t.ok}</button
+        >
       </div>
     </form>
   </div>

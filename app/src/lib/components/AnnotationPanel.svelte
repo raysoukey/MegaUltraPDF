@@ -93,6 +93,7 @@
                 type="button"
                 title={t.editAnnotation}
                 aria-label={t.editAnnotation}
+                disabled={!a.editable}
                 onclick={() => onedit(a, group.page)}>✎</button
               >
               <button

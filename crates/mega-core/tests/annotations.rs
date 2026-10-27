@@ -51,15 +51,10 @@ fn reads_third_party_annotations() {
 #[test]
 fn read_annotation_without_color() {
     let doc = annotated();
-    // Avant tout rendu : pas d'apparence, et `/C` n'est lu directement que pour les notes
-    // (contournement d'un plantage de pdfium-render) → couleur inconnue, jamais d'erreur.
+    // Sans `/C`, et sans apparence dans le fichier : la lecture déclenche un rendu minuscule
+    // qui fait générer l'apparence par PDFium avec la couleur par défaut de la norme (noir).
     let underline = &doc.annotations(0).unwrap()[3];
     assert_eq!(underline.kind, AnnotationKind::Underline);
-    assert_eq!(underline.color, None);
-    assert_eq!(underline.opacity, 1.0);
-    // Après un rendu, PDFium a généré l'apparence avec la couleur par défaut de la norme.
-    doc.render_page(0, 1.0).unwrap();
-    let underline = &doc.annotations(0).unwrap()[3];
     assert_eq!(underline.color, Some(Color { r: 0, g: 0, b: 0 }));
     assert_eq!(underline.opacity, 1.0);
     assert_eq!(underline.author, None);
@@ -192,40 +187,9 @@ fn note_round_trip() {
     assert_eq!(a.contents.as_deref(), Some("Bonjour"));
     assert!(close(a.rect.w, 20.0, 0.5) && close(a.rect.h, 20.0, 0.5));
     assert!(close(a.rect.x, 100.0, 0.5));
-    // Pas de lecture directe de `/C` (voir `color_of`) : inconnue avant rendu…
+    // La couleur d'une note n'est jamais lue : `/C` est inaccessible sans risque et le
+    // symbole généré par PDFium est jaune quelle que soit la couleur demandée.
     assert_eq!(a.color, None);
-    // …puis lue dans le symbole de note que PDFium génère au premier rendu.
-    let doc = Document::from_bytes(
-        {
-            let mut d = Document::from_bytes(sample_pdf(1, "n"), None).unwrap();
-            d.add_annotation(
-                0,
-                &new(
-                    AnnotationKind::Note,
-                    Geometry::Rect {
-                        rect: rect(100.0, 700.0, 0.0, 0.0),
-                    },
-                    style((255, 200, 0)),
-                    "Bonjour",
-                ),
-            )
-            .unwrap();
-            d.to_bytes().unwrap()
-        },
-        None,
-    )
-    .unwrap();
-    doc.render_page(0, 1.0).unwrap();
-    let rendered = &doc.annotations(0).unwrap()[0];
-    assert!(
-        rendered.color.is_some(),
-        "couleur lue dans l'apparence générée"
-    );
-    assert_ne!(
-        rendered.color,
-        Some(Color { r: 0, g: 0, b: 0 }),
-        "pas le noir du contour"
-    );
 }
 
 #[test]
@@ -495,4 +459,340 @@ fn style_validation() {
         Err(CoreError::InvalidOperation(_))
     ));
     assert!(doc.annotations(0).unwrap().is_empty(), "rien n'a été créé");
+}
+
+// ---- Passe de correction après relecture (Lot 3) ----
+
+/// Pixel RGB d'un rendu à (x, y) en coordonnées image (origine en haut à gauche).
+fn pixel(img: &mega_core::RenderedPage, x: u32, y: u32) -> (u8, u8, u8) {
+    let i = ((y * img.width_px + x) * 4) as usize;
+    (img.rgba[i], img.rgba[i + 1], img.rgba[i + 2])
+}
+
+/// B1 (pdf-expert) : `/QuadPoints` dans l'ordre attendu par Acrobat et PDFium
+/// (haut-gauche, haut-droit, bas-gauche, bas-droit), sinon PDFium génère une apparence de
+/// largeur nulle et l'enregistre : le marquage est invisible partout.
+#[test]
+fn text_markups_are_visible_after_render_and_reopen() {
+    for kind in [
+        AnnotationKind::Highlight,
+        AnnotationKind::Underline,
+        AnnotationKind::StrikeOut,
+    ] {
+        let mut doc = Document::from_bytes(sample_pdf(1, "quad"), None).unwrap();
+        // Zone sans texte : 100..300 × 500..520 (PDF) → ligne image y = 842 - 510.
+        doc.add_annotation(
+            0,
+            &new(
+                kind,
+                Geometry::Quads {
+                    rects: vec![rect(100.0, 500.0, 200.0, 20.0)],
+                },
+                style((255, 0, 0)),
+                "",
+            ),
+        )
+        .unwrap();
+        let img = doc.render_page(0, 1.0).unwrap();
+        let probe = |img: &mega_core::RenderedPage| {
+            // Surlignage : plein ; souligné : ligne en bas ; barré : ligne au milieu.
+            let ys: [u32; 3] = [842 - 510, 842 - 501, 842 - 511];
+            ys.iter().any(|&y| pixel(img, 200, y) != (255, 255, 255))
+        };
+        assert!(probe(&img), "{kind:?} invisible après rendu");
+        let reopened = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+        let again = reopened.render_page(0, 1.0).unwrap();
+        assert!(probe(&again), "{kind:?} invisible après réouverture");
+        let q = &reopened.annotations(0).unwrap()[0].quads[0];
+        assert!(close(q.x, 100.0, 0.5) && close(q.w, 200.0, 0.5) && close(q.y, 500.0, 0.5));
+    }
+}
+
+/// M1 (pdf-expert) : une note ne doit ni zoomer ni tourner avec la page (§12.5.6.4).
+#[test]
+fn notes_are_flagged_no_zoom_no_rotate() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "flags"), None).unwrap();
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Note,
+            Geometry::Rect {
+                rect: rect(100.0, 700.0, 0.0, 0.0),
+            },
+            style((255, 200, 0)),
+            "n",
+        ),
+    )
+    .unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    // Print (4) + NoZoom (8) + NoRotate (16) = 28.
+    assert!(
+        text.contains("/F 28"),
+        "drapeaux de la note : {}",
+        &text[..0]
+    );
+}
+
+// ---- Passe de correction après relecture (Fable) ----
+
+/// C2 : une encre tierce lissée en courbes de Bézier reste une encre, sans géométrie
+/// reconstruite, et ne peut pas être « déplacée » (ce qui la redessinerait en ellipse).
+#[test]
+fn third_party_bezier_ink_stays_ink_and_is_not_rescaled() {
+    let doc = Document::from_bytes(mega_core::testing::bezier_ink_pdf(), None).unwrap();
+    let a = &doc.annotations(0).unwrap()[0];
+    assert_eq!(a.kind, AnnotationKind::Ink);
+    assert!(a.geometry.is_none(), "{:?}", a.geometry);
+    assert!(!a.editable);
+    let mut doc = doc;
+    assert!(matches!(
+        doc.set_annotation_rect(0, 0, rect(0.0, 0.0, 50.0, 50.0)),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    assert_eq!(
+        doc.annotations(0).unwrap().len(),
+        1,
+        "rien n'a été supprimé"
+    );
+}
+
+/// I1 : déplacer trois fois une forme ne change pas sa taille.
+#[test]
+fn moving_a_shape_three_times_keeps_its_size() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "stable"), None).unwrap();
+    let mut s = style((229, 57, 53));
+    s.stroke_width = 2.0;
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Rect,
+            Geometry::Rect {
+                rect: rect(100.0, 500.0, 200.0, 100.0),
+            },
+            s,
+            "",
+        ),
+    )
+    .unwrap();
+    let mut index = 0;
+    let first = doc.annotations(0).unwrap()[0].rect;
+    for i in 1..=3 {
+        let r = rect(first.x + 5.0 * i as f32, first.y, first.w, first.h);
+        index = doc.set_annotation_rect(0, index, r).unwrap();
+    }
+    let last = doc.annotations(0).unwrap()[usize::from(index)].rect;
+    assert!(
+        close(last.w, first.w, 0.1) && close(last.h, first.h, 0.1),
+        "{first:?} → {last:?}"
+    );
+    assert!(close(last.x, first.x + 15.0, 0.1));
+    // Idem pour une ellipse éditée (modifier = recréer).
+    let mut doc = Document::from_bytes(sample_pdf(1, "ell"), None).unwrap();
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Ellipse,
+            Geometry::Rect {
+                rect: rect(100.0, 300.0, 100.0, 50.0),
+            },
+            s,
+            "",
+        ),
+    )
+    .unwrap();
+    let first = doc.annotations(0).unwrap()[0].rect;
+    let mut index = 0;
+    for _ in 0..3 {
+        index = doc
+            .update_annotation(
+                0,
+                index,
+                &mega_core::AnnotationPatch {
+                    color: Some(Color { r: 0, g: 0, b: 255 }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+    let last = doc.annotations(0).unwrap()[usize::from(index)].rect;
+    assert!(
+        close(last.w, first.w, 0.1) && close(last.h, first.h, 0.1),
+        "{first:?} → {last:?}"
+    );
+}
+
+/// I3 : la couleur d'un marquage est connue dès sa création (l'apparence manquante est
+/// générée par un rendu minuscule avant la lecture).
+#[test]
+fn markup_color_is_known_right_after_creation() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "fresh"), None).unwrap();
+    let mut s = style((255, 212, 0));
+    s.opacity = 0.5;
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Highlight,
+            Geometry::Quads {
+                rects: vec![rect(72.0, 700.0, 128.0, 20.0)],
+            },
+            s,
+            "",
+        ),
+    )
+    .unwrap();
+    let a = &doc.annotations(0).unwrap()[0];
+    assert_eq!(
+        a.color,
+        Some(Color {
+            r: 255,
+            g: 212,
+            b: 0
+        })
+    );
+    assert!(close(a.opacity, 0.5, 0.02));
+    assert!(a.editable);
+}
+
+/// I2 : une note se modifie **sur place** (contenu, auteur) : même index, `/C` conservé,
+/// et sa couleur n'est pas déduite du symbole jaune de PDFium.
+#[test]
+fn note_update_is_in_place_and_keeps_its_color() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "note"), None).unwrap();
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Note,
+            Geometry::Rect {
+                rect: rect(100.0, 700.0, 0.0, 0.0),
+            },
+            style((0, 128, 255)),
+            "v1",
+        ),
+    )
+    .unwrap();
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Rect,
+            Geometry::Rect {
+                rect: rect(10.0, 10.0, 50.0, 50.0),
+            },
+            style((0, 0, 0)),
+            "",
+        ),
+    )
+    .unwrap();
+    doc.render_page(0, 1.0).unwrap();
+    let idx = doc
+        .update_annotation(
+            0,
+            0,
+            &mega_core::AnnotationPatch {
+                contents: Some("v2".to_string()),
+                author: Some("Moi".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(idx, 0, "modifiée sur place");
+    let anns = doc.annotations(0).unwrap();
+    assert_eq!(anns.len(), 2);
+    assert_eq!(anns[0].contents.as_deref(), Some("v2"));
+    assert_eq!(anns[0].author.as_deref(), Some("Moi"));
+    assert_eq!(
+        anns[0].color, None,
+        "le jaune du symbole PDFium n'est pas une couleur lue"
+    );
+    let bytes = doc.to_bytes().unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.contains("/C[ 0 .50196"),
+        "le /C bleu d'origine est conservé"
+    );
+}
+
+/// I5 : enregistrer repart d'un document propre (les objets orphelins créés par les rendus
+/// ne sont pas écrits).
+#[test]
+fn save_does_not_carry_render_garbage() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("propre.pdf");
+    std::fs::write(&path, sample_pdf(1, "garbage")).unwrap();
+    let mut doc = Document::open(&path, None).unwrap();
+    for i in 0..5 {
+        doc.add_annotation(
+            0,
+            &new(
+                AnnotationKind::Note,
+                Geometry::Rect {
+                    rect: rect(50.0 + 30.0 * i as f32, 700.0, 0.0, 0.0),
+                },
+                style((255, 200, 0)),
+                "Bonjour",
+            ),
+        )
+        .unwrap();
+    }
+    for _ in 0..10 {
+        doc.render_page(0, 0.5).unwrap();
+    }
+    let dirty = doc.to_bytes().unwrap().len();
+    doc.save().unwrap();
+    let saved = std::fs::metadata(&path).unwrap().len() as usize;
+    assert!(
+        saved * 2 < dirty,
+        "enregistré {saved} o, en mémoire {dirty} o"
+    );
+    let reopened = Document::open(&path, None).unwrap();
+    assert_eq!(reopened.annotations(0).unwrap().len(), 5);
+}
+
+/// I6 : `editable` dit à l'interface ce qu'elle peut déplacer ou modifier ; une note tierce
+/// déplacée garde sa taille.
+#[test]
+fn editable_flag_and_third_party_note_size() {
+    let doc = annotated();
+    let anns = doc.annotations(0).unwrap();
+    assert!(anns[0].editable, "note tierce");
+    assert!(anns[1].editable, "surlignage tierce");
+    assert!(!anns[2].editable, "carré tiers avec /AP : non recréable");
+    let mut doc = doc;
+    // La note tierce fait 20×20 ; on la déplace : même taille, même index.
+    let idx = doc
+        .set_annotation_rect(0, 0, rect(200.0, 300.0, 20.0, 20.0))
+        .unwrap();
+    assert_eq!(idx, 0);
+    let note = &doc.annotations(0).unwrap()[0];
+    assert!(close(note.rect.x, 200.0, 0.5) && close(note.rect.w, 20.0, 0.5));
+}
+
+/// M1 : une modification invalide ne supprime pas l'annotation (validation avant suppression).
+#[test]
+fn invalid_update_keeps_the_annotation() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "inv"), None).unwrap();
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Rect,
+            Geometry::Rect {
+                rect: rect(10.0, 10.0, 50.0, 50.0),
+            },
+            style((0, 0, 0)),
+            "",
+        ),
+    )
+    .unwrap();
+    assert!(matches!(
+        doc.update_annotation(
+            0,
+            0,
+            &mega_core::AnnotationPatch {
+                opacity: Some(0.0),
+                ..Default::default()
+            }
+        ),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    assert_eq!(doc.annotations(0).unwrap().len(), 1);
 }

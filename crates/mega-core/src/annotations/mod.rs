@@ -207,6 +207,31 @@ pub struct NewAnnotation {
     pub author: String,
 }
 
+/// Modification partielle d'une annotation existante : seuls les champs `Some` changent.
+/// Les décisions de reconstruction (géométrie, valeurs conservées) restent en Rust.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AnnotationPatch {
+    /// Nouveau commentaire ou texte.
+    pub contents: Option<String>,
+    /// Nouvel auteur.
+    pub author: Option<String>,
+    /// Nouvelle couleur.
+    pub color: Option<Color>,
+    /// Nouvelle opacité.
+    pub opacity: Option<f32>,
+    /// Nouvelle épaisseur.
+    pub stroke_width: Option<f32>,
+    /// Nouvelle taille de police.
+    pub font_size: Option<f32>,
+}
+
+/// Couleur par défaut d'une note (celle du symbole que PDFium dessine).
+const NOTE_DEFAULT_COLOR: Color = Color {
+    r: 255,
+    g: 212,
+    b: 0,
+};
+
 /// Une annotation telle que lue dans le document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Annotation {
@@ -238,6 +263,8 @@ pub struct Annotation {
     pub quads: Vec<Rect>,
     /// Géométrie reconstruite depuis l'apparence (formes, encre, texte), si reconnue.
     pub geometry: Option<Geometry>,
+    /// Peut être déplacée / modifiée par MegaUltraPDF (recréable à l'identique, ou note).
+    pub editable: bool,
 }
 
 impl Annotation {
@@ -257,7 +284,11 @@ impl Annotation {
             kind: self.kind,
             geometry,
             style: Style {
-                color: self.color.unwrap_or(Color { r: 0, g: 0, b: 0 }),
+                color: self.color.unwrap_or(if self.kind == AnnotationKind::Note {
+                    NOTE_DEFAULT_COLOR
+                } else {
+                    Color { r: 0, g: 0, b: 0 }
+                }),
                 fill: self.fill,
                 opacity: self.opacity,
                 stroke_width: if self.stroke_width > 0.0 {
@@ -347,12 +378,80 @@ impl Document {
             .inner()
             .pages()
             .get(self.checked_index_unlocked(page)?)?;
+        // Un marquage fraîchement créé n'a pas encore d'apparence (PDFium la génère au
+        // premier rendu) : sa couleur serait inconnue. Un rendu minuscule la fait naître.
+        let needs_appearance = page
+            .annotations()
+            .iter()
+            .any(|a| kind_of(&a).is_text_markup() && a.objects().is_empty());
+        if needs_appearance {
+            let config = pdfium_render::prelude::PdfRenderConfig::new()
+                .set_target_width(8)
+                .render_annotations(true);
+            page.render_with_config(&config)?;
+        }
         page.annotations()
             .iter()
             .take(MAX_ANNOTATIONS_PER_PAGE)
             .enumerate()
             .map(|(i, ann)| read_annotation(i as u16, &ann))
             .collect()
+    }
+
+    /// Modifie une annotation ; retourne son index après modification.
+    ///
+    /// Une note change **sur place** (contenu, auteur : sa couleur `/C` est conservée, PDFium
+    /// ne permettant plus de la changer une fois le symbole généré). Les autres genres sont
+    /// recréés depuis leur lecture, le correctif appliqué ; la validation précède la
+    /// suppression, une demande invalide ne retire donc rien.
+    pub fn update_annotation(
+        &mut self,
+        page: u16,
+        index: u16,
+        patch: &AnnotationPatch,
+    ) -> CoreResult<u16> {
+        let current = self
+            .annotations(page)?
+            .into_iter()
+            .find(|a| a.index == index)
+            .ok_or_else(|| invalid("annotation introuvable"))?;
+        if current.kind == AnnotationKind::Note {
+            let _guard = engine::guard();
+            let page_index = self.checked_index_unlocked(page)?;
+            let pdf_page = self.inner().pages().get(page_index)?;
+            let mut ann = pdf_page.annotations().get(usize::from(index))?;
+            if let Some(c) = &patch.contents {
+                ann.set_contents(c)?;
+            }
+            if let Some(a) = &patch.author {
+                ann.set_creator(a.trim())?;
+            }
+            return Ok(index);
+        }
+        let mut new = current
+            .to_new()
+            .ok_or_else(|| invalid("cette annotation ne peut pas être modifiée"))?;
+        if let Some(c) = &patch.contents {
+            new.contents = c.clone();
+        }
+        if let Some(a) = &patch.author {
+            new.author = a.clone();
+        }
+        if let Some(c) = patch.color {
+            new.style.color = c;
+        }
+        if let Some(o) = patch.opacity {
+            new.style.opacity = o;
+        }
+        if let Some(w) = patch.stroke_width {
+            new.style.stroke_width = w;
+        }
+        if let Some(f) = patch.font_size {
+            new.style.font_size = f;
+        }
+        validate(&new)?;
+        self.delete_annotation(page, index)?;
+        self.add_annotation(page, &new)
     }
 
     /// Ajoute une annotation à la page et retourne son index (en fin de tableau).
@@ -369,7 +468,7 @@ impl Document {
         let doc = self.inner();
         let mut pdf_page = doc.pages().get(page_index)?;
         let index = pdf_page.annotations().len();
-        if index >= u16::MAX as usize {
+        if index >= MAX_ANNOTATIONS_PER_PAGE {
             return Err(invalid("trop d'annotations sur cette page"));
         }
         let annots = pdf_page.annotations_mut();
@@ -380,6 +479,9 @@ impl Document {
                     unreachable!("validé plus haut")
                 };
                 let mut a = annots.create_text_annotation(&new.contents)?;
+                // §12.5.6.4 : une note garde sa taille à l'écran et ne tourne pas avec la page.
+                a.set_is_zoomable(false)?;
+                a.set_is_rotatable(false)?;
                 let icon = Rect {
                     x: rect.x,
                     y: rect.y + rect.h - appearance::NOTE_ICON_SIZE,
@@ -395,10 +497,7 @@ impl Document {
                     unreachable!("validé plus haut")
                 };
                 let bounds = union(rects);
-                let quads: Vec<PdfQuadPoints> = rects
-                    .iter()
-                    .map(|r| PdfQuadPoints::from_rect(&to_pdf_rect(r)))
-                    .collect();
+                let quads: Vec<PdfQuadPoints> = rects.iter().map(quad_of).collect();
                 match k {
                     AnnotationKind::Highlight => {
                         let mut a = annots.create_highlight_annotation()?;
@@ -443,10 +542,12 @@ impl Document {
                 }
             }
             k if k.is_drawn_shape() => {
+                // L'opacité vit dans les objets de l'apparence ; `/CA` reste à 1 pour qu'un
+                // lecteur qui applique `/CA` par-dessus l'apparence ne la double pas.
                 let bounds = appearance::shape_bounds(new);
                 let mut a = annots.create_ink_annotation()?;
                 a.set_bounds(to_pdf_rect(&bounds))?;
-                a.set_stroke_color(stroke)?;
+                a.set_stroke_color(new.style.color.with_opacity(1.0))?;
                 set_meta(&mut a, new)?;
                 appearance::draw_shape(doc, a.objects_mut(), new)?;
             }
@@ -457,7 +558,7 @@ impl Document {
                 };
                 let mut a = annots.create_stamp_annotation()?;
                 a.set_bounds(to_pdf_rect(rect))?;
-                a.set_stroke_color(stroke)?;
+                a.set_stroke_color(new.style.color.with_opacity(1.0))?;
                 set_meta(&mut a, new)?;
                 #[allow(clippy::expect_used)]
                 let font = font.expect("jeton de police créé pour Text/Stamp");
@@ -501,11 +602,13 @@ impl Document {
             let page_index = self.checked_index_unlocked(page)?;
             let pdf_page = self.inner().pages().get(page_index)?;
             let mut ann = pdf_page.annotations().get(usize::from(index))?;
+            // Une note garde sa taille (une note tierce peut faire plus de 20 pt) ; seul
+            // son coin haut-gauche suit le nouveau rectangle.
             let icon = Rect {
                 x: rect.x,
-                y: rect.y + rect.h - appearance::NOTE_ICON_SIZE,
-                w: appearance::NOTE_ICON_SIZE,
-                h: appearance::NOTE_ICON_SIZE,
+                y: rect.y + rect.h - current.rect.h,
+                w: current.rect.w,
+                h: current.rect.h,
             };
             ann.set_bounds(to_pdf_rect(&icon))?;
             return Ok(index);
@@ -530,6 +633,7 @@ impl Document {
             h: (r.h - 2.0 * pad).max(1.0),
         };
         new.geometry = appearance::rescale(&new.geometry, &inner(&current.rect), &inner(&rect));
+        validate(&new)?;
         self.delete_annotation(page, index)?;
         self.add_annotation(page, &new)
     }
@@ -546,6 +650,24 @@ fn set_meta<A: PdfPageAnnotationCommon>(a: &mut A, new: &NewAnnotation) -> CoreR
     a.set_creation_date(Utc::now())?;
     a.set_is_printed(true)?;
     Ok(())
+}
+
+/// `/QuadPoints` d'un rectangle dans l'ordre **haut-gauche, haut-droit, bas-gauche,
+/// bas-droit** : celui qu'Acrobat a toujours écrit et que PDFium (`RectFromQuadPointsArray`)
+/// attend. `PdfQuadPoints::from_rect` suit la lettre de la norme (anti-horaire depuis le
+/// bas-gauche) et PDFium en déduit alors une apparence de largeur nulle, qu'il enregistre :
+/// le marquage devient invisible partout (trouvé par la revue de conformité).
+fn quad_of(r: &Rect) -> PdfQuadPoints {
+    PdfQuadPoints::new_from_values(
+        r.x,
+        r.y + r.h,
+        r.x + r.w,
+        r.y + r.h,
+        r.x,
+        r.y,
+        r.x + r.w,
+        r.y,
+    )
 }
 
 pub(crate) fn to_pdf_rect(r: &Rect) -> PdfRect {
@@ -632,6 +754,11 @@ fn kind_of(ann: &PdfPageAnnotation) -> AnnotationKind {
 /// autres sous-types (symbole de note, surlignage, carré tiers), celle du remplissage si
 /// l'objet est rempli (le symbole de note est rempli en couleur et cerné de noir).
 fn color_of(ann: &PdfPageAnnotation, kind: AnnotationKind) -> (Option<Color>, f32) {
+    // Le symbole de note généré par PDFium est jaune quelle que soit `/C` : ce n'est pas
+    // une couleur lue, et la relire ferait réécrire `/C` en jaune à la prochaine édition.
+    if kind == AnnotationKind::Note {
+        return (None, 1.0);
+    }
     let stroke_first =
         kind.is_drawn_shape() || matches!(kind, AnnotationKind::Text | AnnotationKind::Stamp);
     for obj in ann.objects().iter() {
@@ -673,7 +800,7 @@ fn read_annotation(index: u16, ann: &PdfPageAnnotation) -> CoreResult<Annotation
             h: q.height().value,
         })
         .collect();
-    Ok(Annotation {
+    let mut annotation = Annotation {
         index,
         kind: inspected.kind,
         rect: Rect::from_pdf(ann.bounds()?),
@@ -688,5 +815,8 @@ fn read_annotation(index: u16, ann: &PdfPageAnnotation) -> CoreResult<Annotation
         modified: truncate(ann.modification_date()),
         quads,
         geometry: inspected.geometry,
-    })
+        editable: false,
+    };
+    annotation.editable = annotation.to_new().is_some();
+    Ok(annotation)
 }

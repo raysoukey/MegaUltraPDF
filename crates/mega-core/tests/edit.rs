@@ -378,12 +378,13 @@ fn annotation_commands_undo_and_labels() {
     assert!((a.rect.x - 10.0).abs() < 1.5, "{:?}", a.rect);
     assert_eq!(doc.undo_label().as_deref(), Some("Déplacer : Rectangle"));
 
-    let mut recolored = rect.clone();
-    recolored.style.color = Color { r: 0, g: 0, b: 255 };
     doc.apply(&EditCommand::UpdateAnnotation {
         page: 0,
         index: 0,
-        annotation: recolored,
+        patch: mega_core::AnnotationPatch {
+            color: Some(Color { r: 0, g: 0, b: 255 }),
+            ..Default::default()
+        },
     })
     .unwrap();
     let anns = doc.annotations(0).unwrap();

@@ -8,8 +8,9 @@
 
 use pdfium_render::prelude::{
     PdfColor, PdfDocument, PdfFontToken, PdfPageAnnotation, PdfPageAnnotationCommon,
-    PdfPageAnnotationObjects, PdfPageObjectCommon, PdfPageObjectsCommon, PdfPagePathObject,
-    PdfPageTextObject, PdfPathSegmentType, PdfPathSegments, PdfPoints,
+    PdfPageAnnotationObjects, PdfPageObjectCommon, PdfPageObjectLineCap, PdfPageObjectLineJoin,
+    PdfPageObjectsCommon, PdfPagePathObject, PdfPageTextObject, PdfPathSegmentType,
+    PdfPathSegments, PdfPoints,
 };
 
 use super::{AnnotationKind, Color, Geometry, NewAnnotation, to_pdf_rect, union};
@@ -78,6 +79,14 @@ pub(crate) fn shape_bounds(new: &NewAnnotation) -> Rect {
     }
 }
 
+/// Bouts et jointures arrondis : même aspect que l'aperçu SVG, et pas de pointe de mitre
+/// qui déborderait de la `BBox` sur un angle aigu.
+fn rounded(mut obj: PdfPagePathObject<'_>) -> CoreResult<PdfPagePathObject<'_>> {
+    obj.set_line_cap(PdfPageObjectLineCap::Round)?;
+    obj.set_line_join(PdfPageObjectLineJoin::Round)?;
+    Ok(obj)
+}
+
 /// Dessine rectangle, ellipse, ligne, flèche ou encre dans l'apparence d'une annotation `Ink`.
 pub(crate) fn draw_shape<'a>(
     doc: &PdfDocument<'a>,
@@ -97,7 +106,7 @@ pub(crate) fn draw_shape<'a>(
                 Some(width),
                 fill,
             )?;
-            objects.add_path_object(obj)?;
+            objects.add_path_object(rounded(obj)?)?;
         }
         (AnnotationKind::Ellipse, Geometry::Rect { rect }) => {
             let obj = PdfPagePathObject::new_ellipse(
@@ -107,7 +116,7 @@ pub(crate) fn draw_shape<'a>(
                 Some(width),
                 fill,
             )?;
-            objects.add_path_object(obj)?;
+            objects.add_path_object(rounded(obj)?)?;
         }
         (AnnotationKind::Line, Geometry::Line { from, to }) => {
             let obj = PdfPagePathObject::new_line(
@@ -119,7 +128,7 @@ pub(crate) fn draw_shape<'a>(
                 stroke,
                 width,
             )?;
-            objects.add_path_object(obj)?;
+            objects.add_path_object(rounded(obj)?)?;
         }
         (AnnotationKind::Arrow, Geometry::Line { from, to }) => {
             let shaft = PdfPagePathObject::new_line(
@@ -131,7 +140,7 @@ pub(crate) fn draw_shape<'a>(
                 stroke,
                 width,
             )?;
-            objects.add_path_object(shaft)?;
+            objects.add_path_object(rounded(shaft)?)?;
             // Pointe : deux traits à 30° de part et d'autre de l'axe, depuis l'extrémité.
             let len = arrow_head_len(s.stroke_width);
             let angle = (to[1] - from[1]).atan2(to[0] - from[0]);
@@ -141,7 +150,7 @@ pub(crate) fn draw_shape<'a>(
             head.line_to(pt(to[0] + len * a1.cos()), pt(to[1] + len * a1.sin()))?;
             head.move_to(pt(to[0]), pt(to[1]))?;
             head.line_to(pt(to[0] + len * a2.cos()), pt(to[1] + len * a2.sin()))?;
-            objects.add_path_object(head)?;
+            objects.add_path_object(rounded(head)?)?;
         }
         (AnnotationKind::Ink, Geometry::Strokes { strokes }) => {
             for stroke_pts in strokes.iter().filter(|s| s.len() >= 2) {
@@ -156,7 +165,7 @@ pub(crate) fn draw_shape<'a>(
                 for p in &stroke_pts[1..] {
                     obj.line_to(pt(p[0]), pt(p[1]))?;
                 }
-                objects.add_path_object(obj)?;
+                objects.add_path_object(rounded(obj)?)?;
             }
         }
         _ => {
@@ -296,69 +305,120 @@ pub(crate) fn inspect(ann: &PdfPageAnnotation, subtype: AnnotationKind) -> Inspe
         out.geometry = Some(Geometry::Rect { rect: bounds });
         return out;
     }
-    // Ink : classer d'après la forme des chemins.
+    // Ink : classer d'après la forme des chemins, avec des signatures **exactes** (celles de
+    // nos propres dessins). Une encre tierce lissée en Bézier ressemble à une ellipse ; la
+    // prendre pour telle la redessinerait en vraie ellipse au premier déplacement.
     let count = |segs: &[(PdfPathSegmentType, f32, f32, bool)], t: PdfPathSegmentType| {
         segs.iter().filter(|s| s.0 == t).count()
     };
     let points = |segs: &[(PdfPathSegmentType, f32, f32, bool)]| -> Vec<[f32; 2]> {
         segs.iter().map(|s| [s.1, s.2]).collect()
     };
-    let object_bounds = |i: usize| -> Option<Rect> {
-        ann.objects()
-            .get(i)
-            .ok()
-            .and_then(|o| o.bounds().ok())
-            .map(|q| Rect {
-                x: q.left().value,
-                y: q.bottom().value,
-                w: q.width().value,
-                h: q.height().value,
-            })
+    // Emprise par les **points** des segments (pas `bounds()`, qui inclut la moitié du
+    // trait et ferait grossir la forme à chaque recréation).
+    let points_bounds = |pts: &[[f32; 2]]| -> Option<Rect> {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for p in pts {
+            if !p[0].is_finite() || !p[1].is_finite() {
+                return None;
+            }
+            x0 = x0.min(p[0]);
+            y0 = y0.min(p[1]);
+            x1 = x1.max(p[0]);
+            y1 = y1.max(p[1]);
+        }
+        (x1 >= x0 && y1 >= y0).then_some(Rect {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        })
     };
+    let any_bezier = paths
+        .iter()
+        .any(|p| count(p, PdfPathSegmentType::BezierTo) > 0);
     match paths.as_slice() {
         [single] => {
             let lines = count(single, PdfPathSegmentType::LineTo);
             let beziers = count(single, PdfPathSegmentType::BezierTo);
             let moves = count(single, PdfPathSegmentType::MoveTo);
             let pts = points(single);
-            if beziers > 0 && lines == 0 {
+            let closed = single.last().map(|s| s.3).unwrap_or(false);
+            if moves <= 2 && beziers == 12 && lines == 0 && closed {
+                // Signature de `new_ellipse` : quatre arcs de Bézier fermés (PDFium y ajoute
+                // un `MoveTo` initial).
                 out.kind = AnnotationKind::Ellipse;
-                out.geometry = object_bounds(0).map(|rect| Geometry::Rect { rect });
-            } else if moves == 1 && lines == 1 && pts.len() == 2 {
+                out.geometry = points_bounds(&pts).map(|rect| Geometry::Rect { rect });
+            } else if moves == 1
+                && lines == 1
+                && !any_bezier
+                && let [from, to, ..] = pts.as_slice()
+            {
                 out.kind = AnnotationKind::Line;
                 out.geometry = Some(Geometry::Line {
-                    from: pts[0],
-                    to: pts[1],
+                    from: *from,
+                    to: *to,
                 });
-            } else if moves == 1 && (3..=4).contains(&lines) && is_axis_aligned_rect(&pts) {
+            } else if moves == 1
+                && (3..=4).contains(&lines)
+                && !any_bezier
+                && is_axis_aligned_rect(&pts)
+            {
                 out.kind = AnnotationKind::Rect;
-                out.geometry = object_bounds(0).map(|rect| Geometry::Rect { rect });
+                out.geometry = points_bounds(&pts).map(|rect| Geometry::Rect { rect });
             } else {
                 out.kind = AnnotationKind::Ink;
-                out.geometry = Some(Geometry::Strokes {
-                    strokes: strokes_of(&paths),
-                });
+                out.geometry = if any_bezier {
+                    None
+                } else {
+                    Some(Geometry::Strokes {
+                        strokes: strokes_of(&paths),
+                    })
+                };
             }
         }
         [shaft, head]
-            if count(shaft, PdfPathSegmentType::LineTo) == 1
-                && count(head, PdfPathSegmentType::LineTo) == 2 =>
+            if !any_bezier
+                && count(shaft, PdfPathSegmentType::MoveTo) == 1
+                && count(shaft, PdfPathSegmentType::LineTo) == 1
+                && count(head, PdfPathSegmentType::MoveTo) == 2
+                && count(head, PdfPathSegmentType::LineTo) == 2
+                && arrow_head_matches(shaft, head) =>
         {
             let pts = points(shaft);
-            out.kind = AnnotationKind::Arrow;
-            out.geometry = Some(Geometry::Line {
-                from: pts[0],
-                to: pts[1],
-            });
+            if let [from, to, ..] = pts.as_slice() {
+                out.kind = AnnotationKind::Arrow;
+                out.geometry = Some(Geometry::Line {
+                    from: *from,
+                    to: *to,
+                });
+            }
         }
         _ => {
             out.kind = AnnotationKind::Ink;
-            out.geometry = Some(Geometry::Strokes {
-                strokes: strokes_of(&paths),
-            });
+            out.geometry = if any_bezier {
+                None
+            } else {
+                Some(Geometry::Strokes {
+                    strokes: strokes_of(&paths),
+                })
+            };
         }
     }
     out
+}
+
+/// La pointe d'une flèche dessinée par nous part de l'extrémité du fût (deux fois).
+fn arrow_head_matches(
+    shaft: &[(PdfPathSegmentType, f32, f32, bool)],
+    head: &[(PdfPathSegmentType, f32, f32, bool)],
+) -> bool {
+    let Some(tip) = shaft.get(1) else {
+        return false;
+    };
+    head.iter()
+        .filter(|s| s.0 == PdfPathSegmentType::MoveTo)
+        .all(|m| (m.1 - tip.1).abs() < 0.5 && (m.2 - tip.2).abs() < 0.5)
 }
 
 fn is_axis_aligned_rect(pts: &[[f32; 2]]) -> bool {

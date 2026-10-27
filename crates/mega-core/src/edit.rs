@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::annotations::NewAnnotation;
+use crate::annotations::{AnnotationPatch, NewAnnotation};
 use crate::document::{Document, PageSize};
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
@@ -76,14 +76,15 @@ pub enum EditCommand {
         /// Index dans le tableau `/Annots` de la page.
         index: u16,
     },
-    /// Remplace une annotation (supprimée puis recréée ; son index peut changer).
+    /// Modifie une annotation (une note sur place ; les autres sont recréées, leur index
+    /// peut changer).
     UpdateAnnotation {
         /// Page.
         page: u16,
         /// Index actuel.
         index: u16,
-        /// Nouvelle définition.
-        annotation: NewAnnotation,
+        /// Les champs à changer.
+        patch: AnnotationPatch,
     },
     /// Déplace ou redimensionne une annotation.
     MoveAnnotation {
@@ -148,9 +149,7 @@ impl Command for EditCommand {
             // Le genre n'est connu qu'à l'exécution ; le libellé est précisé par `apply`
             // via `label_with_kind` (voir `Document::apply` pour les annotations).
             EditCommand::DeleteAnnotation { .. } => "Supprimer : Annotation".to_string(),
-            EditCommand::UpdateAnnotation { annotation, .. } => {
-                format!("Modifier : {}", annotation.kind.label_fr())
-            }
+            EditCommand::UpdateAnnotation { .. } => "Modifier : Annotation".to_string(),
             EditCommand::MoveAnnotation { .. } => "Déplacer : Annotation".to_string(),
         }
     }
@@ -159,6 +158,7 @@ impl Command for EditCommand {
         match self {
             EditCommand::DeleteAnnotation { page, index } => Some(("Supprimer", *page, *index)),
             EditCommand::MoveAnnotation { page, index, .. } => Some(("Déplacer", *page, *index)),
+            EditCommand::UpdateAnnotation { page, index, .. } => Some(("Modifier", *page, *index)),
             _ => None,
         }
     }
@@ -181,13 +181,8 @@ impl Command for EditCommand {
                 doc.add_annotation(*page, annotation).map(|_| ())
             }
             EditCommand::DeleteAnnotation { page, index } => doc.delete_annotation(*page, *index),
-            EditCommand::UpdateAnnotation {
-                page,
-                index,
-                annotation,
-            } => {
-                doc.delete_annotation(*page, *index)?;
-                doc.add_annotation(*page, annotation).map(|_| ())
+            EditCommand::UpdateAnnotation { page, index, patch } => {
+                doc.update_annotation(*page, *index, patch).map(|_| ())
             }
             EditCommand::MoveAnnotation { page, index, rect } => {
                 doc.set_annotation_rect(*page, *index, *rect).map(|_| ())
@@ -429,7 +424,18 @@ impl Document {
     /// l'original est intact.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> CoreResult<()> {
         let path = path.as_ref();
-        let bytes = self.to_bytes()?;
+        // Chaque rendu avec annotations laisse dans le document PDFium des objets orphelins
+        // (apparences de popup) que `save_to_bytes` écrirait. Recharger depuis les octets
+        // courants ne garde que les objets atteignables : le fichier enregistré est propre,
+        // et le document en mémoire repart léger.
+        let dirty = self.to_bytes()?;
+        let bytes = {
+            let guard = engine::guard();
+            let clean = engine::load_bytes(&guard, dirty, self.password())?;
+            let bytes = clean.save_to_bytes()?;
+            self.replace_inner(clean);
+            bytes
+        };
         write_atomically(path, &bytes)?;
         self.set_path(Some(path.to_path_buf()));
         self.history.saved_position = Some(self.history.position);

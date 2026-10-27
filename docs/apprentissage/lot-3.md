@@ -79,11 +79,25 @@ du calque ; choix du tampon par liste déroulante.
   ligne par ligne (`eprintln!` + `--test-threads=1 --no-capture`), puis en décompressant le
   flux d'apparence écrit par PDFium (`/PDFIUM_HasGeneratedAP true`). Contournement : couleur
   par les objets d'apparence uniquement, jamais `/C`.
+- **Ordre des `/QuadPoints`** : `PdfQuadPoints::from_rect` suit la lettre de la norme (bas-gauche
+  d'abord) ; PDFium et Acrobat attendent haut-gauche, haut-droit, bas-gauche, bas-droit. Avec
+  le mauvais ordre, PDFium calcule un rectangle de largeur nulle, génère une apparence vide
+  **et l'enregistre** : surlignages invisibles partout. Trouvé par la revue de conformité,
+  pas par les tests d'aller-retour (qui relisent les quads par min/max, donc insensibles à
+  l'ordre) ; le test `text_markups_are_visible_after_render_and_reopen` vérifie désormais un
+  pixel après rendu et réouverture. Leçon : tester l'**effet** (le pixel), pas seulement la donnée.
 - **`FPDFAnnot_SetColor` échoue après l'apparence** : ordre imposé dans `add_annotation`.
 - **`FPDFAnnot_AppendObject` n'accepte qu'`Ink` et `Stamp`** : d'où le choix des sous-types
   (ADR-0008).
 - **Déplacer par `/Rect` seul** ne suit pas l'apparence : recréation avec mise à l'échelle
   entre emprises intérieures (le `/Rect` d'une forme déborde du trait de `épaisseur/2 + 1`).
+- **Classification trop gourmande** : « des Bézier et pas de lignes = ellipse » prenait une
+  encre tierce lissée pour une ellipse et l'aurait **redessinée** en ellipse au premier
+  déplacement (trouvé par la relecture avec une sonde). Les signatures sont maintenant
+  exactes, et `Annotation.editable` dit à l'interface ce qu'elle peut toucher.
+- **`bounds()` inclut la moitié du trait** : reconstruire l'emprise d'une forme avec
+  `FPDFPageObj_GetBounds` la faisait grossir de 2 × épaisseur à chaque déplacement ; la
+  géométrie se relit désormais par les points des segments (test « déplacer trois fois »).
 - **Revue de sécurité automatique** : bornes de lecture ajoutées (annotations par page,
   quadrilatères, longueur des chaînes) ; un PDF reste une donnée non fiable.
 

@@ -1,14 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import type { Annotation, Rect } from '$lib/api';
-  import {
-    handlesFor,
-    hitTest,
-    noteIconRect,
-    resize,
-    toNewAnnotation,
-    type HandleId,
-  } from '$lib/logic/annotations';
+  import { handlesFor, hitTest, noteIconRect, resize, type HandleId } from '$lib/logic/annotations';
   import { cssPointToPdf, pdfRectToCss, type CssRect } from '$lib/logic/geometry';
   import {
     beginDraft,
@@ -92,8 +85,9 @@
   function grabRect(a: Annotation): Rect {
     return a.kind === 'note' ? noteIconRect(a) : a.rect;
   }
+  /** Déplaçable : décidé en Rust (`editable`), hors marquages de texte qui suivent le texte. */
   function movable(a: Annotation): boolean {
-    return !isMarkup(a) && a.kind !== 'link' && a.kind !== 'widget' && a.kind !== 'other';
+    return a.editable && !isMarkup(a);
   }
   function draftRect(d: Draft): Rect {
     const [a, b = a] = d.points;
@@ -126,8 +120,7 @@
     const { draft: d, editing, value } = pending;
     pending = null;
     if (editing) {
-      const next = toNewAnnotation(editing);
-      if (next) void updateAnnotation(doc, index, editing.index, { ...next, contents: value });
+      void updateAnnotation(doc, index, editing.index, { contents: value });
     } else if (d) {
       commit(d, value);
     }
@@ -282,7 +275,7 @@
     {#if selected}
       {@const c = css(dragPreview ?? grabRect(selected))}
       <rect class="outline" x={c.left} y={c.top} width={c.width} height={c.height} />
-      {#if movable(selected)}
+      {#if movable(selected) && selected.kind !== 'note'}
         {#each handlesFor(dragPreview ?? grabRect(selected)).filter((h) => h.id !== 'move') as h (h.id)}
           {@const hp = cssPoint(h.at)}
           <rect class="handle" data-handle={h.id} x={hp.x - 4} y={hp.y - 4} width="8" height="8" />

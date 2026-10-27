@@ -7,7 +7,7 @@ import {
   noteIconRect,
   quadsFromSelection,
   resize,
-  toNewAnnotation,
+  selectionAfterMove,
   toPdfRect,
 } from './annotations';
 
@@ -27,6 +27,7 @@ function ann(index: number, rect: Rect, kind: Annotation['kind'] = 'rect'): Anno
     modified: null,
     quads: [],
     geometry: null,
+    editable: true,
   };
 }
 
@@ -106,25 +107,10 @@ describe('toPdfRect', () => {
   });
 });
 
-describe('toNewAnnotation', () => {
-  it('rebuilds a creation request from a read annotation, with safe defaults', () => {
-    const a = ann(2, { x: 1, y: 2, w: 30, h: 40 }, 'text');
-    a.contents = 'Essai';
-    a.font_size = 14;
-    expect(toNewAnnotation(a)).toEqual({
-      kind: 'text',
-      geometry: { kind: 'rect', rect: { x: 1, y: 2, w: 30, h: 40 } },
-      style: {
-        color: { r: 0, g: 0, b: 0 },
-        fill: null,
-        opacity: 1,
-        stroke_width: 1,
-        font_size: 14,
-      },
-      contents: 'Essai',
-      author: '',
-    });
-    expect(toNewAnnotation(ann(0, { x: 0, y: 0, w: 1, h: 1 }, 'link'))).toBeNull();
-    expect(toNewAnnotation(ann(0, { x: 0, y: 0, w: 1, h: 1 }, 'ink'))).toBeNull();
+describe('selectionAfterMove', () => {
+  it('keeps the index of a note and selects the last annotation for a recreated shape', () => {
+    expect(selectionAfterMove('note', 1, 3)).toBe(1);
+    expect(selectionAfterMove('rect', 0, 3)).toBe(2);
+    expect(selectionAfterMove('text', 5, 1)).toBe(0);
   });
 });

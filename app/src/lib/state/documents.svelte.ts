@@ -21,6 +21,7 @@ import {
   textLayer,
   type Annotation,
   type AnnotationKind,
+  type AnnotationPatch,
   type DocumentSummary,
   type EditCommand,
   type NewAnnotation,
@@ -33,7 +34,7 @@ import {
   type SearchHit,
   type TextBox,
 } from '$lib/api';
-import { quadsFromSelection } from '$lib/logic/annotations';
+import { quadsFromSelection, selectionAfterMove } from '$lib/logic/annotations';
 import { fileName } from '$lib/logic/labels';
 import { selectionRects } from '$lib/logic/selection';
 import { pagesToEvict } from '$lib/logic/pagecache';
@@ -582,9 +583,15 @@ export async function updateAnnotation(
   doc: OpenDoc,
   page: number,
   index: number,
-  annotation: NewAnnotation,
+  patch: AnnotationPatch,
 ): Promise<boolean> {
-  return applyEdit(doc, { kind: 'update_annotation', page, index, annotation });
+  const kind = (doc.annotations[page] ?? []).find((a) => a.index === index)?.kind ?? 'other';
+  const ok = await applyEdit(doc, { kind: 'update_annotation', page, index, patch });
+  if (ok) {
+    const list = await ensureAnnotations(doc, page);
+    doc.selectedAnnotation = { page, index: selectionAfterMove(kind, index, list.length) };
+  }
+  return ok;
 }
 
 /** Déplace / redimensionne ; l'annotation recréée (formes, texte) finit en fin de tableau. */
@@ -594,12 +601,12 @@ export async function moveAnnotation(
   index: number,
   rect: Rect,
 ): Promise<boolean> {
+  // Le genre est lu **avant** l'édition : après, les index ont pu changer.
+  const kind = (doc.annotations[page] ?? []).find((a) => a.index === index)?.kind ?? 'other';
   const ok = await applyEdit(doc, { kind: 'move_annotation', page, index, rect });
   if (ok) {
     const list = await ensureAnnotations(doc, page);
-    // Une note garde son index ; une forme recréée est la dernière.
-    const kept = list.find((a) => a.index === index && a.kind === 'note');
-    doc.selectedAnnotation = kept ? { page, index } : { page, index: list.length - 1 };
+    doc.selectedAnnotation = { page, index: selectionAfterMove(kind, index, list.length) };
   }
   return ok;
 }

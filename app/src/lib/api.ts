@@ -86,7 +86,7 @@ export type EditCommand =
   | { kind: 'insert_pages_from_file'; path: string; pages: number[] | null; at: number }
   | { kind: 'add_annotation'; page: number; annotation: NewAnnotation }
   | { kind: 'delete_annotation'; page: number; index: number }
-  | { kind: 'update_annotation'; page: number; index: number; annotation: NewAnnotation }
+  | { kind: 'update_annotation'; page: number; index: number; patch: AnnotationPatch }
   | { kind: 'move_annotation'; page: number; index: number; rect: Rect };
 
 /** Genre d'annotation (miroir de `AnnotationKind`). */
@@ -139,6 +139,16 @@ export interface NewAnnotation {
   author: string;
 }
 
+/** Modification partielle (miroir de `AnnotationPatch`) ; les champs absents ne changent pas. */
+export interface AnnotationPatch {
+  contents?: string;
+  author?: string;
+  color?: Color;
+  opacity?: number;
+  stroke_width?: number;
+  font_size?: number;
+}
+
 /** Une annotation lue (miroir de `Annotation`). */
 export interface Annotation {
   index: number;
@@ -155,6 +165,8 @@ export interface Annotation {
   modified: string | null;
   quads: Rect[];
   geometry: Geometry | null;
+  /** Déplaçable / modifiable par l'application (décidé en Rust). */
+  editable: boolean;
 }
 
 /** État de l'historique (miroir de `EditState`). */

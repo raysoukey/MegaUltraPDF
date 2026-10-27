@@ -177,6 +177,25 @@ fn annotated_pdf_impl(with_annots: bool) -> Vec<u8> {
     )
 }
 
+/// Une page avec une annotation `Ink` **tierce** lissée en courbes de Bézier (comme
+/// Acrobat ou Xournal l'écrivent) : `/InkList` présent et apparence `m c c S`.
+pub fn bezier_ink_pdf() -> Vec<u8> {
+    let appearance = "0 0 1 RG 2 w 100 100 m 120 160 160 160 180 100 c 200 40 240 40 260 100 c S";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [4 0 R] >>".to_string(),
+        "<< /Type /Annot /Subtype /Ink /Rect [98 38 262 162] /F 4 /C [0 0 1] /BS << /W 2 >> \
+         /InkList [[100 100 140 150 180 100 220 50 260 100]] /AP << /N 5 0 R >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [98 38 262 162] /Length {} >>\nstream\n{appearance}\nendstream",
+            appearance.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un PDF **hostile** : signet dont `/Next` pointe sur lui-même, et signet dont le premier
 /// enfant est lui-même. Sert à vérifier que la lecture des signets est bornée.
 pub fn cyclic_outline_pdf() -> Vec<u8> {

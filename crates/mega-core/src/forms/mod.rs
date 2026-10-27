@@ -11,11 +11,13 @@
 //! `/Annots`, comme pour les annotations du Lot 3.
 
 use pdfium_render::prelude::{
-    PdfFormField, PdfFormFieldCommon, PdfFormType, PdfPageAnnotationCommon,
+    PdfFormField, PdfFormFieldCommon, PdfFormType, PdfPageAnnotationCommon, PdfPageAnnotationType,
+    PdfRenderConfig,
 };
 use serde::{Deserialize, Serialize};
 
 mod signature;
+mod write;
 
 pub use signature::SignatureSource;
 
@@ -148,70 +150,111 @@ impl Document {
 
     /// Écrit une valeur dans le champ `index` de la page.
     ///
-    /// Texte → champ texte ; `Checked` → case à cocher. Lecture seule, radio, combo, liste,
-    /// bouton : refusés (radios, combos et listes : Lot 5). Après l'écriture le
-    /// document est **rechargé** depuis ses octets : PDFium ne régénère l'apparence d'un
-    /// champ texte qu'au chargement (si le formulaire déclare `/NeedAppearances`).
+    /// Texte → champ texte, combo ou liste (valeur parmi les options) ; `Checked` → case
+    /// (vrai/faux) ou bouton radio (vrai : il devient l'élu du groupe). Lecture seule,
+    /// boutons, signatures : refusés. L'écriture est faite par `lopdf` (`/V`, `/AS` en noms,
+    /// `/NeedAppearances true`), puis le document est **rechargé** dans PDFium, qui régénère
+    /// les apparences.
     pub fn set_field_value(&mut self, page: u16, index: u16, value: &FieldValue) -> CoreResult<()> {
-        {
+        let patch = {
             let _guard = engine::guard();
             let pdf_page = self
                 .inner()
                 .pages()
                 .get(self.checked_index_unlocked(page)?)?;
             let count = pdf_page.annotations().len();
-            if usize::from(index) >= count {
+            if usize::from(index) >= count || usize::from(index) >= MAX_ANNOTATIONS_PER_PAGE {
                 return Err(invalid(&format!(
                     "champ {index} introuvable (la page a {count} annotations)"
                 )));
             }
-            let mut ann = pdf_page.annotations().get(usize::from(index))?;
-            let Some(field) = ann.as_form_field_mut() else {
+            let ann = pdf_page.annotations().get(usize::from(index))?;
+            let Some(field) = ann.as_form_field() else {
                 return Err(invalid("cette annotation n'est pas un champ de formulaire"));
             };
+            let read_only = match field {
+                PdfFormField::Text(f) => f.is_read_only(),
+                PdfFormField::Checkbox(f) => f.is_read_only(),
+                PdfFormField::RadioButton(f) => f.is_read_only(),
+                PdfFormField::ComboBox(f) => f.is_read_only(),
+                PdfFormField::ListBox(f) => f.is_read_only(),
+                _ => true,
+            };
+            if read_only {
+                return Err(invalid("ce champ est en lecture seule"));
+            }
             match (field, value) {
-                (PdfFormField::Text(t), FieldValue::Text { text }) => {
-                    if t.is_read_only() {
-                        return Err(invalid("ce champ est en lecture seule"));
+                (PdfFormField::Text(_), FieldValue::Text { text }) => {
+                    if text.chars().count() > MAX_STRING_CHARS {
+                        return Err(invalid(&format!(
+                            "texte trop long (maximum {MAX_STRING_CHARS} caractères)"
+                        )));
                     }
-                    t.set_value(text)?;
+                    write::Patch::Text(text.clone())
                 }
-                (PdfFormField::Checkbox(c), FieldValue::Checked { checked }) => {
-                    if c.is_read_only() {
-                        return Err(invalid("ce champ est en lecture seule"));
+                (PdfFormField::ComboBox(c), FieldValue::Text { text }) => {
+                    if !c
+                        .options()
+                        .iter()
+                        .any(|o| o.label().map(|l| l == text).unwrap_or(false))
+                    {
+                        return Err(invalid("cette valeur n'est pas une option de la liste"));
                     }
-                    c.set_checked(*checked)?;
+                    write::Patch::Text(text.clone())
                 }
-                (PdfFormField::RadioButton(_), _) => {
-                    // pdfium-render n'écrit que `/V` du bouton cliqué : l'état `/AS` des
-                    // autres boutons du groupe ne bouge pas, le fichier deviendrait
-                    // incohérent (deux boutons cochés). Réglage complet au Lot 5 (`lopdf`).
-                    return Err(invalid(
-                        "les boutons radio ne sont pas modifiables dans cette version",
-                    ));
+                (PdfFormField::ListBox(l), FieldValue::Text { text }) => {
+                    if !l
+                        .options()
+                        .iter()
+                        .any(|o| o.label().map(|v| v == text).unwrap_or(false))
+                    {
+                        return Err(invalid("cette valeur n'est pas une option de la liste"));
+                    }
+                    write::Patch::Text(text.clone())
                 }
-                (PdfFormField::ComboBox(_) | PdfFormField::ListBox(_), _) => {
+                (PdfFormField::Checkbox(_), FieldValue::Checked { checked }) => {
+                    write::Patch::Checked(*checked)
+                }
+                (PdfFormField::RadioButton(_), FieldValue::Checked { checked: true }) => {
+                    write::Patch::RadioOn
+                }
+                (PdfFormField::RadioButton(_), FieldValue::Checked { checked: false }) => {
                     return Err(invalid(
-                        "les listes déroulantes ne sont pas modifiables dans cette version",
+                        "un bouton radio ne se décoche pas : cochez-en un autre",
                     ));
                 }
                 _ => return Err(invalid("valeur incompatible avec ce champ")),
             }
-        }
-        self.reload_from_bytes(self.to_bytes()?)
+        };
+        let bytes = self.to_bytes()?;
+        let patched = write::patch_field(&bytes, usize::from(page), usize::from(index), &patch)?;
+        self.reload_from_bytes(patched)
     }
 
     /// Aplatit toutes les pages : champs et annotations deviennent du contenu fixe.
+    ///
+    /// Chaque page est d'abord chargée dans l'environnement de formulaire (rendu minuscule) :
+    /// PDFium n'y régénère les apparences des champs qu'à ce moment, et `flatten` ne dessine
+    /// que les apparences. Le dictionnaire `/AcroForm` est ensuite retiré (`lopdf`) pour ne
+    /// pas laisser de champs orphelins aux autres lecteurs.
     pub fn flatten_all(&mut self) -> CoreResult<()> {
+        let had_form = self.form_info()?.form_type != FormType::None;
         {
             let _guard = engine::guard();
             let count = self.count_unlocked();
             for i in 0..count {
                 let mut page = self.inner().pages().get(self.checked_index_unlocked(i)?)?;
+                load_form_environment(&page)?;
                 page.flatten()?;
             }
         }
-        self.reload_from_bytes(self.to_bytes()?)
+        let bytes = self.to_bytes()?;
+        let bytes = if had_form {
+            write::strip_acroform(&bytes)?
+        } else {
+            bytes
+        };
+        self.reload_from_bytes(bytes)
     }
 
     /// Les champs de la page `page`, dans l'ordre de `/Annots`.
@@ -221,6 +264,15 @@ impl Document {
             .inner()
             .pages()
             .get(self.checked_index_unlocked(page)?)?;
+        if pdf_page
+            .annotations()
+            .iter()
+            .any(|a| a.annotation_type() == PdfPageAnnotationType::Widget)
+        {
+            // Les widgets absents de `/AcroForm /Fields` n'apparaissent qu'une fois la page
+            // chargée dans l'environnement de formulaire ; idem pour les apparences.
+            load_form_environment(&pdf_page)?;
+        }
         let mut out = Vec::new();
         for (index, ann) in pdf_page
             .annotations()
@@ -240,6 +292,16 @@ impl Document {
 
 fn invalid(msg: &str) -> CoreError {
     CoreError::InvalidOperation(msg.to_string())
+}
+
+/// Charge la page dans l'environnement de formulaire de PDFium par un rendu minuscule.
+fn load_form_environment(page: &pdfium_render::prelude::PdfPage<'_>) -> CoreResult<()> {
+    let config = PdfRenderConfig::new()
+        .set_target_width(8)
+        .render_form_data(true)
+        .render_annotations(true);
+    page.render_with_config(&config)?;
+    Ok(())
 }
 
 /// Nom, lecture seule, requis : communs à tous les genres (trait `PdfFormFieldCommon`).

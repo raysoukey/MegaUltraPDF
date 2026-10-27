@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Formulaires : lecture des champs, remplissage, aplatissement, signature visuelle.
 
-use mega_core::testing::{form_pdf, form_pdf_without_need_appearances, sample_pdf, xfa_pdf};
+use mega_core::testing::{
+    form_parent_kid_pdf, form_pdf, form_pdf_without_need_appearances, sample_pdf, xfa_pdf,
+};
 use mega_core::{CoreError, Document, FieldKind, FieldValue, FormType};
 
 fn form() -> Document {
@@ -110,22 +112,83 @@ fn set_text_value_round_trips_and_renders() {
 #[test]
 fn check_box_and_radio_group() {
     let mut doc = form();
+    let before = doc.render_page(0, 1.0).unwrap();
     doc.set_field_value(0, 2, &FieldValue::Checked { checked: true })
         .unwrap();
     let fields = reopen(&doc).form_fields(0).unwrap();
     assert_eq!(fields[2].checked, Some(true));
+    // La valeur vient de PDFium lui-même (`FPDFAnnot_GetFormFieldValue`) : c'est le **nom**
+    // d'état, pas une chaîne « /Yes » (défaut de pdfium-render contourné par lopdf).
+    assert_eq!(fields[2].value.as_deref(), Some("Yes"));
+    let bytes = doc.to_bytes().unwrap();
+    let text_bytes = String::from_utf8_lossy(&bytes);
+    assert!(
+        text_bytes.contains("/AS/Yes") || text_bytes.contains("/AS /Yes"),
+        "/AS est un nom"
+    );
+    assert!(!text_bytes.contains("(/Yes)"), "jamais la chaîne « /Yes »");
+    assert_ne!(
+        doc.render_page(0, 1.0).unwrap().rgba,
+        before.rgba,
+        "coche visible"
+    );
     doc.set_field_value(0, 2, &FieldValue::Checked { checked: false })
         .unwrap();
     assert_eq!(doc.form_fields(0).unwrap()[2].checked, Some(false));
-    // Radio : pdfium-render n'écrit que `/V` du bouton visé (pas `/AS` des autres) : le
-    // groupe deviendrait incohérent. Refusé, et rien ne change (A reste coché).
+    // Radio : cocher B décoche A (le `/V` du groupe et les `/AS` des deux boutons bougent).
+    doc.set_field_value(0, 4, &FieldValue::Checked { checked: true })
+        .unwrap();
+    let fields = reopen(&doc).form_fields(0).unwrap();
+    assert_eq!(fields[3].checked, Some(false), "A décoché");
+    assert_eq!(fields[4].checked, Some(true), "B coché");
+    assert_eq!(fields[4].value.as_deref(), Some("B"));
     assert!(matches!(
-        doc.set_field_value(0, 4, &FieldValue::Checked { checked: true }),
+        doc.set_field_value(0, 4, &FieldValue::Checked { checked: false }),
         Err(CoreError::InvalidOperation(_))
     ));
-    let fields = reopen(&doc).form_fields(0).unwrap();
-    assert_eq!(fields[3].checked, Some(true), "A toujours coché");
-    assert_eq!(fields[4].checked, Some(false), "B toujours décoché");
+}
+
+#[test]
+fn combo_value_is_written() {
+    let mut doc = form();
+    doc.set_field_value(0, 5, &text("Lyon")).unwrap();
+    let f = &reopen(&doc).form_fields(0).unwrap()[5];
+    assert_eq!(f.value.as_deref(), Some("Lyon"));
+    assert!(
+        matches!(
+            doc.set_field_value(0, 5, &text("Marseille")),
+            Err(CoreError::InvalidOperation(_))
+        ),
+        "une valeur hors des options est refusée"
+    );
+}
+
+#[test]
+fn parent_kid_text_field_is_filled() {
+    let mut doc = Document::from_bytes(form_parent_kid_pdf(), None).unwrap();
+    assert_eq!(
+        doc.form_fields(0).unwrap()[0].value.as_deref(),
+        Some("ancien")
+    );
+    doc.set_field_value(0, 0, &text("Dupont")).unwrap();
+    assert_eq!(
+        doc.form_fields(0).unwrap()[0].value.as_deref(),
+        Some("Dupont")
+    );
+    assert_eq!(
+        reopen(&doc).form_fields(0).unwrap()[0].value.as_deref(),
+        Some("Dupont")
+    );
+}
+
+#[test]
+fn long_text_is_refused() {
+    let mut doc = form();
+    let long = "x".repeat(5000);
+    assert!(matches!(
+        doc.set_field_value(0, 0, &text(&long)),
+        Err(CoreError::InvalidOperation(_))
+    ));
 }
 
 #[test]
@@ -154,7 +217,7 @@ fn wrong_value_kind_is_refused() {
         Err(CoreError::InvalidOperation(_))
     ));
     assert!(matches!(
-        doc.set_field_value(0, 5, &text("Lyon")),
+        doc.set_field_value(0, 5, &FieldValue::Checked { checked: true }),
         Err(CoreError::InvalidOperation(_))
     ));
     assert!(matches!(
@@ -179,6 +242,34 @@ fn value_is_written_without_need_appearances() {
     // L'apparence PDFium n'est pas forcément régénérée ici : seule la valeur est garantie.
 }
 
+fn page_text(doc: &Document, page: u16) -> String {
+    doc.text_boxes(page)
+        .unwrap()
+        .iter()
+        .map(|b| b.ch)
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+#[test]
+fn value_is_visible_without_need_appearances_and_survives_flatten() {
+    let mut doc = Document::from_bytes(form_pdf_without_need_appearances(), None).unwrap();
+    let before = doc.render_page(0, 1.0).unwrap();
+    doc.set_field_value(0, 0, &text("Durand")).unwrap();
+    // `/NeedAppearances true` est posé à l'écriture : PDFium régénère l'apparence au
+    // rechargement, la valeur est visible chez nous et ailleurs.
+    assert_ne!(doc.render_page(0, 1.0).unwrap().rgba, before.rgba);
+    // Aplatir sans rendu préalable (cas du CLI) conserve la valeur dans le contenu.
+    let mut doc = Document::from_bytes(form_pdf_without_need_appearances(), None).unwrap();
+    doc.set_field_value(0, 0, &text("Durand")).unwrap();
+    doc.flatten_all().unwrap();
+    assert!(
+        page_text(&doc, 0).contains("Durand"),
+        "{}",
+        page_text(&doc, 0)
+    );
+}
+
 #[test]
 fn flatten_removes_fields_and_keeps_rendering() {
     let mut doc = form();
@@ -196,6 +287,12 @@ fn flatten_removes_fields_and_keeps_rendering() {
     let _ = before;
     let again = reopen(&doc);
     assert!(again.form_fields(0).unwrap().is_empty());
+    // Le dictionnaire /AcroForm est retiré : plus de champs orphelins pour les autres lecteurs.
+    assert_eq!(again.form_info().unwrap().form_type, FormType::None);
+    assert!(
+        page_text(&again, 0).contains("Dupont"),
+        "la valeur saisie est dans le contenu"
+    );
     // Sans formulaire : succès sans changement.
     let mut plain = Document::from_bytes(sample_pdf(1, "plat"), None).unwrap();
     plain.flatten_all().unwrap();
@@ -337,4 +434,64 @@ fn checkbox_stays_checked_across_renders() {
     let fields = doc.form_fields(0).unwrap();
     assert_eq!(fields[0].value.as_deref(), Some("Dupont"));
     assert_eq!(fields[2].checked, Some(true));
+}
+
+/// Une signature de plusieurs traits n'ajoute qu'un flux de contenu à la page.
+#[test]
+fn signature_strokes_add_one_content_stream() {
+    let count_streams = |bytes: &[u8]| -> usize {
+        let doc = lopdf::Document::load_mem(bytes).unwrap();
+        let (_, page_id) = doc.get_pages().into_iter().next().unwrap();
+        let page = doc.get_dictionary(page_id).unwrap();
+        match page.get(b"Contents") {
+            Ok(lopdf::Object::Array(a)) => a.len(),
+            Ok(_) => 1,
+            Err(_) => 0,
+        }
+    };
+    let mut doc = Document::from_bytes(sample_pdf(1, "flux"), None).unwrap();
+    let before = count_streams(&doc.to_bytes().unwrap());
+    let strokes: Vec<Vec<[f32; 2]>> = (0..5)
+        .map(|i| {
+            vec![
+                [100.0 + 10.0 * i as f32, 100.0],
+                [120.0 + 10.0 * i as f32, 130.0],
+            ]
+        })
+        .collect();
+    doc.insert_signature(
+        0,
+        rect(90.0, 90.0, 100.0, 50.0),
+        &SignatureSource::Strokes { strokes },
+    )
+    .unwrap();
+    // PDFium regroupe le contenu régénéré : au plus un flux de plus qu'avant, jamais un par trait.
+    let after = count_streams(&doc.to_bytes().unwrap());
+    assert!(after <= before + 1, "{before} → {after}");
+}
+
+/// Zone ou points hors de la page : refusés.
+#[test]
+fn signature_outside_page_is_refused() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "hors"), None).unwrap();
+    assert!(matches!(
+        doc.insert_signature(
+            0,
+            rect(5000.0, 0.0, 50.0, 50.0),
+            &SignatureSource::Strokes {
+                strokes: vec![vec![[5000.0, 0.0], [5010.0, 10.0]]]
+            }
+        ),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    assert!(matches!(
+        doc.insert_signature(
+            0,
+            rect(10.0, 10.0, 50.0, 50.0),
+            &SignatureSource::Strokes {
+                strokes: vec![vec![[10.0, 10.0], [1e30, 10.0]]]
+            }
+        ),
+        Err(CoreError::InvalidOperation(_))
+    ));
 }

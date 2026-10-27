@@ -1,6 +1,6 @@
 [
   { "wait": 1800 },
-  { "assert": "document.querySelectorAll('.form-layer input').length === 6 && document.querySelectorAll('.form-layer textarea').length === 1 && document.querySelectorAll('.form-layer select:disabled').length === 1", "label": "6 champs input, 1 zone de texte, 1 liste désactivée" },
+  { "assert": "document.querySelectorAll('.form-layer input').length === 6 && document.querySelectorAll('.form-layer textarea').length === 1 && document.querySelectorAll('.form-layer select').length === 1", "label": "6 champs input, 1 zone de texte, 1 liste" },
   { "assert": "document.querySelector('.form-layer input[aria-label=ref]').readOnly === true", "label": "champ « ref » en lecture seule" },
   { "eval": "(() => { [...document.querySelectorAll('.sidebar [role=tab]')].find(b => b.textContent.trim() === 'Formulaire').click(); return true; })()", "label": "onglet Formulaire ouvert" },
   { "wait": 800 },
@@ -21,6 +21,13 @@
   { "wait": 2000 },
   { "assert": "document.querySelector('.form-layer input[aria-label=ok]').checked === false", "label": "Ctrl+Z décoche" },
   { "assert": "document.querySelector('.form-layer input[aria-label=nom]').value === 'Dupont'", "label": "la saisie précédente reste" },
+
+  { "eval": "(() => { const r = document.querySelectorAll('.form-layer input[type=radio]')[1]; r.click(); return true; })()", "label": "radio B coché" },
+  { "wait": 2000 },
+  { "assert": "(() => { const r = document.querySelectorAll('.form-layer input[type=radio]'); return r[1].checked === true && r[0].checked === false; })()", "label": "B coché, A décoché (groupe cohérent)" },
+  { "eval": "(() => { const s = document.querySelector('.form-layer select'); s.value = 'Lyon'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()", "label": "liste : Lyon" },
+  { "wait": 2000 },
+  { "assert": "document.querySelector('.form-layer select').value === 'Lyon' && document.body.innerText.includes('Lyon')", "label": "valeur de liste relue" },
 
   { "click": "button[aria-label='Signature']" },
   { "drag": ".page[data-page='0'] .annotation-layer", "from": [480, 480], "to": [620, 540] },

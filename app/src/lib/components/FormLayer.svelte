@@ -40,11 +40,18 @@
     const next = (e.currentTarget as HTMLInputElement).checked;
     void setFieldValue(doc, index, f.index, { kind: 'checked', checked: next });
   }
+  function commitSelect(f: FormField, e: Event) {
+    const next = (e.currentTarget as HTMLSelectElement).value;
+    if (next === (f.value ?? '')) return;
+    void setFieldValue(doc, index, f.index, { kind: 'text', text: next });
+  }
+  function commitRadio(f: FormField) {
+    if (f.checked) return;
+    void setFieldValue(doc, index, f.index, { kind: 'checked', checked: true });
+  }
   function title(f: FormField): string {
     if (xfa) return t.formXfa;
     if (f.read_only) return t.formReadOnly;
-    if (f.kind === 'radio') return t.formRadioReadOnly;
-    if (f.kind === 'combo' || f.kind === 'list') return t.formListReadOnly;
     return f.required ? `${f.name} (${t.formRequired})` : f.name;
   }
 </script>
@@ -93,15 +100,23 @@
         {:else if kind === 'radio'}
           <input
             type="radio"
+            name="radio-{index}-{f.name}"
             checked={f.checked ?? false}
-            disabled
+            disabled={f.read_only || xfa}
             aria-label={f.name}
             title={title(f)}
+            onchange={() => commitRadio(f)}
           />
         {:else if kind === 'select'}
-          <select disabled aria-label={f.name} title={title(f)} style:font-size="{fontSize(f)}px">
+          <select
+            disabled={f.read_only || xfa}
+            aria-label={f.name}
+            title={title(f)}
+            style:font-size="{fontSize(f)}px"
+            onchange={(e) => commitSelect(f, e)}
+          >
             {#each f.options as o, i (i)}
-              <option selected={o.selected}>{o.label}</option>
+              <option selected={o.selected || o.label === f.value}>{o.label}</option>
             {/each}
           </select>
         {/if}

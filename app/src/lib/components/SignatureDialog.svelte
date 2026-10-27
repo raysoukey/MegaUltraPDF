@@ -16,6 +16,11 @@
   let canvas: HTMLCanvasElement | undefined = $state();
   let drawing = false;
   let busy = $state(false);
+  let firstTab: HTMLButtonElement | undefined = $state();
+
+  $effect(() => {
+    firstTab?.focus();
+  });
 
   function redraw() {
     const ctx = canvas?.getContext('2d');
@@ -86,6 +91,7 @@
       <button
         type="button"
         role="tab"
+        bind:this={firstTab}
         aria-selected={mode === 'draw'}
         class:active={mode === 'draw'}
         onclick={() => (mode = 'draw')}>{t.signatureDraw}</button

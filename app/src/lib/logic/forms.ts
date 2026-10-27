@@ -9,9 +9,16 @@ export type InputType = 'text' | 'password' | 'textarea' | 'checkbox' | 'radio' 
 
 /** Champs requis sans valeur (texte vide ou blanc, case non cochée). */
 export function missingRequired(fields: FormField[]): FormField[] {
+  const seenGroups = new Set<string>();
   return fields.filter((f) => {
     if (!f.required) return false;
-    if (f.kind === 'checkbox' || f.kind === 'radio') return f.checked !== true;
+    if (f.kind === 'radio') {
+      // Un groupe requis compte une fois : il manque si aucun de ses boutons n'est coché.
+      if (seenGroups.has(f.name)) return false;
+      seenGroups.add(f.name);
+      return !fields.some((g) => g.kind === 'radio' && g.name === f.name && g.checked === true);
+    }
+    if (f.kind === 'checkbox') return f.checked !== true;
     return (f.value ?? '').trim() === '';
   });
 }

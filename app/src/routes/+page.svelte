@@ -24,6 +24,7 @@
     activeDoc,
     annotateSelection,
     cancelPassword,
+    cancelSignature,
     deleteSelectedAnnotation,
     displayName,
     ensureAnnotations,
@@ -164,7 +165,11 @@
     if (typing && !e.ctrlKey && !e.key.startsWith('F') && e.key !== 'Escape') return;
     if (typing && (action === 'undo' || action === 'redo')) return;
     // Un dialogue modal garde le clavier pour lui (sauf Échap).
-    if ((docsState.closePrompt || mergeOpen || splitOpen || editing) && action !== 'escape') return;
+    if (
+      (docsState.closePrompt || mergeOpen || splitOpen || editing || doc?.signatureRequest) &&
+      action !== 'escape'
+    )
+      return;
     e.preventDefault();
     switch (action) {
       case 'open':
@@ -259,6 +264,7 @@
         break;
       case 'escape':
         if (docsState.closePrompt) resolveClosePrompt('cancel');
+        else if (doc?.signatureRequest) cancelSignature(doc);
         else if (editing) editing = null;
         else if (mergeOpen) mergeOpen = false;
         else if (splitOpen) splitOpen = false;

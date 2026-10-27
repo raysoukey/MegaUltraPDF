@@ -219,6 +219,7 @@ export function cancelPassword(): void {
 
 /** Ferme l'onglet, après confirmation si le document a des modifications en attente. */
 export async function requestClose(id: number): Promise<void> {
+  await flushPendingInput();
   const doc = docById(id);
   if (!doc) return;
   if (!doc.edit.modified) {
@@ -440,15 +441,34 @@ function reportError(message: (m: string) => string, e: unknown): void {
   docsState.error = message(isAppError(e) ? e.message : String(e));
 }
 
+/** Éditions envoyées au backend dont la réponse n'est pas encore arrivée. */
+let inFlight: Promise<unknown>[] = [];
+
+/** Attend la fin des éditions en vol (avant d'enregistrer ou de fermer). */
+export async function settleEdits(): Promise<void> {
+  while (inFlight.length > 0) await Promise.allSettled([...inFlight]);
+}
+
 export async function applyEdit(doc: OpenDoc, command: EditCommand): Promise<boolean> {
   docsState.error = null;
+  const pending = apiApplyEdit(doc.summary.id, command);
+  inFlight.push(pending);
   try {
-    afterEdit(doc, await apiApplyEdit(doc.summary.id, command));
+    afterEdit(doc, await pending);
     return true;
   } catch (e) {
     reportError(t.editError, e);
     return false;
+  } finally {
+    inFlight = inFlight.filter((p) => p !== pending);
   }
+}
+
+/** Valide le champ en cours de saisie (son `change` part au blur) puis attend les éditions. */
+async function flushPendingInput(): Promise<void> {
+  const active = typeof document === 'undefined' ? null : document.activeElement;
+  if (active instanceof HTMLElement && active.closest('.form-layer')) active.blur();
+  await settleEdits();
 }
 
 export async function undo(doc: OpenDoc): Promise<void> {
@@ -471,12 +491,14 @@ export async function redo(doc: OpenDoc): Promise<void> {
 
 /** Enregistre à son chemin ; un document sans chemin passe par « Enregistrer sous ». */
 export async function save(doc: OpenDoc): Promise<boolean> {
+  await flushPendingInput();
   if (!doc.summary.path) return saveAs(doc);
   return writeTo(doc, undefined);
 }
 
 /** Choisit un chemin puis enregistre ; faux si l'utilisateur annule. */
 export async function saveAs(doc: OpenDoc): Promise<boolean> {
+  await flushPendingInput();
   const path = await pickSavePath(doc.summary.path ?? undefined);
   if (!path) return false;
   return writeTo(doc, path);

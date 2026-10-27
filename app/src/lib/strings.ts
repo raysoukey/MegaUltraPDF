@@ -151,8 +151,6 @@ export const fr = {
   formMissingRequired: (n: number) => `${n} requis vide${n > 1 ? 's' : ''}`,
   formRequired: 'requis',
   formReadOnly: 'Champ en lecture seule',
-  formRadioReadOnly: 'Boutons radio : affichage seul dans cette version',
-  formListReadOnly: 'Listes déroulantes : affichage seul dans cette version',
   formXfa: 'Formulaire XFA : non pris en charge (affichage seul).',
   formChecked: 'coché',
   formUnchecked: 'non coché',

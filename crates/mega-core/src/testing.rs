@@ -237,14 +237,14 @@ fn form_pdf_impl(need_appearances: bool) -> Vec<u8> {
         text("nom", "", "72 700 300 724", 0),
         text("adresse", "", "72 620 300 680", 4096),
         "<< /Type /Annot /Subtype /Widget /FT /Btn /T (ok) /V /Off /AS /Off /Rect [72 580 92 600] /F 4 \
-         /AP << /N << /Yes 14 0 R /Off 15 0 R >> >> >>"
+         /MK << /BC [0 0 0] /CA (4) >> /AP << /N << /Yes 14 0 R /Off 15 0 R >> >> >>"
             .to_string(),
         "<< /FT /Btn /Ff 32768 /T (choix) /V /A /Kids [9 0 R 10 0 R] >>".to_string(),
         "<< /Type /Annot /Subtype /Widget /Parent 8 0 R /AS /A /Rect [72 540 92 560] /F 4 \
-         /AP << /N << /A 14 0 R /Off 15 0 R >> >> >>"
+         /MK << /BC [0 0 0] /CA (l) >> /AP << /N << /A 14 0 R /Off 15 0 R >> >> >>"
             .to_string(),
         "<< /Type /Annot /Subtype /Widget /Parent 8 0 R /AS /Off /Rect [100 540 120 560] /F 4 \
-         /AP << /N << /B 14 0 R /Off 15 0 R >> >> >>"
+         /MK << /BC [0 0 0] /CA (l) >> /AP << /N << /B 14 0 R /Off 15 0 R >> >> >>"
             .to_string(),
         "<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (ville) /Opt [(Paris) (Lyon)] /V (Paris) \
          /Rect [72 500 200 524] /F 4 /DA (/Helv 12 Tf 0 g) >>"
@@ -271,6 +271,26 @@ fn form_pdf_impl(need_appearances: bool) -> Vec<u8> {
             pdf_text_string("Formulaire")
         ),
     )
+}
+
+/// Un champ texte **séparé de son widget** (dictionnaire de champ parent + widget enfant),
+/// comme en produisent iText ou LibreOffice : `/V` vit sur le parent.
+pub fn form_parent_kid_pdf() -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] /NeedAppearances true \
+         /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 4 0 R >> >> \
+         /Annots [6 0 R] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        "<< /FT /Tx /T (nom) /V (ancien) /Ff 0 /DA (/Helv 12 Tf 0 g) /Kids [6 0 R] >>".to_string(),
+        "<< /Type /Annot /Subtype /Widget /Parent 5 0 R /Rect [72 700 300 724] /F 4 \
+         /MK << /BC [0 0 0] >> >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
 /// Une page avec un `/AcroForm` portant une clé `/XFA` : formulaire XFA (non pris en charge).

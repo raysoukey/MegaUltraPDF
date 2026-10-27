@@ -30,9 +30,18 @@ fois : un **trait** comme borne de générique (fiche
 ### 3. Vérifier une hypothèse par un test, pas par la doc
 
 La doc de `set_checked` d'un bouton radio laissait croire qu'il « sélectionne » le bouton.
-Le test `check_box_and_radio_group` a montré qu'A restait coché après avoir coché B : seul
-`/V` du bouton visé est écrit, pas `/AS` des autres. Décision : radios en lecture seule
-jusqu'au Lot 5. Même méthode qu'au Lot 3 pour `/QuadPoints`.
+Le test a montré qu'A restait coché après avoir coché B ; les relectures ont ensuite montré
+pire : la case à cocher était écrite `/AS (/Yes)` (une **chaîne**, pas un nom) et seule notre
+lecture la croyait cochée. Même méthode qu'au Lot 3 pour `/QuadPoints` : asserter l'effet
+(la valeur relue par PDFium, les octets, le pixel), pas la donnée que l'on vient d'écrire.
+
+### 3 bis. Deux moteurs : `lopdf` écrit, PDFium affiche
+
+`forms/write.rs` charge les octets du document dans `lopdf` (un arbre d'objets PDF :
+dictionnaires, noms, chaînes, références), pose `/V`, `/AS`, `/NeedAppearances`, puis le
+document est rechargé dans PDFium. C'est l'ADR-0003 en pratique, un lot plus tôt que prévu :
+chaque moteur fait ce qu'il sait faire. À lire : `Object::Name` vs `Object::String`,
+`dereference` pour suivre une référence, `field_id` pour remonter au `/Parent`.
 
 ### 4. Entrées non fiables, côté fichier
 
@@ -61,7 +70,13 @@ Lot 5 (`lopdf`) ; champ mot de passe : valeur jamais exposée ; signature = cont
 
 ## Pièges rencontrés
 
-- **Radio `set_checked`** n'écrit que `/V` du bouton visé (voir plus haut).
+- **`set_checked` de pdfium-render** écrit des chaînes là où la norme veut des noms, et
+  le radio n'écrit que `/V` du bouton visé : écriture confiée à `lopdf`.
+- **`flatten` sans chargement préalable** dessine les apparences périmées : perte des valeurs
+  saisies (cas du CLI) ; chaque page est maintenant chargée dans l'environnement de formulaire
+  avant d'être aplatie, et `/AcroForm` est retiré après.
+- **Un flux de contenu par trait** : pdfium-render régénère le contenu à chaque objet ajouté
+  (`AutomaticOnEveryChange`) ; la stratégie `Manual` + un seul `regenerate_content` règle cela.
 - **`PdfFormFieldOption` n'a pas de paramètre de durée de vie** (E0107) : lire la définition
   avant de copier une signature « par analogie ».
 - **Apparence des champs texte** : régénérée seulement au chargement et avec
@@ -88,6 +103,6 @@ signature dessinée, Ctrl+S, aplatissement puis Ctrl+Z) et `formulaire-xfa.json`
 
 ## Prérequis pour le Lot 5
 
-Le modèle objet du PDF (dictionnaires, flux, références) tel que `lopdf` l'expose : c'est
-avec lui que les dettes des Lots 3 et 4 (`/InkList`, `/AP` des notes, `/V` et `/AS` des
-radios, `/NeedAppearances`, élagage des objets) seront réglées, avant l'édition de contenu.
+Le modèle objet du PDF tel que `lopdf` l'expose, déjà entamé dans `forms/write.rs` : c'est
+avec lui que les dettes du Lot 3 (`/InkList`, `/AP` des notes, élagage des objets) et les
+pages tournées seront réglées, avant l'édition de contenu.

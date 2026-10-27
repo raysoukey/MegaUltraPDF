@@ -22,6 +22,9 @@ thiserror.workspace = true
 tempfile = "3"
 # Dates des annotations (`set_creation_date`) ; déjà dans l'arbre via pdfium-render.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Écriture directe des dictionnaires PDF que pdfium-render ne sait pas écrire correctement
+# (`/V`, `/AS` en noms, `/NeedAppearances`, retrait de `/AcroForm`) : ADR-0003 et ADR-0009.
+lopdf = "0.46.0"
 
 [dev-dependencies]
 mega-core = { path = ".", features = ["testing"] }

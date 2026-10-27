@@ -32,6 +32,15 @@ describe('missingRequired', () => {
     ];
     expect(missingRequired(fields).map((f) => f.name)).toEqual(['a', 'c', 'e']);
   });
+  it('counts a required radio group once, and not at all when one button is checked', () => {
+    const group = [
+      field({ name: 'g', kind: 'radio', required: true, value: null, checked: true, index: 1 }),
+      field({ name: 'g', kind: 'radio', required: true, value: null, checked: false, index: 2 }),
+    ];
+    expect(missingRequired(group)).toEqual([]);
+    const empty = group.map((f) => ({ ...f, checked: false }));
+    expect(missingRequired(empty).map((f) => f.index)).toEqual([1]);
+  });
 });
 
 describe('fieldInputType', () => {

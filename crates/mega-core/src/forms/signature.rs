@@ -9,9 +9,11 @@
 //! fichier et des pixels **avant** de décoder, et le décodage faillible (`image::load_from_memory`)
 //! est traduit en erreur métier plutôt qu'en panique.
 
+use std::io::Cursor;
+
 use pdfium_render::prelude::{
-    PdfColor, PdfPageObjectCommon, PdfPageObjectLineCap, PdfPageObjectLineJoin,
-    PdfPageObjectsCommon, PdfPagePathObject, PdfPoints,
+    PdfColor, PdfPageContentRegenerationStrategy, PdfPageObjectCommon, PdfPageObjectLineCap,
+    PdfPageObjectLineJoin, PdfPageObjectsCommon, PdfPagePathObject, PdfPoints,
 };
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +73,22 @@ impl Document {
         if !(rect.w > 0.0 && rect.h > 0.0 && rect.w.is_finite() && rect.h.is_finite()) {
             return Err(invalid("la zone de signature est vide".to_string()));
         }
+        let size = self.page_size(page)?;
+        if rect.x < -1.0
+            || rect.y < -1.0
+            || rect.x + rect.w > size.width_pt + 1.0
+            || rect.y + rect.h > size.height_pt + 1.0
+        {
+            return Err(invalid("la zone de signature sort de la page".to_string()));
+        }
+        let inside = |p: &[f32; 2]| {
+            p[0].is_finite()
+                && p[1].is_finite()
+                && p[0] >= rect.x - 1.0
+                && p[0] <= rect.x + rect.w + 1.0
+                && p[1] >= rect.y - 1.0
+                && p[1] <= rect.y + rect.h + 1.0
+        };
         match source {
             SignatureSource::Image { path } => {
                 let size = std::fs::metadata(path)?.len();
@@ -81,16 +99,21 @@ impl Document {
                     )));
                 }
                 let bytes = std::fs::read(path)?;
-                let image = image::load_from_memory(&bytes)
+                // Les dimensions sont lues dans l'en-tête **avant** de décoder les pixels :
+                // un PNG de quelques Ko peut annoncer des dizaines de milliers de pixels.
+                let reader = image::ImageReader::new(Cursor::new(&bytes))
+                    .with_guessed_format()
                     .map_err(|e| invalid(format!("image illisible : {e}")))?;
-                if image.width() > MAX_SIGNATURE_IMAGE_PX || image.height() > MAX_SIGNATURE_IMAGE_PX
-                {
+                let (w, h) = reader
+                    .into_dimensions()
+                    .map_err(|e| invalid(format!("image illisible : {e}")))?;
+                if w > MAX_SIGNATURE_IMAGE_PX || h > MAX_SIGNATURE_IMAGE_PX {
                     return Err(invalid(format!(
-                        "image trop grande ({}×{} px, maximum {MAX_SIGNATURE_IMAGE_PX})",
-                        image.width(),
-                        image.height()
+                        "image trop grande ({w}×{h} px, maximum {MAX_SIGNATURE_IMAGE_PX})"
                     )));
                 }
+                let image = image::load_from_memory(&bytes)
+                    .map_err(|e| invalid(format!("image illisible : {e}")))?;
                 let placed = fit(image.width() as f32, image.height() as f32, &rect);
                 let _guard = engine::guard();
                 let mut pdf_page = self
@@ -108,21 +131,23 @@ impl Document {
                 Ok(())
             }
             SignatureSource::Strokes { strokes } => {
-                let valid: Vec<&Vec<[f32; 2]>> = strokes
-                    .iter()
-                    .filter(|s| {
-                        s.len() >= 2 && s.iter().all(|p| p[0].is_finite() && p[1].is_finite())
-                    })
-                    .collect();
+                let valid: Vec<&Vec<[f32; 2]>> = strokes.iter().filter(|s| s.len() >= 2).collect();
                 if valid.is_empty() {
                     return Err(invalid(
                         "une signature dessinée exige au moins un trait".to_string(),
                     ));
                 }
+                if valid.iter().any(|s| s.iter().any(|p| !inside(p))) {
+                    return Err(invalid("un trait sort de la zone de signature".to_string()));
+                }
                 let _guard = engine::guard();
                 let page_index = self.checked_index_unlocked(page)?;
                 let doc = self.inner();
                 let mut pdf_page = doc.pages().get(page_index)?;
+                // Un seul flux de contenu pour toute la signature (sinon pdfium-render
+                // régénère le contenu à chaque objet ajouté : un flux par trait).
+                pdf_page
+                    .set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
                 let black = PdfColor::new(0, 0, 0, 255);
                 for stroke in valid {
                     let mut obj = PdfPagePathObject::new(

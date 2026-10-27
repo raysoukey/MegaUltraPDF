@@ -5,7 +5,7 @@
 //! de la structure : noms des options, valeurs par défaut, aide `--help`. Les
 //! commentaires `///` deviennent les textes d'aide.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
@@ -20,6 +20,10 @@ pub struct Cli {
     /// Sous-commande choisie par l'utilisateur.
     #[command(subcommand)]
     pub command: Command,
+    /// Écraser un fichier de sortie qui existe déjà (sans cette option, `mega` refuse, y
+    /// compris quand la sortie est le fichier source).
+    #[arg(long, global = true)]
+    pub force: bool,
 }
 
 /// Les sous-commandes disponibles.
@@ -78,9 +82,6 @@ pub enum Command {
         /// Préfixe des fichiers produits (défaut : nom du fichier source).
         #[arg(long)]
         prefix: Option<String>,
-        /// Écraser les fichiers de sortie existants.
-        #[arg(long)]
-        force: bool,
         /// Mot de passe, pour un PDF chiffré.
         #[arg(long)]
         password: Option<String>,
@@ -161,9 +162,9 @@ pub enum Command {
     Redact {
         /// Fichier PDF source.
         file: PathBuf,
-        /// Page (à partir de 1).
-        #[arg(long)]
-        page: u16,
+        /// Pages (ex. « 2 » ou « 1-3 », à partir de 1) ; `--page` est accepté.
+        #[arg(long, alias = "page")]
+        pages: String,
         /// Zone « x,y,w,h » en points, origine en bas à gauche de la page affichée.
         #[arg(long)]
         rect: String,
@@ -251,9 +252,6 @@ pub enum Command {
         /// Préfixe des fichiers (défaut : nom du fichier source).
         #[arg(long)]
         prefix: Option<String>,
-        /// Écraser les fichiers existants.
-        #[arg(long)]
-        force: bool,
         /// Mot de passe, pour un PDF chiffré.
         #[arg(long)]
         password: Option<String>,
@@ -393,6 +391,9 @@ pub enum Command {
         /// Mot de passe, pour des PDF chiffrés.
         #[arg(long)]
         password: Option<String>,
+        /// Mot de passe du second fichier (défaut : celui de `--password`).
+        #[arg(long)]
+        password_b: Option<String>,
     },
     /// Recadre des pages par marges « gauche,bas,droite,haut » (0,0,0,0 réinitialise).
     Crop {
@@ -467,4 +468,65 @@ pub enum Command {
         #[arg(long)]
         password: Option<String>,
     },
+}
+
+impl Command {
+    /// Le fichier unique que la commande va écrire, s'il y en a un : `main` refuse de
+    /// l'écraser sans `--force`. (`split` et `export-images` écrivent dans un dossier et
+    /// contrôlent eux-mêmes chaque fichier produit ; `meta` sans `--out` modifie le fichier
+    /// en place, ce qui est son usage voulu.)
+    pub fn output_file(&self) -> Option<&Path> {
+        match self {
+            Command::Render { out, .. }
+            | Command::Merge { out, .. }
+            | Command::Rotate { out, .. }
+            | Command::Flatten { out, .. }
+            | Command::Extract { out, .. }
+            | Command::Redact { out, .. }
+            | Command::Watermark { out, .. }
+            | Command::Number { out, .. }
+            | Command::ExportText { out, .. }
+            | Command::Protect { out, .. }
+            | Command::Unprotect { out, .. }
+            | Command::Optimize { out, .. }
+            | Command::Compare { out, .. }
+            | Command::Crop { out, .. } => Some(out),
+            Command::Meta { out, .. } | Command::Attachments { out, .. } => out.as_deref(),
+            #[cfg(feature = "ocr")]
+            Command::Ocr { out, .. } => Some(out),
+            #[cfg(feature = "signature")]
+            Command::Sign { out, .. } => Some(out),
+            _ => None,
+        }
+    }
+
+    /// Le PDF source que la commande **réécrit** (sans mise à jour incrémentale) : ses
+    /// signatures numériques ne seront plus valides dans le fichier produit.
+    pub fn rewritten_input(&self) -> Option<&Path> {
+        match self {
+            Command::Rotate { file, .. }
+            | Command::Flatten { file, .. }
+            | Command::Extract { file, .. }
+            | Command::Redact { file, .. }
+            | Command::Watermark { file, .. }
+            | Command::Number { file, .. }
+            | Command::Protect { file, .. }
+            | Command::Unprotect { file, .. }
+            | Command::Optimize { file, .. }
+            | Command::Crop { file, .. } => Some(file),
+            Command::Meta {
+                file,
+                title,
+                author,
+                subject,
+                keywords,
+                ..
+            } if title.is_some() || author.is_some() || subject.is_some() || keywords.is_some() => {
+                Some(file)
+            }
+            #[cfg(feature = "ocr")]
+            Command::Ocr { file, .. } => Some(file),
+            _ => None,
+        }
+    }
 }

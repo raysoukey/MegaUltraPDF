@@ -99,7 +99,7 @@ cargo run -p mega-cli -- annots rapport.pdf --page 1                      # list
 cargo run -p mega-cli -- fields formulaire.pdf                             # liste les champs
 cargo run -p mega-cli -- flatten formulaire.pdf -o plat.pdf                # aplatit
 cargo run -p mega-cli -- objects rapport.pdf --page 1                     # objets du contenu
-cargo run -p mega-cli -- redact rapport.pdf --page 1 --rect 60,740,200,40 -o caviarde.pdf
+cargo run -p mega-cli -- redact rapport.pdf --pages 1-2 --rect 60,740,200,40 -o caviarde.pdf
 cargo run -p mega-cli -- watermark rapport.pdf --text BROUILLON -o marque.pdf
 cargo run -p mega-cli -- number rapport.pdf --template "{n} / {total}" --corner bottom_center -o numerote.pdf
 cargo run -p mega-cli -- crop rapport.pdf --margins 50,50,50,50 --pages 1 -o rogne.pdf
@@ -110,11 +110,15 @@ cargo run -p mega-cli -- protect rapport.pdf --user secret --owner patron --no-p
 cargo run -p mega-cli -- unprotect verrou.pdf --password patron -o ouvert.pdf
 cargo run -p mega-cli -- optimize rapport.pdf --quality 75 --max-px 2048 -o leger.pdf
 cargo run -p mega-cli -- attachments rapport.pdf --extract 0 -o piece.bin
-cargo run -p mega-cli -- compare v1.pdf v2.pdf --page 3 -o diff.png
+cargo run -p mega-cli -- compare v1.pdf v2-chiffre.pdf --page 3 --password-b secret -o diff.png
 ```
 
 Toutes les écritures sont atomiques (fichier temporaire puis renommage) : un échec ne laisse
-jamais un fichier à moitié écrit.
+jamais un fichier à moitié écrit. Un fichier de sortie qui existe déjà (y compris le fichier
+source) n'est **jamais écrasé** sans l'option globale `--force` (`mega --force rotate …` ou
+`mega rotate … --force`). Réécrire un PDF signé affiche un avertissement : la signature ne
+sera plus valide dans le fichier produit (`mega sign`, lui, ajoute sa signature sans rien
+invalider).
 
 ## Vérifier l'interface sans souris
 

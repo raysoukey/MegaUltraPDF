@@ -72,6 +72,7 @@ pub fn attachments(
 }
 
 /// Compare une page de `a` et de `b` ; écrit l'image des différences en PNG dans `out`.
+#[allow(clippy::too_many_arguments)]
 pub fn compare(
     a: &Path,
     b: &Path,
@@ -80,9 +81,10 @@ pub fn compare(
     scale: f32,
     out: &Path,
     password: Option<&str>,
+    password_b: Option<&str>,
 ) -> anyhow::Result<()> {
     let doc_a = Document::open(a, password)?;
-    let doc_b = Document::open(b, password)?;
+    let doc_b = Document::open(b, password_b)?;
     anyhow::ensure!(
         page_a >= 1 && page_a <= doc_a.page_count(),
         "la page de {} doit être comprise entre 1 et {}",

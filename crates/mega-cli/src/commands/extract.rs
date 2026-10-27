@@ -10,7 +10,8 @@ use mega_core::{Document, PageSpec, edit::write_atomically};
 pub fn run(file: &Path, spec: &str, out: &Path, password: Option<&str>) -> anyhow::Result<()> {
     let doc = Document::open(file, password)?;
     let pages = PageSpec::parse(spec, doc.page_count())?;
-    let bytes = doc.extract_pages(&pages)?;
+    // Les pages extraites passent par le même nettoyage qu'un enregistrement.
+    let bytes = mega_core::cleanup::before_save(&doc.extract_pages(&pages)?)?;
     write_atomically(out, &bytes).with_context(|| format!("écriture de {}", out.display()))?;
     println!("{} page(s) extraite(s) : {}", pages.len(), out.display());
     Ok(())

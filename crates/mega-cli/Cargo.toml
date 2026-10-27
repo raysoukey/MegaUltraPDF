@@ -19,14 +19,18 @@ anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 # Affichage des dates de signature (`mega signatures`) ; déjà dans l'arbre via mega-core.
 chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
+# Saisie du mot de passe PKCS#12 sans écho dans un terminal (`mega sign`).
+rpassword = { version = "7", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+# Inspection des fichiers produits (objets orphelins) ; déjà dans l'arbre via mega-core.
+lopdf = "0.46"
 
 [features]
 # Le produit livré contient les options de `mega-core` (désactivées par défaut dans la bibliothèque).
 default = ["ocr", "signature"]
 ocr = ["mega-core/ocr"]
-signature = ["mega-core/signature", "dep:chrono"]
+signature = ["mega-core/signature", "dep:chrono", "dep:rpassword"]

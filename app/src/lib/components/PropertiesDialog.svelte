@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { documentProperties, fileSize, type DocumentProperties } from '$lib/api';
+  import { formatPdfDate } from '$lib/logic/labels';
   import type { OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
 
@@ -19,13 +20,8 @@
         .catch(() => (size = null));
   });
 
-  /** `D:20261026143000+00'00'` → `2026-10-26 14:30`. */
   function pdfDate(raw: string | null): string {
-    if (!raw) return t.unknown;
-    const m = /^D:(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?/.exec(raw);
-    if (!m) return raw;
-    const [, y, mo = '01', d = '01', h = '00', mi = '00'] = m;
-    return `${y}-${mo}-${d} ${h}:${mi}`;
+    return formatPdfDate(raw) ?? t.unknown;
   }
 
   const rows = $derived.by((): [string, string][] => {

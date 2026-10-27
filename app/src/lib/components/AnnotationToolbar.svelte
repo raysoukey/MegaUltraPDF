@@ -13,7 +13,7 @@
   import { t } from '$lib/strings';
   import StylePicker from './StylePicker.svelte';
 
-  let { doc }: { doc: OpenDoc } = $props();
+  let { doc, onedit }: { doc: OpenDoc; onedit: () => void } = $props();
 
   const TOOLS: { tool: Tool; glyph: string; key: string }[] = [
     { tool: 'select', glyph: '⬚', key: 'Échap' },
@@ -79,6 +79,13 @@
     <StylePicker />
   </div>
   <div class="group right">
+    <button
+      type="button"
+      disabled={!doc.selectedAnnotation}
+      aria-label={t.editAnnotation}
+      title={t.editAnnotation}
+      onclick={onedit}>✎</button
+    >
     <button
       type="button"
       disabled={!doc.selectedAnnotation}

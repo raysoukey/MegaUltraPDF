@@ -142,6 +142,7 @@ export const fr = {
   annotationOnPage: (n: number) => `Page ${n}`,
   selectTextFirst: 'Sélectionnez d’abord du texte dans la page.',
   noAuthor: '(anonyme)',
+  annotationNotEditable: 'Cette annotation ne peut pas être modifiée ici.',
   // Pages (vignettes)
   pageActions: 'Actions sur les pages',
   selectedPages: (n: number) => `${n} page${n > 1 ? 's' : ''} sélectionnée${n > 1 ? 's' : ''}`,
@@ -206,6 +207,13 @@ export const fr = {
     saveAs: 'Enregistrer sous',
     merge: 'Fusionner des PDF',
     split: 'Scinder le document',
+    toolNote: 'Outil Note',
+    toolHighlight: 'Surligner la sélection',
+    toolUnderline: 'Souligner la sélection',
+    toolStrikeout: 'Barrer la sélection',
+    toolText: 'Outil Texte',
+    toolInk: 'Outil Dessiner',
+    deleteAnnotation: 'Supprimer l’annotation sélectionnée',
   },
 } as const;
 

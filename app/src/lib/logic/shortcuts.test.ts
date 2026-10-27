@@ -40,6 +40,13 @@ describe('actionFor', () => {
     expect(actionFor(key('s', { ctrl: true, shift: true }))).toBe('saveAs');
     expect(actionFor(key('z'))).toBeNull();
     expect(actionFor(key('m', { ctrl: true }))).toBe('merge');
+    expect(actionFor(key('n'))).toBe('toolNote');
+    expect(actionFor(key('h'))).toBe('toolHighlight');
+    expect(actionFor(key('u'))).toBe('toolUnderline');
+    expect(actionFor(key('k'))).toBe('toolStrikeout');
+    expect(actionFor(key('t'))).toBe('toolText');
+    expect(actionFor(key('d'))).toBe('toolInk');
+    expect(actionFor(key('Delete'))).toBe('deleteAnnotation');
     expect(actionFor(key('d', { ctrl: true, shift: true }))).toBe('split');
   });
   it('ignores unknown or wrongly modified keys', () => {

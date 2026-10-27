@@ -17,3 +17,12 @@ export function tabLabel(doc: {
   const base = doc.title || (doc.path ? fileName(doc.path) : t.untitled);
   return doc.modified ? `${base} ${t.modifiedMarker}` : base;
 }
+
+/** `D:20261026143000+00'00'` → `2026-10-26 14:30` ; une valeur non reconnue est rendue telle quelle. */
+export function formatPdfDate(raw: string | null): string | null {
+  if (!raw) return null;
+  const m = /^D:(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?/.exec(raw);
+  if (!m) return raw;
+  const [, y, mo = '01', d = '01', h = '00', mi = '00'] = m;
+  return `${y}-${mo}-${d} ${h}:${mi}`;
+}

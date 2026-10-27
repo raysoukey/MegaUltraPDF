@@ -1,12 +1,17 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import type { Annotation } from '$lib/api';
   import type { OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
+  import AnnotationPanel from './AnnotationPanel.svelte';
   import Outline from './Outline.svelte';
   import Thumbnails from './Thumbnails.svelte';
 
-  let { doc }: { doc: OpenDoc } = $props();
-  let tab = $state<'thumbnails' | 'bookmarks'>('thumbnails');
+  let {
+    doc,
+    oneditannotation,
+  }: { doc: OpenDoc; oneditannotation: (a: Annotation, page: number) => void } = $props();
+  let tab = $state<'thumbnails' | 'bookmarks' | 'annotations'>('thumbnails');
 </script>
 
 <aside class="sidebar" aria-label={t.sidebar}>
@@ -25,12 +30,21 @@
       class:active={tab === 'bookmarks'}
       onclick={() => (tab = 'bookmarks')}>{t.bookmarks}</button
     >
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === 'annotations'}
+      class:active={tab === 'annotations'}
+      onclick={() => (tab = 'annotations')}>{t.annotations}</button
+    >
   </div>
   <div class="content">
     {#if tab === 'thumbnails'}
       <Thumbnails {doc} />
-    {:else}
+    {:else if tab === 'bookmarks'}
       <Outline {doc} />
+    {:else}
+      <AnnotationPanel {doc} onedit={oneditannotation} />
     {/if}
   </div>
 </aside>

@@ -52,7 +52,7 @@ pub mod service;
 pub mod testing;
 pub mod text;
 
-pub use annotations::{Annotation, AnnotationKind, Color};
+pub use annotations::{Annotation, AnnotationKind, Color, Geometry, NewAnnotation, Style};
 pub use document::{Document, PageSize};
 pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};

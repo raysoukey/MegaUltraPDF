@@ -78,9 +78,18 @@ mesure PDFium avant la phase `lopdf`, mots non WinAnsi : caractères remplacés 
   `ocr_page_is_undoable`.
 - [ ] Implémenter ; commit `feat(core): OCR pages with tesseract into an invisible text layer`.
 
+### Task 3b — Octets du fichier et retour à l'état enregistré (révision PDF)
+
+**Files:** Modify `document.rs` (`file_bytes: Vec<u8>` + `changed: bool` à la place de
+`pristine`), `edit.rs` (`undo`/`redo` : intact si la position revient à l'état enregistré).
+
+- [ ] Tests (RED) : `undo_back_to_the_saved_state_writes_the_file_bytes` ;
+  `file_bytes_survive_an_edit` (accesseur crate utilisé par `signatures()`).
+- [ ] Implémenter ; commit `refactor(core): file bytes and changed flag instead of pristine`.
+
 ### Task 4 — Identité de signature et CMS (feature `signature`)
 
-**Files:** Create `crates/mega-core/src/signature/mod.rs`, `signature/cms.rs` ;
+**Files:** Create `crates/mega-core/src/digital_signature/mod.rs`, `digital_signature/cms.rs` ;
 `fixtures/test-signer.p12`, `fixtures/test-signer-ec.p12` (openssl, commandes dans
 `xtask/src/main.rs` doc de `gen-fixtures`).
 
@@ -95,7 +104,7 @@ digest: [u8; 32], signing_time) -> CoreResult<Vec<u8>>` (DER `ContentInfo`),
 
 ### Task 5 — Signer et vérifier un PDF
 
-**Files:** Create `signature/pdf.rs` (mise à jour incrémentale, `/ByteRange`, `/Contents`) ;
+**Files:** Create `digital_signature/pdf.rs` (mise à jour incrémentale, `/ByteRange`, `/Contents`) ;
 `fixtures/signed-external.pdf` (pyHanko).
 
 **Produces:** `Document::sign_to(path, &SigningIdentity, &SignOptions) -> CoreResult<()>`,

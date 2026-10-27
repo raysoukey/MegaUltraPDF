@@ -8,7 +8,7 @@ ADR-0010 (espace affiché, passes lopdf), ADR-0011 (sécurité), ADR-0012 (distr
 
 Deux capacités avancées, optionnelles à la compilation :
 
-1. **OCR** : rendre cherchable et copiable le texte d'un PDF numérisé, en ajoutant sous
+1. **OCR** : rendre cherchable et copiable le texte d'un PDF numérisé, en ajoutant par-dessus
    l'image une **couche de texte invisible** placée mot par mot.
 2. **Signature numérique cryptographique** : signer un PDF avec un certificat personnel
    (fichier PKCS#12 `.p12` / `.pfx`) et **vérifier** les signatures présentes dans un
@@ -53,12 +53,45 @@ Deux capacités avancées, optionnelles à la compilation :
   `mega-cli` et `mega-app` les activent par défaut (le produit livré les contient). La CI
   vérifie en plus `cargo check -p mega-core --no-default-features`.
 
+## Révision après la relecture PDF (avant implémentation)
+
+- **Octets du fichier** : `Document` garde les octets du fichier tel qu'il a été chargé ou
+  enregistré (`file_bytes`) et un drapeau « modifié depuis » ; `signatures()` vérifie
+  toujours ces octets, jamais une réécriture PDFium (qui casserait chaque `/ByteRange`).
+  Revenir par annuler/rétablir à l'état enregistré rend de nouveau le document « intact ».
+- **Mise à jour incrémentale** : `lopdf::IncrementalDocument` (ajout des seuls objets
+  nouveaux ou modifiés, `/Prev` dans la remorque, type de xref de l'original). Fichier dont
+  la table de références a dû être reconstruite (`xref_recovery`) ou illisible par `lopdf` :
+  pas de mise à jour incrémentale (elle serait sans `/Prev`) ; le document est d'abord
+  réécrit proprement, refusé s'il porte déjà des signatures (elles seraient invalidées).
+- **Refus** : document chiffré, formulaire XFA (`/XFA`), document certifié sans
+  modification (`/Perms /DocMDP` avec `P = 1`).
+- **CMS** : `/SubFilter /adbe.pkcs7.detached` ; le constructeur de `cms` 0.2 ajoute lui-même
+  `content-type` et `message-digest` (empreinte externe, pas de contenu encapsulé) ;
+  l'attribut `signing-time` est écrit par nous, au même instant que `/M`. Taille de
+  `/Contents` : mesurée par un essai à blanc, plus une marge ; échec propre si dépassée. Le
+  fichier signé est revérifié avant d'être écrit.
+- **Vérification** : champs `/FT /Sig` parcourus par `lopdf` (héritage de `/FT`), contrôle
+  strict de `/ByteRange` (commence à 0, l'espace exclu est exactement la chaîne
+  `/Contents`, plages dans le fichier), CMS lu sur sa longueur DER (le remplissage de zéros
+  est ignoré), signature vérifiée sur les octets d'origine des attributs signés, algorithmes
+  `rsaEncryption` / `sha256WithRSAEncryption` / `ecdsa-with-SHA256` ; SHA-1, horodatages de
+  document et signatures d'usage (`/UR3`) : « non pris en charge ».
+- **Couche OCR** : ajoutée **après** le contenu existant (l'ordre n'importe pas en mode 3) ;
+  taille et ligne de base communes à une ligne de Tesseract ; espace explicite entre les
+  mots d'une ligne (sinon « Page 2 » ne serait pas trouvé) ; mise à l'échelle d'après la
+  taille réelle de l'image rendue. `page_has_text` compte aussi le texte invisible (relancer
+  l'OCR est sans effet).
+- **Nom de module** : `digital_signature` (le module `forms::signature` existe déjà pour la
+  signature visuelle). La signature invisible ajoute un widget `/Sig` : les panneaux
+  Formulaire et Annotations doivent l'ignorer proprement.
+
 ## Périmètre
 
 Entre :
 1. `mega-core::ocr` (feature `ocr`) : `find_tesseract`, `tesseract_languages`,
    `parse_tsv`, `EditCommand::OcrPage`, `Document::page_has_text`.
-2. `mega-core::signature` (feature `signature`) : `SigningIdentity::from_pkcs12`,
+2. `mega-core::digital_signature` (feature `signature`) : `SigningIdentity::from_pkcs12`,
    `Document::sign_to(path, &identity, &SignOptions)`, `signatures(bytes) -> Vec<SignatureInfo>`,
    `Document::signatures()`.
 3. `Document` : octets intacts (`pristine`), écrits par `save` sans réécriture PDFium.

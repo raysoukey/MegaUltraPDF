@@ -1,0 +1,62 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(donnees.csv) 8 0 R (notes.txt) 6 0 R] >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 47 >>
+stream
+BT /Helv 18 Tf 72 760 Td (Pieces jointes) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Filespec /F (notes.txt) /UF <FEFF006E006F007400650073002E007400780074> /EF << /F 7 0 R >> >>
+endobj
+7 0 obj
+<< /Type /EmbeddedFile /Subtype /text#2Fplain /Length 13 /Params << /Size 13 >> >>
+stream
+Bonjour monde
+endstream
+endobj
+8 0 obj
+<< /Type /Filespec /F (donnees.csv) /UF <FEFF0064006F006E006E00E900650073002E006300730076> /EF << /F 9 0 R >> >>
+endobj
+9 0 obj
+<< /Type /EmbeddedFile /Subtype /text#2Fcsv /Length 19 /Params << /Size 19 >> >>
+stream
+a,b
+1,2
+3,4
+5,6
+7,8
+endstream
+endobj
+10 0 obj
+<< /Title <FEFF0050006900E80063006500730020006A006F0069006E007400650073> /Producer (MegaUltraPDF tests) >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000139 00000 n 
+0000000196 00000 n 
+0000000324 00000 n 
+0000000421 00000 n 
+0000000518 00000 n 
+0000000636 00000 n 
+0000000765 00000 n 
+0000000893 00000 n 
+0000001026 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R /Info 10 0 R >>
+startxref
+1149
+%%EOF

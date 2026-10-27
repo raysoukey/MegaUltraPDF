@@ -2,10 +2,10 @@
 //! Comparaison visuelle de deux pages : les deux sont rendues à la même échelle, les pixels
 //! identiques sont estompés, les pixels différents peints en rouge, et l'on compte.
 //!
-//! \[Apprentissage\] **Itérer deux images à la fois** : `zip` sur des tranches de 4 octets
-//! (`as_chunks::<4>()`) parcourt les pixels RGBA des deux rendus en parallèle, sans index
-//! ni arithmétique de tampon ; une zone hors de l'une des deux pages est simplement comptée
-//! comme différente.
+//! \[Apprentissage\] **Lire deux images pixel par pixel** : `pixel_at` renvoie `Option<[u8; 4]>`
+//! (`None` hors de l'image), et un `match` sur le couple `(Option, Option)` traite d'un coup
+//! « les deux pixels existent » et « l'une des pages est plus petite ». `zip` compare les
+//! trois canaux de couleur sans index ni arithmétique de tampon.
 
 use crate::document::Document;
 use crate::error::{CoreError, CoreResult};

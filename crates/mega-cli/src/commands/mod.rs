@@ -3,6 +3,7 @@
 
 pub mod annots;
 pub mod content;
+pub mod export;
 pub mod extract;
 pub mod fields;
 pub mod flatten;
@@ -10,4 +11,6 @@ pub mod info;
 pub mod merge;
 pub mod render;
 pub mod rotate;
+pub mod security;
 pub mod split;
+pub mod tools;

@@ -520,3 +520,211 @@ fn redact_output_does_not_keep_removed_annotation_bytes() {
         .success()
         .stdout(predicate::str::contains("3 annotation"));
 }
+
+// ---- Lot 6 : export, sécurité, optimisation, pièces jointes, comparaison ----
+
+#[test]
+fn export_images_and_text_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("images");
+    mega()
+        .args([
+            "export-images",
+            &fixture("simple.pdf"),
+            "-o",
+            out.to_str().unwrap(),
+            "--pages",
+            "1-2",
+            "--dpi",
+            "72",
+            "--prefix",
+            "p",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 image"));
+    assert!(out.join("p-1.png").exists() && out.join("p-2.png").exists());
+    assert!(!out.join("p-3.png").exists());
+    // Sans --force, refus d'écraser.
+    mega()
+        .args([
+            "export-images",
+            &fixture("simple.pdf"),
+            "-o",
+            out.to_str().unwrap(),
+            "--prefix",
+            "p",
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("existe"));
+    mega()
+        .args([
+            "export-images",
+            &fixture("simple.pdf"),
+            "-o",
+            out.to_str().unwrap(),
+            "--jpeg",
+            "--quality",
+            "60",
+            "--prefix",
+            "j",
+        ])
+        .assert()
+        .success();
+    assert!(out.join("j-3.jpg").exists());
+    let txt = dir.path().join("texte.txt");
+    mega()
+        .args([
+            "export-text",
+            &fixture("simple.pdf"),
+            "-o",
+            txt.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let text = std::fs::read_to_string(&txt).unwrap();
+    assert!(text.contains("===== Page 2 =====") && text.contains("Page 3"));
+}
+
+#[test]
+fn meta_reads_and_writes_metadata() {
+    mega()
+        .args(["meta", &fixture("simple.pdf")])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Titre : MegaUltraPDF"));
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("meta.pdf");
+    mega()
+        .args([
+            "meta",
+            &fixture("simple.pdf"),
+            "--title",
+            "Résumé",
+            "--author",
+            "Zoë",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mega()
+        .args(["meta", out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Titre : Résumé"))
+        .stdout(predicate::str::contains("Auteur : Zoë"));
+}
+
+#[test]
+fn protect_and_unprotect_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let locked = dir.path().join("verrou.pdf");
+    mega()
+        .args([
+            "protect",
+            &fixture("simple.pdf"),
+            "--user",
+            "secret",
+            "--owner",
+            "patron",
+            "--no-print",
+            "-o",
+            locked.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AES-256"));
+    mega()
+        .args(["info", locked.to_str().unwrap()])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("mot de passe"));
+    mega()
+        .args(["meta", locked.to_str().unwrap(), "--password", "secret"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Protégé : oui"))
+        .stdout(predicate::str::contains("impression : non"));
+    let open = dir.path().join("ouvert.pdf");
+    mega()
+        .args([
+            "unprotect",
+            locked.to_str().unwrap(),
+            "--password",
+            "patron",
+            "-o",
+            open.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mega()
+        .args(["info", open.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pages : 3"));
+    // Mot de passe propriétaire seul : s'ouvre sans mot de passe, mais ne se déprotège pas sans.
+    mega()
+        .args([
+            "unprotect",
+            &fixture("owner-only.pdf"),
+            "-o",
+            dir.path().join("x.pdf").to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("incorrect"));
+}
+
+#[test]
+fn optimize_attachments_and_compare_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let small = dir.path().join("petit.pdf");
+    mega()
+        .args([
+            "optimize",
+            &fixture("simple.pdf"),
+            "-o",
+            small.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("octets"));
+    assert!(small.exists());
+    mega()
+        .args(["attachments", &fixture("attachments.pdf")])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("#0 données.csv"))
+        .stdout(predicate::str::contains("#1 notes.txt (13 o)"))
+        .stdout(predicate::str::contains("2 pièce"));
+    let extracted = dir.path().join("notes.txt");
+    mega()
+        .args([
+            "attachments",
+            &fixture("attachments.pdf"),
+            "--extract",
+            "1",
+            "-o",
+            extracted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(std::fs::read(&extracted).unwrap(), b"Bonjour monde");
+    let diff = dir.path().join("diff.png");
+    mega()
+        .args([
+            "compare",
+            &fixture("simple.pdf"),
+            &fixture("annotated.pdf"),
+            "--page",
+            "1",
+            "-o",
+            diff.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pixels différents"));
+    assert!(diff.exists());
+}

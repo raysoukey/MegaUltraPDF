@@ -157,9 +157,15 @@ mod tests {
     #[test]
     fn opened_urls_become_paths() {
         let (url, expected) = if cfg!(windows) {
-            ("file:///C:/Mes%20docs/a.pdf", PathBuf::from(r"C:\Mes docs\a.pdf"))
+            (
+                "file:///C:/Mes%20docs/a.pdf",
+                PathBuf::from(r"C:\Mes docs\a.pdf"),
+            )
         } else {
-            ("file:///tmp/Mes%20docs/a.pdf", PathBuf::from("/tmp/Mes docs/a.pdf"))
+            (
+                "file:///tmp/Mes%20docs/a.pdf",
+                PathBuf::from("/tmp/Mes docs/a.pdf"),
+            )
         };
         let urls = vec![
             tauri::Url::parse(url).unwrap(),

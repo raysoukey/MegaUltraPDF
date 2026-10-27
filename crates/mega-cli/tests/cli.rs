@@ -363,3 +363,127 @@ fn fields_and_flatten_commands() {
         .success()
         .stdout(predicate::str::contains("0 champ"));
 }
+
+// ---- Lot 5 : contenu ----
+
+#[test]
+fn objects_lists_page_objects() {
+    mega()
+        .args(["objects", &fixture("simple.pdf"), "--page", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("p1 #0 text"))
+        .stdout(predicate::str::contains("Page 1"))
+        .stdout(predicate::str::contains("Helvetica"))
+        .stdout(predicate::str::contains("1 objet"));
+    mega()
+        .args(["objects", &fixture("simple.pdf"), "--page", "9"])
+        .assert()
+        .code(1);
+}
+
+#[test]
+fn watermark_number_and_crop_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let marked = dir.path().join("marque.pdf");
+    mega()
+        .args([
+            "watermark",
+            &fixture("simple.pdf"),
+            "--text",
+            "BROUILLON",
+            "--opacity",
+            "0.4",
+            "-o",
+            marked.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("3 page"));
+    mega()
+        .args(["objects", marked.to_str().unwrap(), "--page", "2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("BROUILLON"));
+    let numbered = dir.path().join("numerote.pdf");
+    mega()
+        .args([
+            "number",
+            marked.to_str().unwrap(),
+            "--template",
+            "{n} / {total}",
+            "--corner",
+            "bottom_center",
+            "-o",
+            numbered.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mega()
+        .args(["objects", numbered.to_str().unwrap(), "--page", "3"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("3 / 3"));
+    let cropped = dir.path().join("rogne.pdf");
+    mega()
+        .args([
+            "crop",
+            &fixture("simple.pdf"),
+            "--margins",
+            "50,50,50,50",
+            "--pages",
+            "1",
+            "-o",
+            cropped.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mega()
+        .args(["info", cropped.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Page 1 : 495.3 × 741.9 pt"));
+    mega()
+        .args([
+            "crop",
+            &fixture("simple.pdf"),
+            "--margins",
+            "50,50",
+            "-o",
+            cropped.to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("quatre"));
+}
+
+#[test]
+fn redact_removes_text_from_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("caviarde.pdf");
+    mega()
+        .args([
+            "redact",
+            &fixture("simple.pdf"),
+            "--page",
+            "1",
+            "--rect",
+            "60,740,200,40",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 texte"));
+    mega()
+        .args(["objects", out.to_str().unwrap(), "--page", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Page 1").not())
+        .stdout(predicate::str::contains("path"));
+    mega()
+        .args(["objects", out.to_str().unwrap(), "--page", "2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Page 2"));
+}

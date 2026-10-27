@@ -108,6 +108,17 @@ pub async fn annotations(
     blocking(handle, move |h| h.annotations(id, page)).await
 }
 
+/// Objets du contenu d'une page (Lot 5).
+#[tauri::command]
+pub async fn page_objects(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    page: u16,
+) -> Result<Vec<mega_core::PageObject>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.page_objects(id, page)).await
+}
+
 /// Champs de formulaire d'une page.
 #[tauri::command]
 pub async fn form_fields(

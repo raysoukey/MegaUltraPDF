@@ -90,7 +90,78 @@ export type EditCommand =
   | { kind: 'move_annotation'; page: number; index: number; rect: Rect }
   | { kind: 'set_field_value'; page: number; index: number; value: FieldValue }
   | { kind: 'flatten_form' }
-  | { kind: 'insert_signature'; page: number; rect: Rect; source: SignatureSource };
+  | { kind: 'insert_signature'; page: number; rect: Rect; source: SignatureSource }
+  | { kind: 'delete_object'; page: number; index: number }
+  | { kind: 'move_object'; page: number; index: number; dx: number; dy: number }
+  | { kind: 'set_object_text'; page: number; index: number; text: string }
+  | { kind: 'insert_text'; page: number; at: [number, number]; text: string; style: TextStyle }
+  | { kind: 'insert_image'; page: number; rect: Rect; path: string }
+  | { kind: 'redact'; page: number; rect: Rect }
+  | { kind: 'watermark'; spec: Watermark }
+  | { kind: 'page_numbers'; spec: PageNumbering }
+  | { kind: 'crop_pages'; spec: CropSpec };
+
+/** Nature d'un objet de page (miroir de `ObjectKind`). */
+export type ObjectKind = 'text' | 'image' | 'path' | 'form' | 'shading' | 'other';
+
+/** Un objet du contenu d'une page, en coordonnées affichées (miroir de `PageObject`). */
+export interface PageObject {
+  index: number;
+  kind: ObjectKind;
+  bounds: Rect;
+  text: string | null;
+  font_size: number | null;
+  font: string | null;
+}
+
+/** Famille de police Standard 14 (miroir de `FontFamily`). */
+export type FontFamily = 'helvetica' | 'times' | 'courier';
+
+/** Style d'un texte inséré (miroir de `TextStyle`). */
+export interface TextStyle {
+  family: FontFamily;
+  bold: boolean;
+  italic: boolean;
+  size: number;
+  color: Color;
+}
+
+/** Ce qu'un caviardage a retiré (miroir de `RedactReport`). */
+export interface RedactReport {
+  texts: number;
+  images: number;
+  annotations: number;
+}
+
+/** Filigrane (miroir de `overlay::Watermark`). */
+export interface Watermark {
+  text: string;
+  size: number;
+  opacity: number;
+  angle_deg: number;
+  color: Color;
+  pages: number[] | null;
+}
+
+/** Position d'un numéro de page (miroir de `Corner`). */
+export type Corner =
+  'top_left' | 'top_center' | 'top_right' | 'bottom_left' | 'bottom_center' | 'bottom_right';
+
+/** Numérotation (miroir de `PageNumbering`) : `{n}`, `{total}`, `{titre}`. */
+export interface PageNumbering {
+  template: string;
+  corner: Corner;
+  margin: number;
+  size: number;
+  start: number;
+  pages: number[] | null;
+}
+
+/** Recadrage par marges affichées `[gauche, bas, droite, haut]` (miroir de `CropSpec`). */
+export interface CropSpec {
+  pages: number[] | null;
+  margins: [number, number, number, number];
+}
 
 /** Nature du formulaire (miroir de `FormType`). */
 export type FormType = 'none' | 'acro_form' | 'xfa';
@@ -281,6 +352,10 @@ export async function outline(id: number): Promise<OutlineNode[]> {
 
 export async function annotations(id: number, page: number): Promise<Annotation[]> {
   return invoke<Annotation[]>('annotations', { id, page });
+}
+
+export async function pageObjects(id: number, page: number): Promise<PageObject[]> {
+  return invoke<PageObject[]>('page_objects', { id, page });
 }
 
 export async function formFields(id: number, page: number): Promise<FormField[]> {

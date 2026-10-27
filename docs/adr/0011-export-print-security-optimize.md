@@ -48,8 +48,26 @@ accès aux XObjects image.
    (tolérance 24 par canal) estompés, différents en rouge, union des tailles ; l'image PNG et
    les compteurs traversent la frontière Tauri dans un tampon brut (`ipc::Response`, 16 octets
    d'en-tête) plutôt qu'en JSON base64.
-8. Toute édition reste une `EditCommand` (`SetMetadata`, `Protect`, `Unprotect`, `Optimize`,
-   `AddAttachment`, `DeleteAttachment`) ; la CLI écrit par `save_as`.
+8. Toute édition reste une `EditCommand` (`SetMetadata`, `Protect`, `Unprotect { password }`,
+   `Optimize`, `AddAttachment`, `DeleteAttachment`) ; la CLI écrit par `save_as`.
+9. **Après relecture** (code + conformité PDF) :
+   - protéger applique d'abord la passe d'enregistrement (`/InkList`, clé privée) : ensuite elle
+     s'abstient sur un fichier chiffré ;
+   - le bit 10 (accessibilité) reste toujours à 1, `/Encrypt` porte `/Length 256` et `/StdCF`
+     `/Length 32 /AuthEvent /DocOpen` (`qpdf --check` propre) ;
+   - mots de passe limités à ASCII imprimable et lettres Latin-1 (stables par SASLprep, que lopdf
+     applique et PDFium non) ;
+   - permissions d'un fichier à mot de passe propriétaire seul lues dans l'`encryption_state` de
+     lopdf (qui retire `/Encrypt` en déchiffrant) ; déprotection avec un mot de passe **saisi**,
+     vérifié par PDFium (lopdf ouvre un tel fichier avec n'importe quel mot de passe) ;
+   - l'optimisation se prévisualise (`optimize_preview`, sur une copie) ; sans gain, la commande
+     est refusée (pas d'étape vide dans l'historique) ; masques `/SMask` / `/Mask`, JPEG à
+     `/DecodeParms` et flux XMP `/Metadata` laissés intacts ;
+   - comparaison : l'union des tailles est bornée (50 Mpx) ; préfixe d'export sans `: * ? " < > |` ;
+     nom de pièce jointe réduit à un nom de fichier sûr (dernier composant, sans contrôle ni bidi) ;
+   - impression : `@media print` masque toute l'application et lève la mise en page plein écran.
+   Décisions assumées : retrait de protection possible avec le seul mot de passe d'ouverture ;
+   permissions de l'auteur non appliquées à l'export ; pas de `/Extensions /ADBE`.
 
 ## Conséquences
 

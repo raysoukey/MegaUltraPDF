@@ -119,8 +119,9 @@ fn eligible(dict: &Dictionary) -> Option<Candidate> {
             _ => return None,
         },
     };
-    if filter == Filter::Flate && dict.has(b"DecodeParms") {
-        // Un prédicteur PNG changerait l'ordre des octets : hors périmètre.
+    if dict.has(b"DecodeParms") {
+        // Flate : un prédicteur PNG change l'ordre des octets ; DCT : `/ColorTransform`
+        // change l'interprétation des couleurs. Dans les deux cas : hors périmètre.
         return None;
     }
     let width = u32::try_from(dict.get(b"Width").ok()?.as_i64().ok()?).ok()?;
@@ -215,6 +216,13 @@ fn recompress(stream: &Stream, c: &Candidate, opts: &OptimizeOptions) -> Option<
 }
 
 impl Document {
+    /// Ce que [`optimize`](Self::optimize) ferait, sans toucher au document : l'optimisation
+    /// tourne sur une copie. L'interface montre ce rapport avant de proposer d'appliquer.
+    pub fn optimize_preview(&self, opts: &OptimizeOptions) -> CoreResult<OptimizeReport> {
+        let mut copy = Document::from_bytes(self.to_bytes()?, self.password())?;
+        copy.optimize(opts)
+    }
+
     /// Optimise le document ; le rapport dit ce qui a été fait. Si le résultat n'est pas plus
     /// petit, le document n'est pas modifié (`bytes_after == bytes_before`).
     pub fn optimize(&mut self, opts: &OptimizeOptions) -> CoreResult<OptimizeReport> {
@@ -250,8 +258,24 @@ impl Document {
         doc.prune_objects();
         report.objects_removed =
             u32::try_from(before.saturating_sub(doc.objects.len())).unwrap_or(u32::MAX);
+        // Les masques (`/SMask`, `/Mask` en flux) sont des images grises que rien ne distingue
+        // d'une candidate ; les réencoder en JPEG (alpha avec perte) ou les réduire seuls (alors
+        // que `/Matte` exige la taille de l'image parente) abîmerait l'image qu'ils masquent.
+        let masks: std::collections::BTreeSet<ObjectId> = doc
+            .objects
+            .values()
+            .filter_map(|o| o.as_stream().ok())
+            .flat_map(|s| {
+                [b"SMask".as_slice(), b"Mask"]
+                    .into_iter()
+                    .filter_map(|k| s.dict.get(k).ok().and_then(|m| m.as_reference().ok()))
+            })
+            .collect();
         let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
         for id in ids {
+            if masks.contains(&id) {
+                continue;
+            }
             let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
                 continue;
             };
@@ -263,6 +287,9 @@ impl Document {
                 }
             } else if opts.compress_streams
                 && stream.dict.get(b"Filter").is_err()
+                // XMP : PDF/A-1 interdit `/Filter` sur le flux de métadonnées, et des outils le
+                // lisent en clair dans le fichier.
+                && stream.dict.get(b"Type").and_then(|t| t.as_name()).ok() != Some(b"Metadata".as_slice())
                 && stream.allows_compression
                 && let Some(Object::Stream(stream)) = doc.objects.get_mut(&id)
             {

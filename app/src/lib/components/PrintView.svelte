@@ -10,7 +10,9 @@
 
   let scope = $state<PageScope>('all');
   let dpi = $state(150);
-  let loaded = $state(0);
+  // URLs déjà chargées : un compteur se tromperait quand une image est réutilisée par
+  // Svelte (même URL) après un changement de portée ; un ensemble, non.
+  let loaded = $state<string[]>([]);
   let printButton: HTMLButtonElement | undefined = $state();
 
   $effect(() => {
@@ -27,7 +29,11 @@
       pageUrl(doc.summary.id, p, printScale(dpi), 'none', doc.generation, 'visible'),
     ),
   );
-  const ready = $derived(loaded >= urls.length);
+  const ready = $derived(urls.every((u) => loaded.includes(u)));
+  const loadedCount = $derived(urls.filter((u) => loaded.includes(u)).length);
+  function markLoaded(url: string) {
+    if (!loaded.includes(url)) loaded = [...loaded, url];
+  }
 
   function print() {
     window.print();
@@ -39,7 +45,7 @@
     <h2 id="print-title">{t.printTitle}</h2>
     <label>
       {t.pageScope}
-      <select bind:value={scope} onchange={() => (loaded = 0)}>
+      <select bind:value={scope}>
         <option value="all">{t.scopeAll}</option>
         <option value="current">{t.scopeCurrent(doc.page + 1)}</option>
         <option value="selected" disabled={doc.selectedPages.length === 0}
@@ -49,13 +55,13 @@
     </label>
     <label>
       {t.printResolution}
-      <select bind:value={dpi} onchange={() => (loaded = 0)}>
+      <select bind:value={dpi}>
         <option value={150}>150 dpi</option>
         <option value={300}>300 dpi</option>
       </select>
     </label>
     <span class="muted" role="status">
-      {ready ? t.printReady(pages.length) : t.printLoading(loaded, pages.length)}
+      {ready ? t.printReady(pages.length) : t.printLoading(loadedCount, pages.length)}
     </span>
     <span class="spacer"></span>
     <button type="button" onclick={onclose}>{t.close}</button>
@@ -71,8 +77,8 @@
         src={url}
         alt={t.pageOf(pages[i] + 1, doc.summary.page_count)}
         style:aspect-ratio="{size.width_pt} / {size.height_pt}"
-        onload={() => (loaded += 1)}
-        onerror={() => (loaded += 1)}
+        onload={() => markLoaded(url)}
+        onerror={() => markLoaded(url)}
       />
     {/each}
   </section>
@@ -122,6 +128,19 @@
     box-shadow: var(--page-shadow);
   }
   @media print {
+    /* Seules les feuilles s'impriment : le reste de l'application est masqué, et la mise en
+       page plein écran (hauteur 100 %, débordement caché) qui limiterait l'impression à une
+       seule feuille est levée. */
+    :global(html),
+    :global(body),
+    :global(main) {
+      height: auto !important;
+      overflow: visible !important;
+      background: #fff !important;
+    }
+    :global(main > :not(.print-view)) {
+      display: none !important;
+    }
     .print-bar {
       display: none;
     }
@@ -135,7 +154,11 @@
       overflow: visible;
     }
     .sheet {
-      width: 100%;
+      display: block;
+      width: auto;
+      max-width: 100%;
+      max-height: 100vh;
+      margin: 0 auto;
       box-shadow: none;
       page-break-after: always;
       break-after: page;

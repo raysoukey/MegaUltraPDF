@@ -103,7 +103,7 @@ export type EditCommand =
   | { kind: 'crop_pages'; spec: CropSpec }
   | { kind: 'set_metadata'; patch: MetadataPatch }
   | { kind: 'protect'; protection: Protection }
-  | { kind: 'unprotect' }
+  | { kind: 'unprotect'; password: string | null }
   | { kind: 'optimize'; options: OptimizeOptions }
   | { kind: 'add_attachment'; path: string }
   | { kind: 'delete_attachment'; index: number };
@@ -154,6 +154,14 @@ export interface OptimizeOptions {
   image_quality: number | null;
   max_image_px: number | null;
   compress_streams: boolean;
+}
+
+/** Rapport d'optimisation (miroir de `OptimizeReport`). */
+export interface OptimizeReport {
+  bytes_before: number;
+  bytes_after: number;
+  images_recompressed: number;
+  objects_removed: number;
 }
 
 /** Une pièce jointe (miroir de `Attachment`). */
@@ -460,6 +468,14 @@ export async function exportText(
   await invoke('export_text', { id, pages, separators, path });
 }
 
+/** Ce que l'optimisation ferait, sans rien modifier. */
+export async function optimizePreview(
+  id: number,
+  options: OptimizeOptions,
+): Promise<OptimizeReport> {
+  return invoke<OptimizeReport>('optimize_preview', { id, options });
+}
+
 export async function security(id: number): Promise<SecurityInfo> {
   return invoke<SecurityInfo>('security', { id });
 }
@@ -473,7 +489,7 @@ export async function saveAttachment(id: number, index: number, path: string): P
 }
 
 /**
- * Compare deux pages. Le backend renvoie un tampon binaire : 16 octets de compteurs
+ * Compare deux pages. Le backend renvoie un tampon binaire : 24 octets de compteurs
  * (deux entiers 64 bits, deux entiers 32 bits, petit-boutiste) puis l'image PNG.
  */
 export async function comparePages(

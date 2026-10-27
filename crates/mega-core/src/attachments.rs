@@ -25,7 +25,8 @@ pub const MAX_ATTACHMENTS: u16 = 1000;
 pub struct Attachment {
     /// Position dans la liste (identifiant pour extraire ou supprimer).
     pub index: u16,
-    /// Nom de fichier déclaré dans le PDF (au plus 255 caractères gardés).
+    /// Nom de fichier déclaré dans le PDF, nettoyé (dernier composant, sans caractère de
+    /// contrôle ni d'inversion bidi, au plus 255 caractères) : voir `display_name`.
     pub name: String,
     /// Taille des données, en octets.
     pub size: u64,
@@ -33,6 +34,31 @@ pub struct Attachment {
 
 fn invalid(msg: String) -> CoreError {
     CoreError::InvalidOperation(msg)
+}
+
+/// Nom de pièce jointe sûr à afficher et à proposer à l'enregistrement : seulement le dernier
+/// composant (après `/`, `\` ou `:`), sans caractère de contrôle ni d'inversion bidi
+/// (U+202A-U+202E, U+2066-U+2069, U+200E-U+200F), au plus 255 caractères.
+///
+/// Le nom déclaré dans un PDF est une donnée non fiable : « C:\…\Startup\maj.bat » ouvrirait
+/// le dialogue d'enregistrement dans le dossier de démarrage, et U+202E maquillerait un
+/// « .exe » en « .pdf » dans le panneau.
+pub(crate) fn display_name(raw: &str) -> String {
+    let last = raw.rsplit(['/', '\\', ':']).next().unwrap_or("");
+    let cleaned: String = last
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(*c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}')
+        })
+        .take(255)
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() || trimmed.chars().all(|c| c == '.') {
+        "piece-jointe".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// `rapport.md` → `rapport (2).md`, `rapport (3).md`… jusqu'à un nom libre.
@@ -62,7 +88,7 @@ impl Document {
             .enumerate()
             .map(|(i, a)| Attachment {
                 index: i as u16,
-                name: a.name().chars().take(255).collect(),
+                name: display_name(&a.name()),
                 size: a.len() as u64,
             })
             .collect())
@@ -127,6 +153,25 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::unique_name;
+
+    /// I6 (relecture) : le nom vient du PDF ; il sert d'étiquette et de nom proposé à
+    /// l'enregistrement, donc jamais de chemin ni de caractère de contrôle ou d'inversion.
+    #[test]
+    fn display_name_keeps_only_a_safe_file_name() {
+        use super::display_name;
+        assert_eq!(display_name("notes.txt"), "notes.txt");
+        assert_eq!(
+            display_name("C:\\Users\\x\\Start Menu\\Programs\\Startup\\maj.bat"),
+            "maj.bat"
+        );
+        assert_eq!(display_name("../../etc/passwd"), "passwd");
+        assert_eq!(display_name("C:evil.exe"), "evil.exe");
+        assert_eq!(display_name("facture\u{202E}fdp.exe"), "facturefdp.exe");
+        assert_eq!(display_name("a\u{0}b\u{7}c"), "abc");
+        assert_eq!(display_name("///"), "piece-jointe");
+        assert_eq!(display_name(""), "piece-jointe");
+        assert_eq!(display_name(".."), "piece-jointe");
+    }
 
     #[test]
     fn unique_name_numbers_duplicates() {

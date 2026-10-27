@@ -64,14 +64,21 @@ fn invalid(msg: &str) -> CoreError {
     CoreError::InvalidOperation(msg.to_string())
 }
 
-/// Vérifie un mot de passe : longueur en octets et caractères Latin-1 seulement.
+/// Vérifie un mot de passe : longueur en octets, et seulement des caractères que SASLprep
+/// (appliqué par lopdf en révision 6, pas par PDFium) laisse inchangés : ASCII imprimable
+/// (U+0020-U+007E) et lettres Latin-1 (U+00C0-U+00FF). Une espace insécable, un trait d'union
+/// conditionnel, « ² » ou « µ » seraient réécrits d'un côté et pas de l'autre : le fichier ne
+/// se rouvrirait plus.
 fn check_password(what: &str, password: &str) -> CoreResult<()> {
     if password.len() > MAX_PASSWORD_BYTES {
         return Err(CoreError::InvalidOperation(format!(
             "le mot de passe {what} dépasse {MAX_PASSWORD_BYTES} octets"
         )));
     }
-    if let Some(c) = password.chars().find(|c| u32::from(*c) > 0xFF) {
+    if let Some(c) = password
+        .chars()
+        .find(|c| !matches!(*c, '\u{20}'..='\u{7E}' | '\u{C0}'..='\u{FF}'))
+    {
         return Err(CoreError::InvalidOperation(format!(
             "le mot de passe {what} contient un caractère non pris en charge : « {c} »"
         )));
@@ -84,12 +91,14 @@ fn check_password(what: &str, password: &str) -> CoreResult<()> {
 /// l'assemblage suit « modifier ».
 fn to_lopdf(p: Permissions) -> lopdf::Permissions {
     use lopdf::Permissions as P;
-    let mut flags = P::empty();
+    // Bit 10 (extraction pour l'accessibilité) : déprécié en PDF 2.0, il doit rester à 1 ;
+    // à 0, Acrobat refuse le contenu aux lecteurs d'écran.
+    let mut flags = P::COPYABLE_FOR_ACCESSIBILITY;
     if p.print {
         flags |= P::PRINTABLE | P::PRINTABLE_IN_HIGH_QUALITY;
     }
     if p.copy {
-        flags |= P::COPYABLE | P::COPYABLE_FOR_ACCESSIBILITY;
+        flags |= P::COPYABLE;
     }
     if p.modify {
         flags |= P::MODIFIABLE | P::ASSEMBLABLE;
@@ -98,6 +107,29 @@ fn to_lopdf(p: Permissions) -> lopdf::Permissions {
         flags |= P::ANNOTABLE | P::FILLABLE;
     }
     flags
+}
+
+/// lopdf 0.46 n'écrit ni `/Length 256` dans `/Encrypt` ni `/Length 32 /AuthEvent /DocOpen`
+/// dans le filtre `/StdCF` : facultatifs pour la révision 6, mais `qpdf --check` les réclame
+/// et certains validateurs aussi. On les ajoute (valeurs de la norme, tableau 20 et 25).
+fn complete_encrypt_dictionary(doc: &mut lopdf::Document) {
+    let Ok(id) = doc
+        .trailer
+        .get(b"Encrypt")
+        .and_then(lopdf::Object::as_reference)
+    else {
+        return;
+    };
+    let Ok(enc) = doc.get_dictionary_mut(id) else {
+        return;
+    };
+    enc.set("Length", 256);
+    if let Ok(lopdf::Object::Dictionary(filters)) = enc.get_mut(b"CF")
+        && let Ok(lopdf::Object::Dictionary(std_cf)) = filters.get_mut(b"StdCF")
+    {
+        std_cf.set("Length", 32);
+        std_cf.set("AuthEvent", lopdf::Object::Name(b"DocOpen".to_vec()));
+    }
 }
 
 impl Document {
@@ -154,6 +186,18 @@ impl Document {
         let Ok(doc) = lopdf::Document::load_mem(&bytes) else {
             return denied;
         };
+        // Mot de passe utilisateur vide : lopdf a déjà déchiffré et retiré `/Encrypt` du
+        // trailer ; les permissions sont alors dans l'état de chiffrement qu'il a gardé.
+        if let Some(state) = doc.encryption_state.as_ref() {
+            use lopdf::Permissions as P;
+            let flags = state.permissions();
+            return Permissions {
+                print: flags.contains(P::PRINTABLE),
+                modify: flags.contains(P::MODIFIABLE),
+                copy: flags.contains(P::COPYABLE),
+                annotate: flags.contains(P::ANNOTABLE),
+            };
+        }
         let p = doc
             .trailer
             .get(b"Encrypt")
@@ -192,7 +236,9 @@ impl Document {
         } else {
             p.owner_password.as_str()
         };
-        let bytes = self.to_bytes()?;
+        // La passe d'enregistrement (`/InkList`, clé privée de PDFium, orphelins) doit avoir
+        // lieu **avant** le chiffrement : ensuite, elle s'abstient sur un fichier chiffré.
+        let bytes = crate::cleanup::before_save(&self.to_bytes()?)?;
         let mut doc = lopdf::Document::load_mem(&bytes).map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;
@@ -216,6 +262,7 @@ impl Document {
         .map_err(|e| CoreError::InvalidOperation(format!("préparation du chiffrement : {e}")))?;
         doc.encrypt(&state)
             .map_err(|e| CoreError::InvalidOperation(format!("chiffrement : {e}")))?;
+        complete_encrypt_dictionary(&mut doc);
         let mut out = Vec::new();
         doc.save_to(&mut out)?;
         let previous = self.password().map(str::to_string);
@@ -231,13 +278,33 @@ impl Document {
     /// propriétaire). Un document chiffré ouvert sans mot de passe (protection propriétaire
     /// seule) ne peut pas prouver le droit de le faire : `WrongPassword`.
     pub fn unprotect(&mut self) -> CoreResult<()> {
+        self.unprotect_with(None)
+    }
+
+    /// Comme [`unprotect`](Self::unprotect), avec un mot de passe saisi (prioritaire sur celui
+    /// de l'ouverture) : c'est ainsi qu'on déprotège un fichier à mot de passe propriétaire
+    /// seul, qui s'ouvre sans rien demander. Un mot de passe faux donne `WrongPassword`.
+    pub fn unprotect_with(&mut self, typed: Option<&str>) -> CoreResult<()> {
         if !self.security()?.encrypted {
             return Err(invalid("le document n'est pas protégé"));
         }
-        let Some(password) = self.password().map(str::to_string) else {
-            return Err(CoreError::WrongPassword);
+        let password = match typed.filter(|p| !p.is_empty()) {
+            Some(p) => p.to_string(),
+            None => match self.password() {
+                Some(p) => p.to_string(),
+                None => return Err(CoreError::WrongPassword),
+            },
         };
         let bytes = self.to_bytes()?;
+        // Le mot de passe doit être **vérifié** : lopdf ouvre un fichier à mot de passe
+        // utilisateur vide quel que soit celui qu'on lui donne. PDFium, lui, n'ouvre qu'avec
+        // un mot de passe exact (utilisateur ou propriétaire) : c'est notre preuve.
+        {
+            let guard = engine::guard();
+            if engine::load_bytes(&guard, bytes.clone(), Some(&password)).is_err() {
+                return Err(CoreError::WrongPassword);
+            }
+        }
         let options = lopdf::LoadOptions::with_password(&password);
         let mut doc = match lopdf::Document::load_mem_with_options(&bytes, options) {
             Ok(doc) => doc,

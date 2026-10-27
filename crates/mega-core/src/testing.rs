@@ -567,6 +567,100 @@ pub fn attachments_pdf() -> Vec<u8> {
     )
 }
 
+/// Images que l'optimisation ne doit **pas** toucher (relecture pdf-expert) : une photo RGB
+/// 400 × 300 bruitée avec un masque `/SMask` gris 400 × 300 en dégradé (le masque, image grise
+/// 8 bits sans masque, ressemble à une candidate), une image RGB JPEG avec `/DecodeParms
+/// << /ColorTransform 0 >>`, et un flux XMP `/Metadata` non compressé dans le catalogue
+/// (comme l'exige PDF/A-1).
+///
+/// # Panics
+/// Si lopdf ou `image` échouent sur des données que nous venons de produire (tests).
+pub fn tricky_images_pdf() -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    let mut doc = lopdf::Document::with_version("1.7");
+    let image_dict = |w: i64, h: i64, cs: &str| {
+        let mut d = Dictionary::new();
+        d.set("Type", Object::Name(b"XObject".to_vec()));
+        d.set("Subtype", Object::Name(b"Image".to_vec()));
+        d.set("Width", w);
+        d.set("Height", h);
+        d.set("ColorSpace", Object::Name(cs.as_bytes().to_vec()));
+        d.set("BitsPerComponent", 8);
+        d
+    };
+    let mut seed: u32 = 777;
+    let mut noise = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ((seed >> 24) % 33) as i16 - 16
+    };
+    // Masque : dégradé horizontal (Flate le compresse mal une fois bruité).
+    let mask_pixels: Vec<u8> = (0..300)
+        .flat_map(|_| (0..400).map(|x| (x * 255 / 399) as u8))
+        .map(|v| (i16::from(v) + noise() / 4).clamp(0, 255) as u8)
+        .collect();
+    let mut mask = Stream::new(image_dict(400, 300, "DeviceGray"), mask_pixels);
+    mask.compress().expect("compression Flate");
+    let mask_id = doc.add_object(mask);
+    let photo_pixels: Vec<u8> = (0..400 * 300)
+        .flat_map(|_| [120i16, 160, 90].map(|c| (c + noise()).clamp(0, 255) as u8))
+        .collect();
+    let mut photo_dict = image_dict(400, 300, "DeviceRGB");
+    photo_dict.set("SMask", Object::Reference(mask_id));
+    let mut photo = Stream::new(photo_dict, photo_pixels);
+    photo.compress().expect("compression Flate");
+    let photo_id = doc.add_object(photo);
+    // JPEG RGB avec /DecodeParms /ColorTransform 0.
+    let rgb = image::RgbImage::from_fn(300, 200, |x, y| {
+        image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+    });
+    let mut jpeg = std::io::Cursor::new(Vec::new());
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 95)
+        .encode_image(&rgb)
+        .expect("encodage JPEG");
+    let mut dct_dict = image_dict(300, 200, "DeviceRGB");
+    dct_dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
+    let mut parms = Dictionary::new();
+    parms.set("ColorTransform", 0);
+    dct_dict.set("DecodeParms", Object::Dictionary(parms));
+    let dct_id = doc.add_object(Stream::new(dct_dict, jpeg.into_inner()).with_compression(false));
+    // XMP non compressé.
+    let xmp = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"><pdfaid:part>1</pdfaid:part></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>"#;
+    let mut xmp_dict = Dictionary::new();
+    xmp_dict.set("Type", Object::Name(b"Metadata".to_vec()));
+    xmp_dict.set("Subtype", Object::Name(b"XML".to_vec()));
+    let xmp_id =
+        doc.add_object(Stream::new(xmp_dict, xmp.as_bytes().to_vec()).with_compression(false));
+    let content = "q 400 0 0 300 50 450 cm /ImP Do Q q 300 0 0 200 50 150 cm /ImJ Do Q";
+    let content_id = doc.add_object(Stream::new(Dictionary::new(), content.as_bytes().to_vec()));
+    let mut xobjects = Dictionary::new();
+    xobjects.set("ImP", Object::Reference(photo_id));
+    xobjects.set("ImJ", Object::Reference(dct_id));
+    let mut resources = Dictionary::new();
+    resources.set("XObject", Object::Dictionary(xobjects));
+    let pages_id = doc.new_object_id();
+    let mut page = Dictionary::new();
+    page.set("Type", Object::Name(b"Page".to_vec()));
+    page.set("Parent", Object::Reference(pages_id));
+    page.set("MediaBox", vec![0.into(), 0.into(), 595.into(), 842.into()]);
+    page.set("Resources", Object::Dictionary(resources));
+    page.set("Contents", Object::Reference(content_id));
+    let page_id = doc.add_object(page);
+    let mut pages = Dictionary::new();
+    pages.set("Type", Object::Name(b"Pages".to_vec()));
+    pages.set("Kids", vec![Object::Reference(page_id)]);
+    pages.set("Count", 1);
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let mut catalog = Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    catalog.set("Metadata", Object::Reference(xmp_id));
+    let catalog_id = doc.add_object(catalog);
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
 /// Un champ texte **séparé de son widget** (dictionnaire de champ parent + widget enfant),
 /// comme en produisent iText ou LibreOffice : `/V` vit sur le parent.
 pub fn form_parent_kid_pdf() -> Vec<u8> {

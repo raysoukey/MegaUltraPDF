@@ -175,6 +175,17 @@ pub async fn export_text(
     blocking(handle, move |h| h.export_text(id, pages, separators, path)).await
 }
 
+/// Aperçu d'une optimisation : le rapport, sans rien modifier.
+#[tauri::command]
+pub async fn optimize_preview(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    options: mega_core::OptimizeOptions,
+) -> Result<mega_core::OptimizeReport, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.optimize_preview(id, options)).await
+}
+
 /// État de sécurité du document.
 #[tauri::command]
 pub async fn security(
@@ -223,7 +234,7 @@ pub async fn compare_pages(
         h.compare_pages(id_a, page_a, id_b, page_b, scale)
     })
     .await?;
-    // Les compteurs sont encodés en tête du corps (16 octets, petit-boutiste), suivis du PNG :
+    // Les compteurs sont encodés en tête du corps (24 octets, petit-boutiste), suivis du PNG :
     // le frontend les lit dans le même tampon.
     let mut body = Vec::with_capacity(compared.png.len() + 24);
     body.extend_from_slice(&compared.differing_pixels.to_le_bytes());

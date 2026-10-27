@@ -58,6 +58,15 @@ pub fn compare_pages(
     let width = left.width_px.max(right.width_px);
     let height = left.height_px.max(right.height_px);
     let total = u64::from(width) * u64::from(height);
+    // Chaque rendu tient dans le budget, mais l'union de deux pages allongées dans des sens
+    // opposés peut le dépasser de loin : une donnée non fiable ne choisit pas l'allocation.
+    if total > crate::error::MAX_RENDER_PIXELS {
+        return Err(CoreError::InvalidOperation(format!(
+            "image des différences trop grande ({} mégapixels, maximum {}) : réduisez l'échelle",
+            total / 1_000_000,
+            crate::error::MAX_RENDER_PIXELS / 1_000_000
+        )));
+    }
     let mut rgba = Vec::with_capacity((total * 4) as usize);
     let mut differing = 0u64;
     for y in 0..height {

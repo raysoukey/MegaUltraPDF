@@ -213,6 +213,12 @@ enum Request {
         path: PathBuf,
         reply: SyncSender<CoreResult<()>>,
     },
+    /// Aperçu d'une optimisation (rien n'est modifié).
+    OptimizePreview {
+        id: DocId,
+        options: crate::optimize::OptimizeOptions,
+        reply: SyncSender<CoreResult<crate::optimize::OptimizeReport>>,
+    },
     /// État de sécurité.
     Security {
         id: DocId,
@@ -577,6 +583,15 @@ impl ServiceHandle {
         })
     }
 
+    /// Aperçu d'une optimisation (voir `Document::optimize_preview`).
+    pub fn optimize_preview(
+        &self,
+        id: DocId,
+        options: crate::optimize::OptimizeOptions,
+    ) -> CoreResult<crate::optimize::OptimizeReport> {
+        self.call(|reply| Request::OptimizePreview { id, options, reply })
+    }
+
     /// État de sécurité (voir `Document::security`).
     pub fn security(&self, id: DocId) -> CoreResult<crate::security::SecurityInfo> {
         self.call(|reply| Request::Security { id, reply })
@@ -838,6 +853,12 @@ impl Actor {
                     crate::edit::write_atomically(&path, text.as_bytes())
                 });
                 let _ = reply.send(result);
+            }
+            Request::OptimizePreview { id, options, reply } => {
+                let _ = reply.send(
+                    self.entry(id)
+                        .and_then(|e| e.doc.optimize_preview(&options)),
+                );
             }
             Request::Security { id, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.security()));

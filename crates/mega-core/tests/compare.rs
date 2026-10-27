@@ -88,3 +88,15 @@ fn compare_rejects_bad_pages_and_scale() {
         Err(CoreError::InvalidOperation(_))
     ));
 }
+
+/// M1 (relecture) : chaque rendu tient dans le budget, mais l'union de deux pages très
+/// allongées dans des sens opposés ne doit pas allouer des centaines de mégapixels.
+#[test]
+fn compare_refuses_an_oversized_union() {
+    let wide = Document::from_bytes(blank_pdf(14_400.0, 1_500.0), None).unwrap();
+    let tall = Document::from_bytes(blank_pdf(1_500.0, 14_400.0), None).unwrap();
+    match compare_pages(&wide, 0, &tall, 0, 1.0) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("mégapixels"), "{m}"),
+        other => panic!("{:?}", other.map(|d| d.total_pixels)),
+    }
+}

@@ -89,8 +89,16 @@ impl Document {
             ));
         }
         let prefix = prefix.trim();
-        if prefix.is_empty() || prefix.contains(['/', '\\']) {
-            return Err(invalid("préfixe de fichier invalide".to_string()));
+        // `/` et `\` sortiraient du dossier, `:` aussi sous Windows (« C:x » est relatif au
+        // lecteur C:, « a:b » un flux NTFS) ; `*?"<>|` et les contrôles sont interdits partout.
+        if prefix.is_empty()
+            || prefix.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
+            || prefix.chars().any(char::is_control)
+        {
+            return Err(invalid(
+                "préfixe de fichier invalide (caractères interdits : / \\ : * ? \" < > |)"
+                    .to_string(),
+            ));
         }
         let pages = self.resolve_pages(spec.pages.as_deref())?;
         let scale = f32::from(spec.dpi) / 72.0;

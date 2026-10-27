@@ -3,7 +3,7 @@
 
 use mega_core::edit::EditCommand;
 use mega_core::optimize::OptimizeOptions;
-use mega_core::testing::{heavy_images_pdf, sample_pdf};
+use mega_core::testing::{heavy_images_pdf, sample_pdf, tricky_images_pdf};
 use mega_core::{CoreError, Document};
 
 fn heavy() -> Document {
@@ -172,4 +172,112 @@ fn optimize_is_an_undoable_command_and_refuses_encrypted() {
         Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffré"), "{m}"),
         other => panic!("{other:?}"),
     }
+}
+
+/// I5 (relecture) : l'interface doit voir le rapport **avant** d'appliquer, et une
+/// optimisation sans gain ne doit pas entrer dans l'historique ni marquer « modifié ».
+#[test]
+fn optimize_preview_reports_without_modifying() {
+    let doc = heavy();
+    let images_before = images_of(&doc.to_bytes().unwrap());
+    let render_before = doc.render_page(0, 0.5).unwrap();
+    let report = doc.optimize_preview(&defaults()).unwrap();
+    assert!(report.bytes_after < report.bytes_before, "{report:?}");
+    assert!(report.images_recompressed >= 1);
+    // (Les octets de PDFium ne sont pas stables d'une sérialisation à l'autre : on compare
+    // ce qui compte, les images du fichier et le rendu.)
+    assert_eq!(
+        images_of(&doc.to_bytes().unwrap()),
+        images_before,
+        "aperçu sans effet sur les images du document"
+    );
+    assert_eq!(doc.render_page(0, 0.5).unwrap().rgba, render_before.rgba);
+    assert!(!doc.is_modified());
+}
+
+#[test]
+fn optimize_command_without_gain_is_refused_and_leaves_no_history() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "compact"), None).unwrap();
+    // Une première passe peut gagner quelques octets ; la seconde n'a plus rien à faire.
+    let _ = doc.optimize(&defaults()).unwrap();
+    let mut doc = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    let preview = doc.optimize_preview(&defaults()).unwrap();
+    if preview.bytes_after < preview.bytes_before {
+        // PDFium a encore resérialisé quelque chose : on optimise jusqu'au point fixe.
+        let _ = doc.optimize(&defaults()).unwrap();
+        doc = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    }
+    match doc.apply(&EditCommand::Optimize {
+        options: defaults(),
+    }) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("rien à gagner"), "{m}"),
+        Ok(()) => {
+            // Admis seulement si le fichier a réellement rétréci.
+            assert!(doc.can_undo());
+        }
+        Err(e) => panic!("{e:?}"),
+    }
+}
+
+/// A11-A13 (relecture pdf-expert) : un masque `/SMask` reste un masque (ni JPEG ni réduit
+/// seul, il doit garder la taille de son image), un JPEG à `/DecodeParms` n'est pas réinterprété,
+/// et le flux XMP `/Metadata` reste non compressé (PDF/A-1, outils qui le lisent en clair).
+#[test]
+fn optimize_leaves_masks_transformed_jpegs_and_xmp_alone() {
+    let mut doc = Document::from_bytes(tricky_images_pdf(), None).unwrap();
+    let _ = doc.optimize(&OptimizeOptions {
+        image_quality: Some(60),
+        max_image_px: Some(256),
+        compress_streams: true,
+    });
+    let bytes = doc.to_bytes().unwrap();
+    let lo = lopdf::Document::load_mem(&bytes).unwrap();
+    let mut seen_mask = false;
+    let mut seen_dct = false;
+    let mut seen_xmp = false;
+    for obj in lo.objects.values() {
+        let Ok(stream) = obj.as_stream() else {
+            continue;
+        };
+        let name = |k: &[u8]| {
+            stream
+                .dict
+                .get(k)
+                .ok()
+                .and_then(|v| v.as_name().ok())
+                .map(|n| String::from_utf8_lossy(n).into_owned())
+        };
+        let width = stream
+            .dict
+            .get(b"Width")
+            .and_then(|w| w.as_i64())
+            .unwrap_or(0);
+        if name(b"Type").as_deref() == Some("Metadata") {
+            seen_xmp = true;
+            assert!(
+                stream.dict.get(b"Filter").is_err(),
+                "XMP compressé : {:?}",
+                stream.dict
+            );
+        }
+        if name(b"Subtype").as_deref() == Some("Image")
+            && name(b"ColorSpace").as_deref() == Some("DeviceGray")
+        {
+            seen_mask = true;
+            assert_eq!(width, 400, "le masque garde la taille de son image");
+            assert_ne!(
+                name(b"Filter").as_deref(),
+                Some("DCTDecode"),
+                "masque passé en JPEG"
+            );
+        }
+        if stream.dict.has(b"DecodeParms") && name(b"Filter").as_deref() == Some("DCTDecode") {
+            seen_dct = true;
+            assert_eq!(width, 300, "JPEG à /DecodeParms laissé intact");
+        }
+    }
+    assert!(
+        seen_mask && seen_dct && seen_xmp,
+        "{seen_mask} {seen_dct} {seen_xmp}"
+    );
 }

@@ -17,6 +17,7 @@
   let copy = $state(true);
   let modify = $state(true);
   let annotate = $state(true);
+  let ownerToRemove = $state('');
   let busy = $state(false);
   let first: HTMLInputElement | undefined = $state();
 
@@ -28,6 +29,9 @@
   });
 
   const encrypted = $derived(doc.security?.encrypted ?? false);
+  // Ouvert sans mot de passe : il faut saisir le mot de passe propriétaire pour déprotéger.
+  const needsOwner = $derived(encrypted && !(doc.security?.user_password_required ?? false));
+  const restricted = $derived(!print || !copy || !modify || !annotate);
   const mismatch = $derived(user !== confirmUser);
   const canProtect = $derived(
     !busy && !mismatch && (user.trim() !== '' || owner.trim() !== '') && user.length <= 127,
@@ -45,7 +49,7 @@
   }
   async function unprotect() {
     busy = true;
-    const ok = await unprotectDoc(doc);
+    const ok = await unprotectDoc(doc, needsOwner ? ownerToRemove : null);
     busy = false;
     if (ok) onclose();
   }
@@ -72,10 +76,30 @@
           {t.securityPermissions(doc.security.permissions)}
         </p>
       {/if}
+      {#if needsOwner}
+        <p class="muted">{t.unprotectOwnerHint}</p>
+        <label class="row">
+          {t.unprotectOwnerPassword}
+          <input
+            type="password"
+            bind:value={ownerToRemove}
+            autocomplete="current-password"
+            onkeydown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                unprotect();
+              }
+            }}
+          />
+        </label>
+      {/if}
       <div class="actions">
         <button type="button" onclick={onclose}>{t.close}</button>
-        <button type="button" class="primary" disabled={busy} onclick={unprotect}
-          >{t.unprotectAction}</button
+        <button
+          type="button"
+          class="primary"
+          disabled={busy || (needsOwner && ownerToRemove === '')}
+          onclick={unprotect}>{t.unprotectAction}</button
         >
       </div>
     {:else}
@@ -94,6 +118,9 @@
       </label>
       {#if mismatch}
         <p class="error" role="alert">{t.protectMismatch}</p>
+      {/if}
+      {#if restricted && owner.trim() === ''}
+        <p class="muted">{t.protectNoOwnerWarning}</p>
       {/if}
       <fieldset>
         <legend>{t.protectPermissions}</legend>

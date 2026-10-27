@@ -54,6 +54,7 @@ pub fn run() {
             commands::export_images,
             commands::export_text,
             commands::security,
+            commands::optimize_preview,
             commands::attachments,
             commands::save_attachment,
             commands::compare_pages,

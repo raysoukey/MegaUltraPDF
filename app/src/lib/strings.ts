@@ -293,6 +293,11 @@ export const fr = {
   permissionAnnotate: 'Annoter et remplir',
   protectAction: 'Protéger',
   unprotectAction: 'Retirer la protection',
+  unprotectOwnerPassword: 'Mot de passe propriétaire',
+  unprotectOwnerHint:
+    'Ce document s’ouvre sans mot de passe mais garde des restrictions : saisissez le mot de passe propriétaire pour retirer la protection.',
+  protectNoOwnerWarning:
+    'Sans mot de passe propriétaire, quiconque connaît le mot de passe d’ouverture peut lever les restrictions.',
   protected: 'Document protégé.',
   unprotected: 'Protection retirée.',
   optimizeTitle: 'Optimiser…',
@@ -305,6 +310,10 @@ export const fr = {
   optimizeMaxPx: 'Dimension maximale (px)',
   optimizeCompressStreams: 'Compresser les flux non compressés',
   optimizeAction: 'Optimiser',
+  optimizeAnalyze: 'Analyser',
+  optimizeReport: (before: string, after: string, pct: number, images: number) =>
+    `${before} → ${after} (−${pct} %), ${images} image${images > 1 ? 's' : ''} recomprimée${images > 1 ? 's' : ''}`,
+  optimizeNothing: 'Rien à gagner : le document est déjà optimisé.',
   optimizeDone: 'Optimisation appliquée (annulable avec Ctrl+Z).',
   optimizeSaveHint:
     'Enregistrez pour écrire le fichier allégé ; la taille affichée dans Propriétés est celle du fichier sur disque.',

@@ -909,8 +909,10 @@ export async function protectDoc(doc: OpenDoc, protection: Protection): Promise<
   return ok;
 }
 
-export async function unprotectDoc(doc: OpenDoc): Promise<boolean> {
-  const ok = await applyEdit(doc, { kind: 'unprotect' });
+/** Retire la protection ; `password` saisi (fichier à mot de passe propriétaire seul) ou
+ *  `null` pour celui de l'ouverture. */
+export async function unprotectDoc(doc: OpenDoc, password: string | null = null): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'unprotect', password });
   if (ok) showNotice(t.unprotected);
   return ok;
 }

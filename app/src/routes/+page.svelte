@@ -199,6 +199,9 @@
     // annuler/rétablir y restent ceux du champ.
     if (typing && !e.ctrlKey && !e.key.startsWith('F') && e.key !== 'Escape') return;
     if (typing && (action === 'undo' || action === 'redo')) return;
+    // Ctrl+P n'imprime jamais la fenêtre telle quelle (impression native du WebView) : seule
+    // la vue d'impression le fait, même si un dialogue est ouvert.
+    if (action === 'print') e.preventDefault();
     // Un dialogue modal garde le clavier pour lui (sauf Échap).
     if (
       (docsState.closePrompt ||

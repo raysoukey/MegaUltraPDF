@@ -95,7 +95,9 @@ pub fn protect(
 /// Retire la protection de `file` ouvert avec `password` et écrit `out`.
 pub fn unprotect(file: &Path, password: Option<&str>, out: &Path) -> anyhow::Result<()> {
     let mut doc = Document::open(file, password)?;
-    doc.apply(&EditCommand::Unprotect)?;
+    doc.apply(&EditCommand::Unprotect {
+        password: password.map(str::to_string),
+    })?;
     doc.save_as(out)
         .with_context(|| format!("écriture de {}", out.display()))?;
     println!("Protection retirée : {}", out.display());

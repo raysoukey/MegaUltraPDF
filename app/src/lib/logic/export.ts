@@ -36,7 +36,7 @@ export function printScale(dpi: number): number {
 }
 
 /**
- * Décode la réponse binaire de `compare_pages` : 16 octets de compteurs (deux entiers
+ * Décode la réponse binaire de `compare_pages` : 24 octets de compteurs (deux entiers
  * 64 bits puis deux entiers 32 bits, petit-boutiste) suivis de l'image PNG.
  */
 export function parseCounters(raw: ArrayBuffer): ComparedPages {

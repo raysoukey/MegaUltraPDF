@@ -196,8 +196,12 @@ pub enum EditCommand {
         /// Mots de passe et permissions.
         protection: crate::security::Protection,
     },
-    /// Retire la protection (document ouvert avec son mot de passe).
-    Unprotect,
+    /// Retire la protection : avec le mot de passe saisi, sinon celui de l'ouverture.
+    Unprotect {
+        /// Mot de passe saisi (utilisateur ou propriétaire) ; `None` = celui de l'ouverture.
+        #[serde(default)]
+        password: Option<String>,
+    },
     /// Optimise le document (élagage, compression, images).
     Optimize {
         /// Réglages.
@@ -283,7 +287,7 @@ impl Command for EditCommand {
             EditCommand::CropPages { .. } => "Recadrer".to_string(),
             EditCommand::SetMetadata { .. } => "Modifier les métadonnées".to_string(),
             EditCommand::Protect { .. } => "Protéger le document".to_string(),
-            EditCommand::Unprotect => "Retirer la protection".to_string(),
+            EditCommand::Unprotect { .. } => "Retirer la protection".to_string(),
             EditCommand::Optimize { .. } => "Optimiser".to_string(),
             EditCommand::AddAttachment { path } => format!(
                 "Joindre : {}",
@@ -391,8 +395,18 @@ impl Command for EditCommand {
             EditCommand::CropPages { spec } => doc.crop_pages(spec),
             EditCommand::SetMetadata { patch } => doc.set_metadata(patch),
             EditCommand::Protect { protection } => doc.protect(protection),
-            EditCommand::Unprotect => doc.unprotect(),
-            EditCommand::Optimize { options } => doc.optimize(options).map(|_| ()),
+            EditCommand::Unprotect { password } => doc.unprotect_with(password.as_deref()),
+            EditCommand::Optimize { options } => {
+                // Sans gain, rien ne change : on refuse pour ne pas empiler une étape vide
+                // dans l'historique ni marquer le document « modifié ».
+                let report = doc.optimize(options)?;
+                if report.bytes_after >= report.bytes_before {
+                    return Err(CoreError::InvalidOperation(
+                        "le document est déjà optimisé : rien à gagner".to_string(),
+                    ));
+                }
+                Ok(())
+            }
             EditCommand::AddAttachment { path } => doc.add_attachment(Path::new(path)),
             EditCommand::DeleteAttachment { index } => doc.delete_attachment(*index),
         }

@@ -151,3 +151,23 @@ fn page_text_and_export_text() {
         Err(CoreError::PageOutOfRange { .. })
     ));
 }
+
+/// M3 (relecture) : sous Windows, `dir.join("C:x-1.png")` sort du dossier choisi et
+/// `a:b` crée un flux NTFS ; le préfixe refuse tout caractère interdit dans un nom.
+#[test]
+fn export_refuses_prefix_with_forbidden_characters() {
+    let doc = three();
+    let dir = tempfile::tempdir().unwrap();
+    for bad in [
+        "C:x", "a:b", "x*y", "a?b", "a\"b", "a<b", "a>b", "a|b", "a\u{7}b",
+    ] {
+        assert!(
+            matches!(
+                doc.export_images(&spec(ImageFormat::Png, 72), dir.path(), bad, true),
+                Err(CoreError::InvalidOperation(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}

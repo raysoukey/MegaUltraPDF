@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Filigrane, numérotation (en-tête / pied) et recadrage (ADR-0010).
+//! Filigrane, numérotation (en-tête / pied), recadrage (ADR-0010) et couche de texte
+//! invisible (OCR, Lot 8 : même technique, mode de rendu `3 Tr`).
 //!
 //! Filigrane et numéros sont des **flux de contenu ajoutés par `lopdf`** après le contenu
 //! existant : `q … Q` isole l'état graphique, un `ExtGState` porte l'opacité, une police
@@ -101,6 +102,27 @@ fn invalid(msg: &str) -> CoreError {
 
 fn structure(e: impl std::fmt::Display) -> CoreError {
     CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
+}
+
+/// Un mot de la couche de texte **invisible** (OCR) : son texte et sa boîte, en espace affiché
+/// (origine en bas à gauche de la page telle qu'on la voit). Le mot est étiré pour remplir la
+/// largeur de sa boîte, si bien que la recherche et la sélection tombent sur l'image du mot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InvisibleWord {
+    /// Le texte reconnu ; les caractères hors WinAnsi deviennent `?` à l'écriture.
+    pub text: String,
+    /// Boîte du mot, en points, espace affiché.
+    pub rect: Rect,
+}
+
+/// Part de la hauteur de boîte sous la ligne de base (jambages descendants d'Helvetica).
+const DESCENT_RATIO: f32 = 0.2;
+
+/// Le texte en WinAnsi, caractère par caractère, `?` pour ce qui n'est pas encodable.
+fn win_ansi_lossy(text: &str) -> String {
+    text.chars()
+        .map(|c| if win_ansi_byte(c).is_some() { c } else { '?' })
+        .collect()
 }
 
 /// Un texte prêt à écrire : page, contenu, style, matrice texte en coordonnées affichées.
@@ -337,6 +359,85 @@ impl Document {
         self.reload_from_bytes(bytes)
     }
 
+    /// Ajoute à la page une couche de texte **invisible** (mode de rendu `3 Tr`) : chaque mot
+    /// est placé dans sa boîte et étiré horizontalement (`Tz`) à sa largeur. Le rendu ne
+    /// change pas ; l'extraction, la recherche et la copie trouvent les mots (OCR).
+    pub fn add_invisible_words(&mut self, page: u16, words: &[InvisibleWord]) -> CoreResult<()> {
+        self.mark_changed();
+        let count = self.page_count();
+        if page >= count {
+            return Err(CoreError::PageOutOfRange { index: page, count });
+        }
+        let frame = self.page_frame(page)?;
+        // Mesures PDFium d'abord (le verrou n'est pas réentrant : rien de PDFium pendant la
+        // phase `lopdf`). Largeur à 100 pt, proportionnelle à la taille.
+        let mut ops = String::new();
+        for w in words {
+            let text = win_ansi_lossy(w.text.trim());
+            let r = w.rect;
+            if text.is_empty() || !(r.w > 0.0 && r.h > 0.0) || !(r.x.is_finite() && r.y.is_finite())
+            {
+                continue;
+            }
+            let width_100 = self.measure_width(&text, 100.0)?;
+            if width_100 <= 0.0 {
+                continue;
+            }
+            let size = r.h;
+            let natural = width_100 * size / 100.0;
+            let scale = 100.0 * r.w / natural;
+            let hex = hex_win_ansi(&text).ok_or_else(|| invalid("texte non encodable"))?;
+            ops.push_str(&format!(
+                "/{FONT_KEY} {} Tf\n{} Tz\n1 0 0 1 {} {} Tm\n{hex} Tj\n",
+                num(size),
+                num(scale),
+                num(r.x),
+                num(r.y + DESCENT_RATIO * r.h),
+            ));
+        }
+        if ops.is_empty() {
+            return Ok(());
+        }
+        let bytes = self.to_bytes()?;
+        let mut doc = LoDocument::load_mem(&bytes).map_err(structure)?;
+        if doc.is_encrypted() || doc.was_encrypted() {
+            return Err(invalid(
+                "couche de texte d'un PDF chiffré : non modifiable dans cette version",
+            ));
+        }
+        let page_id = *doc
+            .get_pages()
+            .get(&(u32::from(page) + 1))
+            .ok_or_else(|| structure("page introuvable"))?;
+        let font_id = doc.add_object(Object::Dictionary(Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Font".to_vec())),
+            ("Subtype", Object::Name(b"Type1".to_vec())),
+            ("BaseFont", Object::Name(b"Helvetica".to_vec())),
+            ("Encoding", Object::Name(b"WinAnsiEncoding".to_vec())),
+        ])));
+        ensure_resources(&mut doc, page_id, &[("Font", FONT_KEY, font_id)])?;
+        let m = frame.matrix_to_user_space();
+        let cm = if frame.is_identity() {
+            String::new()
+        } else {
+            format!(
+                "{} {} {} {} {} {} cm\n",
+                num(m[0]),
+                num(m[1]),
+                num(m[2]),
+                num(m[3]),
+                num(m[4]),
+                num(m[5])
+            )
+        };
+        let content = format!("\nq\n{cm}BT\n3 Tr\n{ops}ET\nQ\n");
+        let mut wrapped = BTreeSet::new();
+        append_content(&mut doc, page_id, &mut wrapped, content.into_bytes())?;
+        let mut out = Vec::new();
+        doc.save_to(&mut out)?;
+        self.reload_from_bytes(out)
+    }
+
     /// Écrit les textes dans le fichier (phase `lopdf`), puis recharge le document.
     fn apply_placements(&mut self, placements: Vec<Placement>) -> CoreResult<()> {
         let bytes = self.to_bytes()?;
@@ -373,7 +474,11 @@ impl Document {
                     (format!("{GS_PREFIX}{key}"), id)
                 })
                 .clone();
-            ensure_resources(&mut doc, page_id, font_id, &gs_name, gs_id)?;
+            ensure_resources(
+                &mut doc,
+                page_id,
+                &[("Font", FONT_KEY, font_id), ("ExtGState", &gs_name, gs_id)],
+            )?;
             let hex = hex_win_ansi(&p.text).ok_or_else(|| invalid("texte non encodable"))?;
             let m = p.frame.matrix_to_user_space();
             let cm = if p.frame.is_identity() {
@@ -431,14 +536,13 @@ fn inherited_resources(doc: &LoDocument, page: &Dictionary) -> Dictionary {
 }
 
 /// Donne à la page un dictionnaire `/Resources` **propre** (copie de l'hérité si besoin) qui
-/// référence notre police et notre état graphique. Les sous-dictionnaires `/Font` et
-/// `/ExtGState` partagés par référence sont copiés : on n'altère pas ceux des autres pages.
+/// référence nos objets (`entries` : sous-dictionnaire, nom, objet ; par exemple la police
+/// sous `/Font`). Les sous-dictionnaires partagés par référence sont copiés : on n'altère pas
+/// ceux des autres pages.
 fn ensure_resources(
     doc: &mut LoDocument,
     page_id: ObjectId,
-    font_id: ObjectId,
-    gs_name: &str,
-    gs_id: ObjectId,
+    entries: &[(&str, &str, ObjectId)],
 ) -> CoreResult<()> {
     let mut resources = {
         let page = doc.get_dictionary(page_id).map_err(structure)?;
@@ -451,7 +555,7 @@ fn ensure_resources(
             Err(_) => inherited_resources(doc, page),
         }
     };
-    for (key, name, id) in [("Font", FONT_KEY, font_id), ("ExtGState", gs_name, gs_id)] {
+    for &(key, name, id) in entries {
         let mut sub = resources
             .get(key.as_bytes())
             .ok()

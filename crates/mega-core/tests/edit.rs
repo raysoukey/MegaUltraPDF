@@ -474,8 +474,9 @@ fn save_after_an_edit_rewrites_the_file() {
 }
 
 #[test]
-fn undo_to_the_start_still_rewrites() {
-    // Choix documenté : après une édition, même annulée, le fichier est réécrit par PDFium.
+fn undo_back_to_the_saved_state_writes_the_file_bytes() {
+    // Revenir par « annuler » à l'état du fichier rend le document de nouveau intact : un
+    // PDF signé, modifié puis remis en l'état, garde sa signature à l'enregistrement.
     let dir = tempfile::tempdir().unwrap();
     let bytes = sample_pdf(2, "annulé");
     let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
@@ -483,7 +484,21 @@ fn undo_to_the_start_still_rewrites() {
     doc.undo().unwrap();
     let path = dir.path().join("annule.pdf");
     doc.save_as(&path).unwrap();
-    assert_ne!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    // Rétablir : de nouveau modifié, donc réécrit.
+    doc.redo().unwrap();
+    let again = dir.path().join("retabli.pdf");
+    doc.save_as(&again).unwrap();
+    assert_ne!(std::fs::read(&again).unwrap(), bytes);
+}
+
+#[test]
+fn file_bytes_survive_an_edit() {
+    // La vérification des signatures lit le fichier, pas une réécriture PDFium.
+    let bytes = sample_pdf(1, "fichier");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    doc.apply(&rotate_first()).unwrap();
+    assert_eq!(doc.file_bytes(), bytes.as_slice());
 }
 
 #[test]

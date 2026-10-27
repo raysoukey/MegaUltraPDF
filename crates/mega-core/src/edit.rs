@@ -537,7 +537,7 @@ impl Document {
         });
         self.history.position += 1;
         // Le document n'est plus celui du fichier : le prochain enregistrement le réécrit.
-        self.pristine = None;
+        self.changed = true;
         Ok(())
     }
 
@@ -549,7 +549,6 @@ impl Document {
 
     /// Annule la dernière édition.
     pub fn undo(&mut self) -> CoreResult<()> {
-        self.mark_changed();
         let Some(snapshot) = self.history.undo.pop_back() else {
             return Err(CoreError::InvalidOperation("rien à annuler".to_string()));
         };
@@ -567,6 +566,8 @@ impl Document {
             password,
         });
         self.history.position -= 1;
+        // De retour à l'état enregistré : de nouveau identique au fichier.
+        self.changed = self.is_modified();
         Ok(())
     }
 
@@ -585,7 +586,6 @@ impl Document {
 
     /// Rétablit la dernière édition annulée.
     pub fn redo(&mut self) -> CoreResult<()> {
-        self.mark_changed();
         let Some(snapshot) = self.history.redo.pop() else {
             return Err(CoreError::InvalidOperation("rien à rétablir".to_string()));
         };
@@ -602,6 +602,7 @@ impl Document {
             password,
         });
         self.history.position += 1;
+        self.changed = self.is_modified();
         Ok(())
     }
 
@@ -666,9 +667,9 @@ impl Document {
     /// l'original est intact.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> CoreResult<()> {
         let path = path.as_ref();
-        // Document intact : ses octets d'origine, tels quels (signatures préservées).
-        if let Some(bytes) = &self.pristine {
-            write_atomically(path, bytes)?;
+        // Document intact : les octets du fichier, tels quels (signatures préservées).
+        if !self.changed {
+            write_atomically(path, &self.file_bytes)?;
             self.set_path(Some(path.to_path_buf()));
             self.history.saved_position = Some(self.history.position);
             return Ok(());
@@ -691,7 +692,8 @@ impl Document {
         self.set_path(Some(path.to_path_buf()));
         self.history.saved_position = Some(self.history.position);
         // Ce qui vient d'être écrit est désormais l'état du fichier.
-        self.pristine = Some(bytes);
+        self.file_bytes = bytes;
+        self.changed = false;
         Ok(())
     }
 

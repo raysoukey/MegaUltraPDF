@@ -22,3 +22,9 @@ clap = { version = "4", features = ["derive"] }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+[features]
+# Le produit livré contient les options de `mega-core` (désactivées par défaut dans la bibliothèque).
+default = ["ocr", "signature"]
+ocr = ["mega-core/ocr"]
+signature = ["mega-core/signature"]

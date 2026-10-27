@@ -282,6 +282,7 @@ impl Document {
 
     /// Supprime l'objet `index` de la page (les index suivants reculent d'un cran).
     pub fn delete_object(&mut self, page: u16, index: u16) -> CoreResult<()> {
+        self.mark_changed();
         self.check_page_editable(page)?;
         let _guard = engine::guard();
         let mut pdf_page = self
@@ -299,6 +300,7 @@ impl Document {
     /// Déplace l'objet `index` de `(dx, dy)` points, en axes **affichés** (sur une page
     /// tournée, « vers la droite à l'écran » reste vers la droite à l'écran).
     pub fn move_object(&mut self, page: u16, index: u16, dx: f32, dy: f32) -> CoreResult<()> {
+        self.mark_changed();
         if !(dx.is_finite() && dy.is_finite()) {
             return Err(invalid("déplacement invalide"));
         }
@@ -324,6 +326,7 @@ impl Document {
     /// « au mieux », pas une recomposition). Refuse un texte vide ou trop long, et un objet
     /// qui n'est pas du texte.
     pub fn set_object_text(&mut self, page: u16, index: u16, text: &str) -> CoreResult<()> {
+        self.mark_changed();
         if text.trim().is_empty() {
             return Err(invalid("le texte ne peut pas être vide"));
         }
@@ -361,6 +364,7 @@ impl Document {
         text: &str,
         style: &TextStyle,
     ) -> CoreResult<()> {
+        self.mark_changed();
         if text.trim().is_empty() {
             return Err(invalid("le texte ne peut pas être vide"));
         }
@@ -436,6 +440,7 @@ impl Document {
     /// Insère l'image du fichier `path` (PNG ou JPEG, bornes de [`image`]) ajustée et
     /// centrée dans `rect` (points, espace **affiché**).
     pub fn insert_image(&mut self, page: u16, rect: Rect, path: &str) -> CoreResult<()> {
+        self.mark_changed();
         if !(rect.w > 0.0 && rect.h > 0.0 && rect.w.is_finite() && rect.h.is_finite()) {
             return Err(invalid("la zone de l'image est vide"));
         }

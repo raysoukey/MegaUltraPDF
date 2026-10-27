@@ -226,6 +226,7 @@ impl Document {
     /// Optimise le document ; le rapport dit ce qui a été fait. Si le résultat n'est pas plus
     /// petit, le document n'est pas modifié (`bytes_after == bytes_before`).
     pub fn optimize(&mut self, opts: &OptimizeOptions) -> CoreResult<OptimizeReport> {
+        self.mark_changed();
         if let Some(q) = opts.image_quality
             && !(10..=100).contains(&q)
         {

@@ -36,6 +36,13 @@ pub struct Document {
     password: Option<String>,
     /// Historique annuler / rétablir (module `edit`).
     pub(crate) history: crate::edit::History,
+    /// Octets exacts du fichier tant qu'aucune édition n'a été appliquée : `save` les écrit
+    /// tels quels, sans réécriture par PDFium, ce qui garde valides les signatures
+    /// numériques (elles couvrent des octets précis). `None` dès la première édition.
+    ///
+    /// \[Apprentissage\] `Option<Vec<u8>>` encode ici un état à deux cas, « intact » (avec
+    /// les octets) ou « modifié » (rien à garder) : pas besoin d'un booléen à côté.
+    pub(crate) pristine: Option<Vec<u8>>,
 }
 
 impl std::fmt::Debug for Document {
@@ -70,6 +77,7 @@ impl Document {
 
     /// Charge un PDF depuis des octets déjà en mémoire.
     pub fn from_bytes(bytes: Vec<u8>, password: Option<&str>) -> CoreResult<Document> {
+        let pristine = bytes.clone();
         let guard = engine::guard();
         let inner = match engine::load_bytes(&guard, bytes, password) {
             // PDFium ne distingue pas « pas de mot de passe » de « mauvais mot de passe ».
@@ -89,6 +97,7 @@ impl Document {
             path: None,
             password: password.map(str::to_string),
             history: crate::edit::History::new(crate::edit::HistoryLimits::default()),
+            pristine: Some(pristine),
         })
     }
 
@@ -168,6 +177,13 @@ impl Document {
 
     /// Remplace le document PDFium sous-jacent (annuler / rétablir) ; l'ancien est libéré
     /// sous le jeton que l'appelant tient.
+    /// Le document ne correspond plus aux octets du fichier : le prochain enregistrement le
+    /// réécrira. Appelée en tête de **toute** méthode publique qui modifie le document
+    /// (appels directs du CLI compris), en plus de `apply`.
+    pub(crate) fn mark_changed(&mut self) {
+        self.pristine = None;
+    }
+
     pub(crate) fn replace_inner(&mut self, inner: PdfDocument<'static>) {
         self.inner = Some(inner);
     }

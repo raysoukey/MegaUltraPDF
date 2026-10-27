@@ -183,6 +183,7 @@ impl Document {
 
     /// Pose un filigrane sur les pages visées.
     pub fn add_watermark(&mut self, w: &Watermark) -> CoreResult<()> {
+        self.mark_changed();
         check_text(&w.text)?;
         if !(w.size.is_finite() && (4.0..=400.0).contains(&w.size)) {
             return Err(invalid(
@@ -222,6 +223,7 @@ impl Document {
 
     /// Numérote les pages visées d'après le modèle.
     pub fn add_page_numbers(&mut self, n: &PageNumbering) -> CoreResult<()> {
+        self.mark_changed();
         if n.template.trim().is_empty() {
             return Err(invalid("le modèle ne peut pas être vide"));
         }
@@ -281,6 +283,7 @@ impl Document {
     /// Recadre les pages visées (`/CropBox`) par marges depuis la MediaBox, en points
     /// affichés ; quatre marges nulles retirent le recadrage.
     pub fn crop_pages(&mut self, c: &CropSpec) -> CoreResult<()> {
+        self.mark_changed();
         if c.margins.iter().any(|m| !m.is_finite() || *m < 0.0) {
             return Err(invalid("les marges doivent être positives ou nulles"));
         }

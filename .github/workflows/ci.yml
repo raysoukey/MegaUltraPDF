@@ -49,6 +49,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Rust — tests
         run: cargo test --workspace
+      - name: Rust — cœur sans les options (features désactivées)
+        run: cargo check -p mega-core --no-default-features
       - name: Rust — rustdoc
         run: cargo doc -p mega-core --no-deps
         env:

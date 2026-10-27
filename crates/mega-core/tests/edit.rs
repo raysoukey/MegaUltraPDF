@@ -436,3 +436,68 @@ fn form_commands_are_undoable() {
         Some("Dupont")
     );
 }
+
+// --- Octets intacts (Lot 8) : un document non modifié s'enregistre tel quel, ce qui garde
+// valides ses signatures numériques (PDFium réécrirait tout le fichier).
+
+fn rotate_first() -> EditCommand {
+    EditCommand::RotatePages {
+        pages: vec![0],
+        quarter_turns: 1,
+    }
+}
+
+#[test]
+fn untouched_save_writes_the_loaded_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = sample_pdf(3, "intact");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    let path = dir.path().join("intact.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    // Et encore après un premier enregistrement, tant que rien n'a changé.
+    let again = dir.path().join("encore.pdf");
+    doc.save_as(&again).unwrap();
+    assert_eq!(std::fs::read(&again).unwrap(), bytes);
+}
+
+#[test]
+fn save_after_an_edit_rewrites_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = sample_pdf(3, "édité");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    doc.apply(&rotate_first()).unwrap();
+    let path = dir.path().join("edite.pdf");
+    doc.save_as(&path).unwrap();
+    assert_ne!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(Document::open(&path, None).unwrap().page_count(), 3);
+}
+
+#[test]
+fn undo_to_the_start_still_rewrites() {
+    // Choix documenté : après une édition, même annulée, le fichier est réécrit par PDFium.
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = sample_pdf(2, "annulé");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    doc.apply(&rotate_first()).unwrap();
+    doc.undo().unwrap();
+    let path = dir.path().join("annule.pdf");
+    doc.save_as(&path).unwrap();
+    assert_ne!(std::fs::read(&path).unwrap(), bytes);
+}
+
+#[test]
+fn direct_mutation_then_save_writes_the_change() {
+    // Chemin du CLI (`mega rotate`, `mega redact`, `mega optimize`…) : appel direct, sans
+    // historique, puis `save_as`. Le fichier écrit doit contenir la modification.
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = sample_pdf(2, "direct");
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let path = dir.path().join("direct.pdf");
+    doc.save_as(&path).unwrap();
+    assert_ne!(std::fs::read(&path).unwrap(), bytes);
+    let reopened = Document::open(&path, None).unwrap();
+    let size = reopened.page_size(0).unwrap();
+    assert!(size.width_pt > size.height_pt, "page 1 tournée en paysage");
+}

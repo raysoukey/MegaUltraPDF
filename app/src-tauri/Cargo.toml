@@ -33,3 +33,9 @@ percent-encoding = "2"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 mega-core = { path = "../../crates/mega-core", features = ["testing"] }
+
+[features]
+# Le produit livré contient les options de `mega-core` (désactivées par défaut dans la bibliothèque).
+default = ["ocr", "signature"]
+ocr = ["mega-core/ocr"]
+signature = ["mega-core/signature"]

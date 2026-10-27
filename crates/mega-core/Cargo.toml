@@ -12,6 +12,11 @@ unsafe_code = "forbid"
 [features]
 # Génération de PDF d'exemple pour les tests (utilisée aussi par xtask et l'app en tests).
 testing = []
+# Options désactivées par défaut (Lot 8) : la bibliothèque n'embarque ce code que sur demande.
+# OCR par la commande externe `tesseract`, en couche de texte invisible.
+ocr = []
+# Signature numérique cryptographique (PKCS#12, CMS) et vérification des signatures.
+signature = []
 
 [dependencies]
 pdfium-render = "0.9.4"

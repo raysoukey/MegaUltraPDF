@@ -536,6 +536,8 @@ impl Document {
             password: password_before,
         });
         self.history.position += 1;
+        // Le document n'est plus celui du fichier : le prochain enregistrement le réécrit.
+        self.pristine = None;
         Ok(())
     }
 
@@ -547,6 +549,7 @@ impl Document {
 
     /// Annule la dernière édition.
     pub fn undo(&mut self) -> CoreResult<()> {
+        self.mark_changed();
         let Some(snapshot) = self.history.undo.pop_back() else {
             return Err(CoreError::InvalidOperation("rien à annuler".to_string()));
         };
@@ -582,6 +585,7 @@ impl Document {
 
     /// Rétablit la dernière édition annulée.
     pub fn redo(&mut self) -> CoreResult<()> {
+        self.mark_changed();
         let Some(snapshot) = self.history.redo.pop() else {
             return Err(CoreError::InvalidOperation("rien à rétablir".to_string()));
         };
@@ -662,6 +666,13 @@ impl Document {
     /// l'original est intact.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> CoreResult<()> {
         let path = path.as_ref();
+        // Document intact : ses octets d'origine, tels quels (signatures préservées).
+        if let Some(bytes) = &self.pristine {
+            write_atomically(path, bytes)?;
+            self.set_path(Some(path.to_path_buf()));
+            self.history.saved_position = Some(self.history.position);
+            return Ok(());
+        }
         // Chaque rendu avec annotations laisse dans le document PDFium des objets orphelins
         // (apparences de popup) que `save_to_bytes` écrirait. Recharger depuis les octets
         // courants ne garde que les objets atteignables : le fichier enregistré est propre,
@@ -679,6 +690,8 @@ impl Document {
         write_atomically(path, &bytes)?;
         self.set_path(Some(path.to_path_buf()));
         self.history.saved_position = Some(self.history.position);
+        // Ce qui vient d'être écrit est désormais l'état du fichier.
+        self.pristine = Some(bytes);
         Ok(())
     }
 

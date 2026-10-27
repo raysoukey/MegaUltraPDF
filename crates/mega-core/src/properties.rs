@@ -87,6 +87,7 @@ impl Document {
     /// `testing.rs`) : c'est le cas d'école de l'ADR-0003, un moteur pour lire et afficher,
     /// l'autre pour poser exactement les clés que la norme décrit (§14.3.3).
     pub fn set_metadata(&mut self, patch: &MetadataPatch) -> CoreResult<()> {
+        self.mark_changed();
         for (name, value) in [
             ("titre", &patch.title),
             ("auteur", &patch.author),

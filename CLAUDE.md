@@ -32,7 +32,11 @@ l'utilisateur apprend en le lisant.
   commentaires, docs `///`, notes, interface en **français**.
 - Première ligne de chaque `.rs`, `.ts`, `.js` : `// SPDX-License-Identifier: GPL-3.0-or-later`
   (`<!-- … -->` dans un `.svelte`). `#![forbid(unsafe_code)]` dans chaque crate.
-- Aucune chaîne visible en dur dans un composant : tout passe par `app/src/lib/strings.ts`.
+- Aucune chaîne visible en dur dans un composant : tout passe par `app/src/lib/strings.ts`,
+  **dans les deux dictionnaires** `fr` et `en` (même forme, vérifiée par `tsc` et un test).
+- Tout dialogue modal : `role="dialog" aria-modal="true" use:trapFocus` (un `<form>` est
+  enveloppé d'un `div`) et entrée dans la garde modale de `+page.svelte` ; tout menu
+  déroulant : `use:menuNav`. Boutons à glyphe : `aria-label` (ADR-0012).
 - Aucun appel réseau à l'exécution. Seul `cargo xtask fetch-pdfium` télécharge (en dev).
 - Pas de nouvelle dépendance sans raison écrite dans le message de commit.
 - Données venant d'un PDF = données non fiables (voir `display_safe` dans `mega-cli`).
@@ -78,6 +82,8 @@ pnpm --dir app lint       # eslint
 pnpm --dir app test       # vitest
 pnpm --dir app format     # prettier
 pnpm --dir app tauri dev -- -- fixtures/simple.pdf   # lance l'app sur un fichier
+pnpm --dir app release    # paquets avec PDFium embarqué (surcouche tauri.release.conf.json)
+cargo xtask licenses      # regénère licenses.json et THIRD_PARTY_LICENSES.md
 cargo run -p mega-cli -- info fixtures/simple.pdf
 ```
 
@@ -93,8 +99,12 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   la CSP (`tauri.conf.json`) autorise les deux formes. `convertFileSrc` percent-encode le chemin.
 - La DLL PDFium vient de `cargo xtask fetch-pdfium` (`vendor/pdfium/<triple>/`, non commitée).
   Sans elle : `CoreError::LibraryNotFound`. **En profil `release`**, ce dossier n'est plus
-  cherché (`cfg!(debug_assertions)`) : la DLL doit être à côté de l'exécutable ou désignée
-  par `MEGA_PDFIUM_DIR` (le bundler du Lot 7 s'en chargera).
+  cherché (`cfg!(debug_assertions)`) : l'application installée trouve PDFium dans ses
+  ressources (`resources/pdfium/`, réglé par `engine::set_library_dir` dans `run()` avant
+  l'acteur), la version portable à côté de l'exécutable, sinon `MEGA_PDFIUM_DIR`.
+- Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
+  produirait un paquet sans PDFium). Les ressources sont dans la surcouche
+  `tauri.release.conf.json` car `tauri-build` les exige à chaque compilation.
 - `pdfium-render` 0.9 : `PdfPageIndex` est `i32`, pas de setter de métadonnées
   (voir `mega-core/src/testing.rs` pour le squelette PDF écrit à la main).
 - Les métadonnées d'un PDF sont du texte PDFDocEncoding ou UTF-16BE+BOM, jamais de l'UTF-8 brut.

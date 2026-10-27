@@ -19,7 +19,29 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | 4 | Formulaires (champs HTML natifs, remplissage, aplatir, XFA détecté) et signature visuelle | ✅ |
 | 5 | Édition de contenu (objets de page, texte et images, caviardage réel, filigrane, numérotation, recadrage, pages tournées) | ✅ |
 | 6 | Export (images, texte), impression, métadonnées, protection AES-256, optimisation, pièces jointes, comparaison | ✅ |
-| 7 | Finition et distribution | ⬜ |
+| 7 | Finition et distribution (interface FR/EN, accessibilité, préférences, aide, licences, installeurs) | ✅ |
+| 8 | Options avancées : OCR, signature numérique cryptographique | ⬜ |
+
+## Installation
+
+Les paquets sont produits par la CI (`.github/workflows/release.yml`) et joints aux releases
+GitHub : installeur NSIS ou MSI et version portable (zip) pour Windows, deb et AppImage pour
+Linux, dmg pour macOS (Apple Silicon). PDFium est inclus.
+
+Les paquets ne sont **pas signés** : Windows affiche un avertissement SmartScreen
+(« Informations complémentaires » puis « Exécuter quand même ») ; macOS demande d'ouvrir
+l'application par clic droit > Ouvrir la première fois.
+
+Construire un paquet soi-même (après le démarrage rapide ci-dessous) :
+
+```bash
+pnpm --dir app release                 # tous les paquets de la plateforme courante
+pnpm --dir app release --bundles nsis  # seulement l'installeur NSIS
+```
+
+`release` prépare PDFium (`cargo xtask stage-pdfium`) et l'embarque ; un `pnpm tauri build`
+direct produirait un paquet sans PDFium. Les licences tierces sont regénérées par
+`cargo xtask licenses` (`THIRD_PARTY_LICENSES.md`).
 
 ## Prérequis (développement)
 
@@ -90,6 +112,8 @@ scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/contenu.json    
 scripts/ui-check.ps1 -Pdf copie-rotated.pdf -Scenario scripts/scenarios/rotation.json # page /Rotate 90
 scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/export-securite.json  # Lot 6 (modifie et chiffre la copie)
 scripts/ui-check.ps1 -Pdf copie-pj.pdf -Scenario scripts/scenarios/pieces-jointes.json
+scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/finition.json       # Lot 7 : clavier, langue, aide
+scripts/ui-check.ps1 -Exe <dossier installé>\mega-app.exe -Pdf fixtures/simple.pdf -Scenario scripts/scenarios/lecteur-simple.json
 ```
 
 Lance l'application avec le port de débogage WebView2, déroule un scénario (clics, touches,

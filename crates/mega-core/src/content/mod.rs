@@ -66,42 +66,46 @@ pub struct TextStyle {
     pub color: Color,
 }
 
-/// Vrai si `c` existe dans l'encodage WinAnsi (cp1252), celui des polices Standard 14 non
-/// embarquées : ASCII imprimable, Latin-1, et les quelques signes typographiques de la plage
-/// 0x80-0x9F (€, guillemets courbes, tirets, …, œ, Œ, ™).
+/// Octet WinAnsi (cp1252) de `c`, l'encodage des polices Standard 14 non embarquées :
+/// ASCII imprimable et Latin-1 tels quels, plus les signes typographiques de la plage
+/// 0x80-0x9F (€, guillemets courbes, tirets, …, œ, Œ, ™). `None` si le caractère n'y est pas.
+pub(crate) fn win_ansi_byte(c: char) -> Option<u8> {
+    let special = match c {
+        '€' => 0x80,
+        '‚' => 0x82,
+        'ƒ' => 0x83,
+        '„' => 0x84,
+        '…' => 0x85,
+        '†' => 0x86,
+        '‡' => 0x87,
+        'ˆ' => 0x88,
+        '‰' => 0x89,
+        'Š' => 0x8A,
+        '‹' => 0x8B,
+        'Œ' => 0x8C,
+        'Ž' => 0x8E,
+        '‘' => 0x91,
+        '’' => 0x92,
+        '“' => 0x93,
+        '”' => 0x94,
+        '•' => 0x95,
+        '–' => 0x96,
+        '—' => 0x97,
+        '˜' => 0x98,
+        '™' => 0x99,
+        'š' => 0x9A,
+        '›' => 0x9B,
+        'œ' => 0x9C,
+        'ž' => 0x9E,
+        'Ÿ' => 0x9F,
+        ' '..='~' | '\u{A0}'..='\u{FF}' => return u8::try_from(u32::from(c)).ok(),
+        _ => return None,
+    };
+    Some(special)
+}
+
 fn is_win_ansi(c: char) -> bool {
-    matches!(
-        c,
-        ' '..='~'
-            | '\u{A0}'..='\u{FF}'
-            | '€'
-            | '‚'
-            | 'ƒ'
-            | '„'
-            | '…'
-            | '†'
-            | '‡'
-            | 'ˆ'
-            | '‰'
-            | 'Š'
-            | '‹'
-            | 'Œ'
-            | 'Ž'
-            | '‘'
-            | '’'
-            | '“'
-            | '”'
-            | '•'
-            | '–'
-            | '—'
-            | '˜'
-            | '™'
-            | 'š'
-            | '›'
-            | 'œ'
-            | 'ž'
-            | 'Ÿ'
-    )
+    win_ansi_byte(c).is_some()
 }
 
 /// Nature d'un objet de page.

@@ -171,6 +171,21 @@ pub enum EditCommand {
         /// Zone (points, espace affiché).
         rect: Rect,
     },
+    /// Pose un filigrane.
+    Watermark {
+        /// Texte, style, pages.
+        spec: crate::overlay::Watermark,
+    },
+    /// Numérote les pages (en-tête ou pied à base de modèle).
+    PageNumbers {
+        /// Modèle, position, pages.
+        spec: crate::overlay::PageNumbering,
+    },
+    /// Recadre des pages (`/CropBox`).
+    CropPages {
+        /// Marges et pages.
+        spec: crate::overlay::CropSpec,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -236,6 +251,9 @@ impl Command for EditCommand {
             EditCommand::InsertText { .. } => "Insérer du texte".to_string(),
             EditCommand::InsertImage { .. } => "Insérer une image".to_string(),
             EditCommand::Redact { .. } => "Caviarder".to_string(),
+            EditCommand::Watermark { .. } => "Filigraner".to_string(),
+            EditCommand::PageNumbers { .. } => "Numéroter".to_string(),
+            EditCommand::CropPages { .. } => "Recadrer".to_string(),
         }
     }
 
@@ -267,6 +285,9 @@ impl Command for EditCommand {
                 .map(|f| format!("Remplir : {}", f.name)),
             EditCommand::DeleteObject { page, index } => object("Supprimer", *page, *index),
             EditCommand::MoveObject { page, index, .. } => object("Déplacer", *page, *index),
+            EditCommand::Watermark { spec } => Some(pages_label("Filigraner", &spec.pages, doc)),
+            EditCommand::PageNumbers { spec } => Some(pages_label("Numéroter", &spec.pages, doc)),
+            EditCommand::CropPages { spec } => Some(pages_label("Recadrer", &spec.pages, doc)),
             _ => None,
         };
         label.unwrap_or_else(|| self.label())
@@ -321,8 +342,20 @@ impl Command for EditCommand {
             } => doc.insert_text(*page, *at, text, style),
             EditCommand::InsertImage { page, rect, path } => doc.insert_image(*page, *rect, path),
             EditCommand::Redact { page, rect } => doc.redact(*page, *rect).map(|_| ()),
+            EditCommand::Watermark { spec } => doc.add_watermark(spec),
+            EditCommand::PageNumbers { spec } => doc.add_page_numbers(spec),
+            EditCommand::CropPages { spec } => doc.crop_pages(spec),
         }
     }
+}
+
+/// « Verbe N page(s) » pour une commande qui vise une liste de pages (toutes si `None`).
+fn pages_label(verb: &str, pages: &Option<Vec<u16>>, doc: &Document) -> String {
+    let n = match pages {
+        Some(list) => list.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        None => usize::from(doc.page_count()),
+    };
+    format!("{verb} {}", plural(n, "page", "pages"))
 }
 
 /// Bornes de l'historique.

@@ -46,6 +46,7 @@ pub mod forms;
 pub mod geometry;
 pub mod links;
 pub mod outline;
+pub mod overlay;
 pub mod pages;
 pub mod pagespec;
 pub mod properties;
@@ -69,6 +70,7 @@ pub use forms::{
 pub use geometry::{PageFrame, Rect, Rotation};
 pub use links::{LinkTarget, PageLink};
 pub use outline::OutlineNode;
+pub use overlay::{Corner, CropSpec, PageNumbering, Watermark};
 pub use pagespec::PageSpec;
 pub use properties::DocumentProperties;
 pub use render::RenderedPage;

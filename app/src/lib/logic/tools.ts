@@ -18,7 +18,12 @@ export type Tool =
   | 'line'
   | 'arrow'
   | 'stamp'
-  | 'signature';
+  | 'signature'
+  // Outils de contenu (Lot 5), pris en charge par `ObjectLayer`, pas par le calque d'annotation.
+  | 'objects'
+  | 'text-content'
+  | 'image'
+  | 'redact';
 
 export interface Pt {
   x: number;
@@ -31,13 +36,18 @@ export interface Draft {
   points: Pt[];
 }
 
-/** Outils qui dessinent sur le calque (les autres agissent sur la sélection de texte). */
+/** Outils qui dessinent une annotation sur le calque (les marquages agissent sur la
+ *  sélection de texte ; les outils de contenu ont leur propre calque). */
 export function isDrawingTool(tool: Tool): boolean {
   return !(
     tool === 'select' ||
     tool === 'highlight' ||
     tool === 'underline' ||
-    tool === 'strikeout'
+    tool === 'strikeout' ||
+    tool === 'objects' ||
+    tool === 'text-content' ||
+    tool === 'image' ||
+    tool === 'redact'
   );
 }
 

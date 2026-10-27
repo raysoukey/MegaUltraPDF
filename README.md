@@ -17,7 +17,8 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | 2 | Pages et documents (pivoter, supprimer, réordonner, extraire, insérer, fusionner, scinder, enregistrer, annuler/rétablir) | ✅ |
 | 3 | Annotations (marquages de texte, notes, texte, encre, formes, tampons ; panneau ; rendu des annotations existantes) | ✅ |
 | 4 | Formulaires (champs HTML natifs, remplissage, aplatir, XFA détecté) et signature visuelle | ✅ |
-| 5 → 7 | Édition de contenu, export/sécurité, finition | ⬜ |
+| 5 | Édition de contenu (objets de page, texte et images, caviardage réel, filigrane, numérotation, recadrage, pages tournées) | ✅ |
+| 6 → 7 | Export/sécurité, finition | ⬜ |
 
 ## Prérequis (développement)
 
@@ -59,6 +60,11 @@ cargo run -p mega-cli -- extract rapport.pdf --pages 2-3 -o extrait.pdf
 cargo run -p mega-cli -- annots rapport.pdf --page 1                      # liste les annotations
 cargo run -p mega-cli -- fields formulaire.pdf                             # liste les champs
 cargo run -p mega-cli -- flatten formulaire.pdf -o plat.pdf                # aplatit
+cargo run -p mega-cli -- objects rapport.pdf --page 1                     # objets du contenu
+cargo run -p mega-cli -- redact rapport.pdf --page 1 --rect 60,740,200,40 -o caviarde.pdf
+cargo run -p mega-cli -- watermark rapport.pdf --text BROUILLON -o marque.pdf
+cargo run -p mega-cli -- number rapport.pdf --template "{n} / {total}" --corner bottom_center -o numerote.pdf
+cargo run -p mega-cli -- crop rapport.pdf --margins 50,50,50,50 --pages 1 -o rogne.pdf
 ```
 
 Toutes les écritures sont atomiques (fichier temporaire puis renommage) : un échec ne laisse
@@ -71,6 +77,8 @@ scripts/ui-check.ps1 -Pdf fixtures/simple.pdf -Scenario scripts/scenarios/lecteu
 scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/edition-pages.json   # modifie le fichier !
 scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/annotation.json      # idem
 scripts/ui-check.ps1 -Pdf copie-form.pdf -Scenario scripts/scenarios/formulaire.json  # idem
+scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/contenu.json         # idem (Lot 5)
+scripts/ui-check.ps1 -Pdf copie-rotated.pdf -Scenario scripts/scenarios/rotation.json # page /Rotate 90
 ```
 
 Lance l'application avec le port de débogage WebView2, déroule un scénario (clics, touches,

@@ -36,6 +36,8 @@
 )]
 
 pub mod annotations;
+pub mod cleanup;
+pub mod content;
 pub mod document;
 pub mod edit;
 pub mod engine;
@@ -44,6 +46,7 @@ pub mod forms;
 pub mod geometry;
 pub mod links;
 pub mod outline;
+pub mod overlay;
 pub mod pages;
 pub mod pagespec;
 pub mod properties;
@@ -56,15 +59,18 @@ pub mod text;
 pub use annotations::{
     Annotation, AnnotationKind, AnnotationPatch, Color, Geometry, NewAnnotation, Style,
 };
+pub use content::redact::RedactReport;
+pub use content::{FontFamily, ObjectKind, PageObject, TextStyle};
 pub use document::{Document, PageSize};
 pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};
 pub use forms::{
     FieldKind, FieldOption, FieldValue, FormField, FormInfo, FormType, SignatureSource,
 };
-pub use geometry::{Rect, Rotation};
+pub use geometry::{PageFrame, Rect, Rotation};
 pub use links::{LinkTarget, PageLink};
 pub use outline::OutlineNode;
+pub use overlay::{Corner, CropSpec, PageNumbering, Watermark};
 pub use pagespec::PageSpec;
 pub use properties::DocumentProperties;
 pub use render::RenderedPage;

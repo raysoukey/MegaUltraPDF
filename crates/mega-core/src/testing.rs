@@ -273,6 +273,171 @@ fn form_pdf_impl(need_appearances: bool) -> Vec<u8> {
     )
 }
 
+/// Une page **tournée** : MediaBox 400 × 600 avec `/Rotate 90` (affichée 600 × 400), le
+/// texte « Page 1 » en haut à gauche de l'espace utilisateur, et un champ texte `nom`
+/// (`/Rect [50 500 250 530]`). Sert à vérifier la conversion espace affiché ↔ utilisateur.
+pub fn rotated_pdf() -> Vec<u8> {
+    let content = "BT /Helv 24 Tf 72 560 Td (Page 1) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] /NeedAppearances true          /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 600] /Rotate 90          /Resources << /Font << /Helv 4 0 R >> >> /Contents 5 0 R /Annots [6 0 R] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        format!(
+            "<< /Length {} >>
+stream
+{content}
+endstream",
+            content.len()
+        ),
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (nom) /V () /Rect [50 500 250 530] /F 4          /DA (/Helv 12 Tf 0 g) /MK << /BC [0 0 0] >> >>"
+            .to_string(),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Page tournée")
+        ),
+    )
+}
+
+/// Une page A4 « riche » pour le caviardage : deux lignes de texte (« Secret 123 » en
+/// (72, 700), « Public » en (72, 650)), une image 2 × 2 posée en (300, 680) sur 100 × 50,
+/// un chemin bleu en (72, 500) et une annotation `Square` tierce qui couvre la première ligne.
+pub fn rich_pdf() -> Vec<u8> {
+    let content = "BT /Helv 24 Tf 72 700 Td (Secret 123) Tj ET                    BT /Helv 24 Tf 72 650 Td (Public) Tj ET                    q 100 0 0 50 300 680 cm /Im1 Do Q                    0 0 1 rg 72 500 100 40 re f";
+    let pixels = "00FF FF00>";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842]          /Resources << /Font << /Helv 4 0 R >> /XObject << /Im1 6 0 R >> >>          /Contents 5 0 R /Annots [7 0 R] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        format!(
+            "<< /Length {} >>
+stream
+{content}
+endstream",
+            content.len()
+        ),
+        format!(
+            "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray              /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length {} >>
+stream
+{pixels}
+endstream",
+            pixels.len()
+        ),
+        "<< /Type /Annot /Subtype /Square /Rect [60 690 250 730] /F 4 /C [1 0 0] >>".to_string(),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Document riche")
+        ),
+    )
+}
+
+/// Une page dont le seul texte (« Cache ») est dessiné **à travers un formulaire XObject**
+/// (`/Fx1 Do`), comme le produit un aplatissement de formulaire ou une page importée : le
+/// caviardage par objets ne peut pas l'atteindre et doit le signaler.
+pub fn xobject_text_pdf() -> Vec<u8> {
+    let content = "q /Fx1 Do Q";
+    let form = "BT /Helv 24 Tf 72 700 Td (Cache) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /XObject << /Fx1 5 0 R >> >> /Contents 4 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 595 842] \
+             /Resources << /Font << /Helv 6 0 R >> >> /Length {} >>\nstream\n{form}\nendstream",
+            form.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Texte en XObject")
+        ),
+    )
+}
+
+/// Contenus que la régénération de flux de PDFium **perd ou casse** (relecture pdf-expert) :
+/// `kind` vaut `"type3"` (texte en police Type 3), `"inline"` (image en ligne `BI … EI`) ou
+/// `"shading"` (ombrage `sh`). Chaque page porte aussi un texte Helvetica ordinaire.
+///
+/// # Panics
+/// Si `kind` n'est pas l'un des trois noms (générateur de tests).
+pub fn fragile_content_pdf(kind: &str) -> Vec<u8> {
+    let (content, extra_resource, extra_objects): (String, String, Vec<String>) = match kind {
+        "type3" => (
+            "BT /Helv 24 Tf 72 700 Td (Texte) Tj ET BT /T3 48 Tf 72 600 Td (a) Tj ET".to_string(),
+            "/Font << /Helv 4 0 R /T3 6 0 R >>".to_string(),
+            vec![
+                "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 750 750] \
+                 /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /square 7 0 R >> \
+                 /Encoding << /Type /Encoding /Differences [97 /square] >> \
+                 /FirstChar 97 /LastChar 97 /Widths [1000] /Resources << >> >>"
+                    .to_string(),
+                {
+                    let glyph = "1000 0 0 0 750 750 d1 0 0 750 750 re f";
+                    format!("<< /Length {} >>\nstream\n{glyph}\nendstream", glyph.len())
+                },
+            ],
+        ),
+        "inline" => (
+            "BT /Helv 24 Tf 72 700 Td (Texte) Tj ET \
+             q 100 0 0 50 300 680 cm BI /W 2 /H 2 /CS /G /BPC 8 /F /AHx ID 00FFFF00> EI Q"
+                .to_string(),
+            "/Font << /Helv 4 0 R >>".to_string(),
+            vec![],
+        ),
+        "shading" => (
+            "BT /Helv 24 Tf 72 700 Td (Texte) Tj ET q 72 500 200 50 re W n /Sh1 sh Q".to_string(),
+            "/Font << /Helv 4 0 R >> /Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceRGB \
+             /Coords [72 0 272 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] \
+             /C1 [0 0 1] /N 1 >> /Extend [true true] >> >>"
+                .to_string(),
+            vec![],
+        ),
+        other => panic!("contenu fragile inconnu : {other}"),
+    };
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << {extra_resource} >> \
+             /Contents 5 0 R >>"
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+    ];
+    objects.extend(extra_objects);
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Contenu fragile")
+        ),
+    )
+}
+
 /// Un champ texte **séparé de son widget** (dictionnaire de champ parent + widget enfant),
 /// comme en produisent iText ou LibreOffice : `/V` vit sur le parent.
 pub fn form_parent_kid_pdf() -> Vec<u8> {

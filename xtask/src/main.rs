@@ -69,9 +69,11 @@ fn fetch_pdfium(args: &[String]) -> anyhow::Result<()> {
 
 /// Écrit `fixtures/simple.pdf` : 3 pages A4 titrées, générées par `mega-core`.
 ///
-/// `fixtures/encrypted.pdf` n'est pas régénéré ici : PDFium ne sait pas chiffrer.
-/// Il a été produit une fois avec `qpdf --encrypt --user-password=secret
-/// --owner-password=secret --bits=256 -- simple.pdf encrypted.pdf`.
+/// `fixtures/encrypted.pdf` et `fixtures/owner-only.pdf` ne sont pas régénérés ici : PDFium
+/// ne sait pas chiffrer. Ils ont été produits une fois avec `qpdf --encrypt --user-password=secret
+/// --owner-password=secret --bits=256 -- simple.pdf encrypted.pdf` et, pour la protection par
+/// mot de passe propriétaire seul (s'ouvre sans mot de passe), `qpdf --encrypt "" secret 256 --
+/// simple.pdf owner-only.pdf`.
 fn gen_fixtures() -> anyhow::Result<()> {
     let dir = workspace_root().join("fixtures");
     std::fs::create_dir_all(&dir)?;
@@ -93,5 +95,8 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let xfa = dir.join("xfa.pdf");
     std::fs::write(&xfa, mega_core::testing::xfa_pdf())?;
     println!("écrit : {}", xfa.display());
+    let rotated = dir.join("rotated.pdf");
+    std::fs::write(&rotated, mega_core::testing::rotated_pdf())?;
+    println!("écrit : {}", rotated.display());
     Ok(())
 }

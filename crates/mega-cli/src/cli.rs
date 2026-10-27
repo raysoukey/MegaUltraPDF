@@ -146,4 +146,104 @@ pub enum Command {
         #[arg(long)]
         password: Option<String>,
     },
+    /// Liste les objets du contenu (textes, images, tracés) d'un PDF.
+    Objects {
+        /// Fichier PDF à inspecter.
+        file: PathBuf,
+        /// Page (à partir de 1) ; toutes si absent.
+        #[arg(long)]
+        page: Option<u16>,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Caviarde une zone d'une page (le contenu disparaît du fichier) vers un nouveau fichier.
+    Redact {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Page (à partir de 1).
+        #[arg(long)]
+        page: u16,
+        /// Zone « x,y,w,h » en points, origine en bas à gauche de la page affichée.
+        #[arg(long)]
+        rect: String,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Pose un filigrane texte en diagonale vers un nouveau fichier.
+    Watermark {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Le texte du filigrane.
+        #[arg(long)]
+        text: String,
+        /// Taille de police en points.
+        #[arg(long, default_value_t = 60.0)]
+        size: f32,
+        /// Opacité, de 0 (exclu) à 1.
+        #[arg(long, default_value_t = 0.3)]
+        opacity: f32,
+        /// Inclinaison en degrés.
+        #[arg(long, default_value_t = 45.0)]
+        angle: f32,
+        /// Pages visées (ex. « 1,3-4 ») ; toutes si absent.
+        #[arg(long)]
+        pages: Option<String>,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Numérote les pages (modèle `{n}`, `{total}`, `{titre}`) vers un nouveau fichier.
+    Number {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Modèle du texte.
+        #[arg(long, default_value = "{n} / {total}")]
+        template: String,
+        /// Position : top_left, top_center, top_right, bottom_left, bottom_center, bottom_right.
+        #[arg(long, default_value = "bottom_center")]
+        corner: String,
+        /// Marge depuis les bords, en points.
+        #[arg(long, default_value_t = 28.0)]
+        margin: f32,
+        /// Taille de police en points.
+        #[arg(long, default_value_t = 10.0)]
+        size: f32,
+        /// Numéro de la première page.
+        #[arg(long, default_value_t = 1)]
+        start: u16,
+        /// Pages visées (ex. « 2-10 ») ; toutes si absent.
+        #[arg(long)]
+        pages: Option<String>,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Recadre des pages par marges « gauche,bas,droite,haut » (0,0,0,0 réinitialise).
+    Crop {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Marges en points, depuis la page entière.
+        #[arg(long)]
+        margins: String,
+        /// Pages visées (ex. « 1 ») ; toutes si absent.
+        #[arg(long)]
+        pages: Option<String>,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
 }

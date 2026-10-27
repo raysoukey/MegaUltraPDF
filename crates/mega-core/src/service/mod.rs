@@ -125,6 +125,12 @@ enum Request {
         page: u16,
         reply: SyncSender<CoreResult<Vec<crate::annotations::Annotation>>>,
     },
+    /// Objets du contenu d'une page (Lot 5).
+    PageObjects {
+        id: DocId,
+        page: u16,
+        reply: SyncSender<CoreResult<Vec<crate::content::PageObject>>>,
+    },
     Links {
         id: DocId,
         page: u16,
@@ -353,6 +359,15 @@ impl ServiceHandle {
         self.call(|reply| Request::Annotations { id, page, reply })
     }
 
+    /// Objets du contenu d'une page (voir `Document::page_objects`).
+    pub fn page_objects(
+        &self,
+        id: DocId,
+        page: u16,
+    ) -> CoreResult<Vec<crate::content::PageObject>> {
+        self.call(|reply| Request::PageObjects { id, page, reply })
+    }
+
     /// Liens d'une page.
     pub fn links(&self, id: DocId, page: u16) -> CoreResult<Vec<PageLink>> {
         self.call(|reply| Request::Links { id, page, reply })
@@ -571,6 +586,9 @@ impl Actor {
             }
             Request::Annotations { id, page, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.annotations(page)));
+            }
+            Request::PageObjects { id, page, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.page_objects(page)));
             }
             Request::Outline { id, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.outline()));

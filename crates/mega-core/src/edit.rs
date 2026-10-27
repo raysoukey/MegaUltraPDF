@@ -116,6 +116,76 @@ pub enum EditCommand {
         /// Image ou traits.
         source: SignatureSource,
     },
+    /// Supprime un objet du contenu d'une page (Lot 5).
+    DeleteObject {
+        /// Page.
+        page: u16,
+        /// Position de l'objet dans le flux de contenu.
+        index: u16,
+    },
+    /// Déplace un objet du contenu, en axes affichés.
+    MoveObject {
+        /// Page.
+        page: u16,
+        /// Position de l'objet.
+        index: u16,
+        /// Déplacement horizontal (points).
+        dx: f32,
+        /// Déplacement vertical (points, positif vers le haut).
+        dy: f32,
+    },
+    /// Remplace le texte d'un objet texte.
+    SetObjectText {
+        /// Page.
+        page: u16,
+        /// Position de l'objet.
+        index: u16,
+        /// Nouveau texte.
+        text: String,
+    },
+    /// Insère un bloc de texte dans le contenu d'une page.
+    InsertText {
+        /// Page.
+        page: u16,
+        /// Coin haut-gauche du bloc (points, espace affiché).
+        at: [f32; 2],
+        /// Le texte (une ligne par `\n`).
+        text: String,
+        /// Police, taille, couleur.
+        style: crate::content::TextStyle,
+    },
+    /// Insère une image dans le contenu d'une page.
+    InsertImage {
+        /// Page.
+        page: u16,
+        /// Zone d'accueil (l'image y est ajustée et centrée).
+        rect: Rect,
+        /// Chemin du fichier PNG ou JPEG.
+        path: String,
+    },
+    /// Caviarde une zone : retire textes, images et annotations qui la touchent, puis la
+    /// recouvre de noir.
+    Redact {
+        /// Page.
+        page: u16,
+        /// Zone (points, espace affiché).
+        rect: Rect,
+    },
+    /// Pose un filigrane.
+    Watermark {
+        /// Texte, style, pages.
+        spec: crate::overlay::Watermark,
+    },
+    /// Numérote les pages (en-tête ou pied à base de modèle).
+    PageNumbers {
+        /// Modèle, position, pages.
+        spec: crate::overlay::PageNumbering,
+    },
+    /// Recadre des pages (`/CropBox`).
+    CropPages {
+        /// Marges et pages.
+        spec: crate::overlay::CropSpec,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -175,6 +245,15 @@ impl Command for EditCommand {
             EditCommand::SetFieldValue { .. } => "Remplir un champ".to_string(),
             EditCommand::FlattenForm => "Aplatir le formulaire".to_string(),
             EditCommand::InsertSignature { .. } => "Apposer une signature".to_string(),
+            EditCommand::DeleteObject { .. } => "Supprimer : Objet".to_string(),
+            EditCommand::MoveObject { .. } => "Déplacer : Objet".to_string(),
+            EditCommand::SetObjectText { .. } => "Modifier le texte".to_string(),
+            EditCommand::InsertText { .. } => "Insérer du texte".to_string(),
+            EditCommand::InsertImage { .. } => "Insérer une image".to_string(),
+            EditCommand::Redact { .. } => "Caviarder".to_string(),
+            EditCommand::Watermark { .. } => "Filigraner".to_string(),
+            EditCommand::PageNumbers { .. } => "Numéroter".to_string(),
+            EditCommand::CropPages { .. } => "Recadrer".to_string(),
         }
     }
 
@@ -184,6 +263,12 @@ impl Command for EditCommand {
                 .ok()
                 .and_then(|a| a.into_iter().find(|a| a.index == index))
                 .map(|a| format!("{verb} : {}", a.kind.label_fr()))
+        };
+        let object = |verb: &str, page: u16, index: u16| {
+            doc.page_objects(page)
+                .ok()
+                .and_then(|o| o.into_iter().find(|o| o.index == index))
+                .map(|o| format!("{verb} : {}", o.kind.label_fr()))
         };
         let label = match self {
             EditCommand::DeleteAnnotation { page, index } => annotation("Supprimer", *page, *index),
@@ -198,6 +283,11 @@ impl Command for EditCommand {
                 .ok()
                 .and_then(|f| f.into_iter().find(|f| f.index == *index))
                 .map(|f| format!("Remplir : {}", f.name)),
+            EditCommand::DeleteObject { page, index } => object("Supprimer", *page, *index),
+            EditCommand::MoveObject { page, index, .. } => object("Déplacer", *page, *index),
+            EditCommand::Watermark { spec } => Some(pages_label("Filigraner", &spec.pages, doc)),
+            EditCommand::PageNumbers { spec } => Some(pages_label("Numéroter", &spec.pages, doc)),
+            EditCommand::CropPages { spec } => Some(pages_label("Recadrer", &spec.pages, doc)),
             _ => None,
         };
         label.unwrap_or_else(|| self.label())
@@ -234,8 +324,38 @@ impl Command for EditCommand {
             EditCommand::InsertSignature { page, rect, source } => {
                 doc.insert_signature(*page, *rect, source)
             }
+            EditCommand::DeleteObject { page, index } => doc.delete_object(*page, *index),
+            EditCommand::MoveObject {
+                page,
+                index,
+                dx,
+                dy,
+            } => doc.move_object(*page, *index, *dx, *dy),
+            EditCommand::SetObjectText { page, index, text } => {
+                doc.set_object_text(*page, *index, text)
+            }
+            EditCommand::InsertText {
+                page,
+                at,
+                text,
+                style,
+            } => doc.insert_text(*page, *at, text, style),
+            EditCommand::InsertImage { page, rect, path } => doc.insert_image(*page, *rect, path),
+            EditCommand::Redact { page, rect } => doc.redact(*page, *rect).map(|_| ()),
+            EditCommand::Watermark { spec } => doc.add_watermark(spec),
+            EditCommand::PageNumbers { spec } => doc.add_page_numbers(spec),
+            EditCommand::CropPages { spec } => doc.crop_pages(spec),
         }
     }
+}
+
+/// « Verbe N page(s) » pour une commande qui vise une liste de pages (toutes si `None`).
+fn pages_label(verb: &str, pages: &Option<Vec<u16>>, doc: &Document) -> String {
+    let n = match pages {
+        Some(list) => list.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        None => usize::from(doc.page_count()),
+    };
+    format!("{verb} {}", plural(n, "page", "pages"))
 }
 
 /// Bornes de l'historique.
@@ -472,6 +592,8 @@ impl Document {
             self.replace_inner(clean);
             bytes
         };
+        // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
+        let bytes = crate::cleanup::before_save(&bytes)?;
         write_atomically(path, &bytes)?;
         self.set_path(Some(path.to_path_buf()));
         self.history.saved_position = Some(self.history.position);

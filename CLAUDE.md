@@ -111,3 +111,13 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   `forms/write.rs` (`lopdf`) écrit `/V`, `/AS`, `/NeedAppearances`, puis `reload_from_bytes` ;
   charger une page dans l'environnement de formulaire (rendu minuscule) avant de lire ou
   d'aplatir ; `PdfPage::flatten` aplatit aussi les annotations.
+- Contenu et pages tournées (ADR-0010) : **toute l'API publique parle en espace affiché**
+  (`geometry::PageFrame`, `frame_of(&page)`) ; convertir vers l'espace utilisateur au seul
+  endroit où une coordonnée entre dans PDFium, et inversement à la lecture ; un texte ou une
+  image dessinés sur une page tournée se placent en espace affiché puis `apply_matrix` /
+  `cm`. `scaled_font_size()` est nul pour un texte tourné : `content::effective_font_size`.
+  Après `set_crop`, recharger (`reload_from_bytes`) : PDFium garde les dimensions en cache.
+  Filigranes et numéros : flux `lopdf` avec ressources **propres à la page** (copier l'hérité) ;
+  PDFium seulement pour mesurer, avant la phase `lopdf` (verrou non réentrant). Une annotation
+  fraîche est écrite **inline** dans `/Annots` par PDFium : les passes `lopdf` traitent les
+  deux formes.

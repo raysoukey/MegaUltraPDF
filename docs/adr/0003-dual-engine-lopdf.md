@@ -1,6 +1,6 @@
 # ADR-0003 — Double moteur : PDFium principal, `lopdf` pour les passes structurelles
 
-Date : 2026-10-26 · Statut : accepté (mise en œuvre de `lopdf` prévue au Lot 5)
+Date : 2026-10-26 · Statut : accepté (en vigueur depuis le Lot 4 ; passes du Lot 5 : ADR-0010)
 
 ## Contexte
 
@@ -20,9 +20,21 @@ retouches de texte. La fondation doit pourtant accueillir tous les lots.
 - La modification du texte existant reste « au mieux » (limites du format) ; l'application le
   dit clairement.
 
+## Mise en œuvre effective
+
+- Lot 4 : écriture des valeurs de champs (`forms/write.rs`) — `lopdf` écrit, PDFium recharge
+  et régénère les apparences (ADR-0009).
+- Lot 5 : passe de nettoyage à l'enregistrement (`cleanup.rs`), filigranes et numéros ajoutés
+  comme flux de contenu (`overlay.rs`), lecture d'apparences pour `/InkList` (ADR-0010). Le
+  caviardage, lui, est resté côté PDFium (objets entiers) : la passe par caractère dans le flux
+  est reportée.
+- Invariant respecté partout : `to_bytes()` → `lopdf` → `reload_from_bytes()`, jamais les deux
+  moteurs sur la même représentation ; les repères, mesures et titres nécessaires sont
+  calculés avec PDFium **avant** la phase `lopdf` (verrou non réentrant).
+
 ## Conséquences
 
-- Pas de `lopdf` avant le Lot 5 : le Lot 0 n'ajoute que `pdfium-render` et `image`.
+- Pas de `lopdf` avant le Lot 4 : le Lot 0 n'ajoute que `pdfium-render` et `image`.
 - Pour les tests, les métadonnées sont posées via un squelette PDF écrit à la main
   (`crates/mega-core/src/testing.rs`), première illustration d'une « passe structurelle ».
 - Les fixtures chiffrées sont produites hors Rust (`qpdf`) jusqu'au Lot 6.

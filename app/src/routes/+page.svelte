@@ -7,6 +7,11 @@
   import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
   import SignatureDialog from '$lib/components/SignatureDialog.svelte';
   import CloseConfirmDialog from '$lib/components/CloseConfirmDialog.svelte';
+  import CropDialog from '$lib/components/CropDialog.svelte';
+  import NumberingDialog from '$lib/components/NumberingDialog.svelte';
+  import RedactConfirmDialog from '$lib/components/RedactConfirmDialog.svelte';
+  import TextInsertDialog from '$lib/components/TextInsertDialog.svelte';
+  import WatermarkDialog from '$lib/components/WatermarkDialog.svelte';
   import MergeDialog from '$lib/components/MergeDialog.svelte';
   import PasswordDialog from '$lib/components/PasswordDialog.svelte';
   import PropertiesDialog from '$lib/components/PropertiesDialog.svelte';
@@ -17,6 +22,7 @@
   import Tabs from '$lib/components/Tabs.svelte';
   import Toolbar from '$lib/components/Toolbar.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
+  import { isContentTool } from '$lib/logic/content';
   import { selectedText } from '$lib/logic/selection';
   import { actionFor } from '$lib/logic/shortcuts';
   import { nextZoom } from '$lib/logic/zoom';
@@ -24,8 +30,11 @@
     activeDoc,
     annotateSelection,
     cancelPassword,
+    cancelRedact,
     cancelSignature,
+    cancelTextInsert,
     deleteSelectedAnnotation,
+    deleteSelectedObject,
     displayName,
     ensureAnnotations,
     ensureFormInfo,
@@ -44,6 +53,7 @@
     saveAs,
     setScale,
     selectAnnotation,
+    selectObject,
     setSelection,
     showNotice,
     stepSearch,
@@ -61,6 +71,12 @@
   let helpOpen = $state(false);
   let mergeOpen = $state(false);
   let splitOpen = $state(false);
+  let watermarkOpen = $state(false);
+  let numberingOpen = $state(false);
+  let cropOpen = $state(false);
+  const contentDialogOpen = $derived(
+    watermarkOpen || numberingOpen || cropOpen || !!doc?.textInsertRequest || !!doc?.redactRequest,
+  );
   let editing = $state<{ annotation: Annotation; page: number } | null>(null);
 
   async function editSelected() {
@@ -166,7 +182,12 @@
     if (typing && (action === 'undo' || action === 'redo')) return;
     // Un dialogue modal garde le clavier pour lui (sauf Échap).
     if (
-      (docsState.closePrompt || mergeOpen || splitOpen || editing || doc?.signatureRequest) &&
+      (docsState.closePrompt ||
+        mergeOpen ||
+        splitOpen ||
+        editing ||
+        doc?.signatureRequest ||
+        contentDialogOpen) &&
       action !== 'escape'
     )
       return;
@@ -215,7 +236,8 @@
         markupSelection('strike_out');
         break;
       case 'deleteAnnotation':
-        if (doc) deleteSelectedAnnotation(doc);
+        if (doc?.selectedObject && isContentTool(toolState.tool)) deleteSelectedObject(doc);
+        else if (doc) deleteSelectedAnnotation(doc);
         break;
       case 'find':
         if (doc) searchOpen = true;
@@ -265,6 +287,11 @@
       case 'escape':
         if (docsState.closePrompt) resolveClosePrompt('cancel');
         else if (doc?.signatureRequest) cancelSignature(doc);
+        else if (doc?.textInsertRequest) cancelTextInsert(doc);
+        else if (doc?.redactRequest) cancelRedact(doc);
+        else if (watermarkOpen) watermarkOpen = false;
+        else if (numberingOpen) numberingOpen = false;
+        else if (cropOpen) cropOpen = false;
         else if (editing) editing = null;
         else if (mergeOpen) mergeOpen = false;
         else if (splitOpen) splitOpen = false;
@@ -272,6 +299,7 @@
         else if (propertiesOpen) propertiesOpen = false;
         else if (docsState.passwordPrompt) cancelPassword();
         else if (searchOpen) searchOpen = false;
+        else if (doc?.selectedObject) selectObject(doc, null);
         else if (toolState.tool !== 'select') setTool('select');
         else if (doc?.selectedAnnotation) selectAnnotation(doc, null);
         else if (doc?.selection) setSelection(doc, null);
@@ -297,7 +325,13 @@
   />
   <Tabs />
   {#if doc}
-    <AnnotationToolbar {doc} onedit={editSelected} />
+    <AnnotationToolbar
+      {doc}
+      onedit={editSelected}
+      onwatermark={() => (watermarkOpen = true)}
+      onnumbering={() => (numberingOpen = true)}
+      oncrop={() => (cropOpen = true)}
+    />
   {/if}
   {#if doc && searchOpen}
     <SearchBar {doc} onclose={() => (searchOpen = false)} />
@@ -347,6 +381,21 @@
   {/if}
   {#if doc && doc.signatureRequest}
     <SignatureDialog {doc} page={doc.signatureRequest.page} rect={doc.signatureRequest.rect} />
+  {/if}
+  {#if doc && doc.textInsertRequest}
+    <TextInsertDialog {doc} page={doc.textInsertRequest.page} at={doc.textInsertRequest.at} />
+  {/if}
+  {#if doc && doc.redactRequest}
+    <RedactConfirmDialog {doc} />
+  {/if}
+  {#if doc && watermarkOpen}
+    <WatermarkDialog {doc} onclose={() => (watermarkOpen = false)} />
+  {/if}
+  {#if doc && numberingOpen}
+    <NumberingDialog {doc} onclose={() => (numberingOpen = false)} />
+  {/if}
+  {#if doc && cropOpen}
+    <CropDialog {doc} onclose={() => (cropOpen = false)} />
   {/if}
   {#if doc && editing}
     {#key editing.annotation.index}

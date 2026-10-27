@@ -36,11 +36,12 @@ impl Document {
             .inner()
             .pages()
             .get(self.checked_index_unlocked(index)?)?;
+        let frame = crate::geometry::frame_of(&page);
         let links = page
             .links()
             .iter()
             .filter_map(|l| {
-                let rect = Rect::from_pdf(l.rect().ok()?);
+                let rect = frame.from_user_space(Rect::from_pdf(l.rect().ok()?));
                 Some(PageLink {
                     rect,
                     target: target_of(&l)?,

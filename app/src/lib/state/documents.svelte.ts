@@ -18,6 +18,8 @@ import {
   undoEdit,
   outline as fetchOutline,
   pageLinks,
+  pageObjects as fetchPageObjects,
+  pickImageFile,
   searchDocument,
   setGeneration,
   textLayer,
@@ -30,7 +32,12 @@ import {
   type FormField,
   type FormInfo,
   type NewAnnotation,
+  type CropSpec,
+  type PageNumbering,
+  type PageObject,
   type SignatureSource,
+  type TextStyle,
+  type Watermark,
   type Rect,
   type EditResult,
   type EditState,
@@ -91,6 +98,14 @@ export interface OpenDoc {
   formInfo: FormInfo | null;
   /** Zone tracée pour une signature, en attente du dialogue. */
   signatureRequest: { page: number; rect: Rect } | null;
+  /** Objets du contenu par page (cache vidé à chaque édition), Lot 5. */
+  pageObjects: Record<number, PageObject[]>;
+  /** Objet de contenu sélectionné (outil Objets). */
+  selectedObject: { page: number; index: number } | null;
+  /** Point cliqué avec l'outil Texte-contenu, en attente du dialogue. */
+  textInsertRequest: { page: number; at: [number, number] } | null;
+  /** Zone tracée avec l'outil Caviarder, en attente de confirmation. */
+  redactRequest: { page: number; rect: Rect } | null;
 }
 
 export interface PasswordPrompt {
@@ -183,6 +198,10 @@ export async function openPath(path: string, password?: string): Promise<boolean
       formFields: {},
       formInfo: null,
       signatureRequest: null,
+      pageObjects: {},
+      selectedObject: null,
+      textInsertRequest: null,
+      redactRequest: null,
     });
     docsState.activeId = summary.id;
     docsState.passwordPrompt = null;
@@ -433,6 +452,11 @@ function afterEdit(doc: OpenDoc, result: EditResult): void {
   doc.selectedAnnotation = null;
   doc.formFields = {};
   doc.formInfo = null;
+  doc.pageObjects = {};
+  // Les index d'objets sont positionnels : une sélection survivant à une édition pourrait
+  // désigner un autre objet (annuler une insertion, caviarder). Les actions qui veulent
+  // garder la sélection (déplacer, modifier le texte) la reposent après coup.
+  doc.selectedObject = null;
   doc.page = Math.min(doc.page, Math.max(0, result.summary.page_count - 1));
   nextGeneration(doc);
 }
@@ -573,6 +597,10 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
       formFields: {},
       formInfo: null,
       signatureRequest: null,
+      pageObjects: {},
+      selectedObject: null,
+      textInsertRequest: null,
+      redactRequest: null,
     });
     docsState.activeId = summary.id;
     return true;
@@ -728,6 +756,108 @@ export async function insertSignature(
   source: SignatureSource,
 ): Promise<boolean> {
   return applyEdit(doc, { kind: 'insert_signature', page, rect, source });
+}
+
+// ---- Contenu (Lot 5) ----
+
+export async function ensureObjects(doc: OpenDoc, page: number): Promise<PageObject[]> {
+  const cached = doc.pageObjects[page];
+  if (cached) return cached;
+  const list = await fetchPageObjects(doc.summary.id, page).catch(() => []);
+  doc.pageObjects[page] = list;
+  return list;
+}
+
+export function selectObject(doc: OpenDoc, target: { page: number; index: number } | null): void {
+  doc.selectedObject = target;
+}
+
+/** Supprime l'objet sélectionné ; les index suivants reculent, la sélection est levée. */
+export async function deleteSelectedObject(doc: OpenDoc): Promise<void> {
+  const sel = doc.selectedObject;
+  if (!sel) return;
+  doc.selectedObject = null;
+  await applyEdit(doc, { kind: 'delete_object', page: sel.page, index: sel.index });
+}
+
+/** Déplace un objet de `(dx, dy)` points affichés ; son index ne change pas. */
+export async function moveObject(
+  doc: OpenDoc,
+  page: number,
+  index: number,
+  dx: number,
+  dy: number,
+): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'move_object', page, index, dx, dy });
+  if (ok) doc.selectedObject = { page, index };
+  return ok;
+}
+
+export async function setObjectText(
+  doc: OpenDoc,
+  page: number,
+  index: number,
+  text: string,
+): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'set_object_text', page, index, text });
+  if (ok) doc.selectedObject = { page, index };
+  return ok;
+}
+
+export function requestTextInsert(doc: OpenDoc, page: number, at: [number, number]): void {
+  doc.textInsertRequest = { page, at };
+}
+
+export function cancelTextInsert(doc: OpenDoc): void {
+  doc.textInsertRequest = null;
+}
+
+export async function insertText(
+  doc: OpenDoc,
+  page: number,
+  at: [number, number],
+  text: string,
+  style: TextStyle,
+): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'insert_text', page, at, text, style });
+  if (ok) doc.textInsertRequest = null;
+  return ok;
+}
+
+/** Zone tracée avec l'outil Image : choix du fichier, puis insertion ajustée dans la zone. */
+export async function insertImageAt(doc: OpenDoc, page: number, rect: Rect): Promise<boolean> {
+  const path = await pickImageFile();
+  if (!path) return false;
+  return applyEdit(doc, { kind: 'insert_image', page, rect, path });
+}
+
+export function requestRedact(doc: OpenDoc, page: number, rect: Rect): void {
+  doc.redactRequest = { page, rect };
+}
+
+export function cancelRedact(doc: OpenDoc): void {
+  doc.redactRequest = null;
+}
+
+export async function confirmRedact(doc: OpenDoc): Promise<boolean> {
+  const req = doc.redactRequest;
+  if (!req) return false;
+  doc.redactRequest = null;
+  const ok = await applyEdit(doc, { kind: 'redact', page: req.page, rect: req.rect });
+  if (ok) showNotice(t.redacted);
+  return ok;
+}
+
+export async function addWatermark(doc: OpenDoc, spec: Watermark): Promise<boolean> {
+  return applyEdit(doc, { kind: 'watermark', spec });
+}
+
+export async function addPageNumbers(doc: OpenDoc, spec: PageNumbering): Promise<boolean> {
+  return applyEdit(doc, { kind: 'page_numbers', spec });
+}
+
+export async function cropPages(doc: OpenDoc, spec: CropSpec): Promise<boolean> {
+  return applyEdit(doc, { kind: 'crop_pages', spec });
 }
 
 export function setSelectedPages(doc: OpenDoc, pages: number[]): void {

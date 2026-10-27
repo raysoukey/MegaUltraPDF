@@ -7,7 +7,7 @@
 //! `Result` : on enchaîne avec `?` et l'annotation reste cohérente ou l'erreur remonte.
 
 use pdfium_render::prelude::{
-    PdfColor, PdfDocument, PdfFontToken, PdfPageAnnotation, PdfPageAnnotationCommon,
+    PdfColor, PdfDocument, PdfFontToken, PdfMatrix, PdfPageAnnotation, PdfPageAnnotationCommon,
     PdfPageAnnotationObjects, PdfPageObjectCommon, PdfPageObjectLineCap, PdfPageObjectLineJoin,
     PdfPageObjectsCommon, PdfPagePathObject, PdfPageTextObject, PdfPathSegmentType,
     PdfPathSegments, PdfPoints,
@@ -177,12 +177,22 @@ pub(crate) fn draw_shape<'a>(
     Ok(())
 }
 
+/// Matrice PDFium à partir des six coefficients d'un repère de page.
+fn pdf_matrix(m: [f32; 6]) -> PdfMatrix {
+    PdfMatrix::new(m[0], m[1], m[2], m[3], m[4], m[5])
+}
+
 /// Dessine un texte libre (lignes) ou un tampon (cadre + libellé centré) dans un `Stamp`.
+///
+/// `new` est en coordonnées **affichées** ; `matrix` (espace affiché → utilisateur, voir
+/// [`crate::geometry::PageFrame::matrix_to_user_space`]) est appliquée à chaque objet une
+/// fois placé, pour qu'un texte posé sur une page tournée reste droit à l'écran.
 pub(crate) fn draw_text<'a>(
     doc: &PdfDocument<'a>,
     objects: &mut PdfPageAnnotationObjects<'a>,
     new: &NewAnnotation,
     font: PdfFontToken,
+    matrix: Option<[f32; 6]>,
 ) -> CoreResult<()> {
     let Geometry::Rect { rect } = &new.geometry else {
         return Err(crate::error::CoreError::InvalidOperation(
@@ -194,7 +204,7 @@ pub(crate) fn draw_text<'a>(
     match new.kind {
         AnnotationKind::Stamp => {
             // Cadre.
-            let frame = PdfPagePathObject::new_rect(
+            let mut frame = PdfPagePathObject::new_rect(
                 doc,
                 to_pdf_rect(&Rect {
                     x: rect.x + 1.0,
@@ -206,6 +216,9 @@ pub(crate) fn draw_text<'a>(
                 Some(pt(2.0)),
                 None,
             )?;
+            if let Some(m) = matrix {
+                frame.apply_matrix(pdf_matrix(m))?;
+            }
             objects.add_path_object(frame)?;
             // Libellé centré, taille bornée par la hauteur du cadre.
             let size = s.font_size.min(rect.h * 0.6).max(4.0);
@@ -216,6 +229,9 @@ pub(crate) fn draw_text<'a>(
             let x = rect.x + (rect.w - tw) / 2.0;
             let y = rect.y + (rect.h - size * 0.7) / 2.0;
             text.translate(pt(x - b.left().value), pt(y - b.bottom().value))?;
+            if let Some(m) = matrix {
+                text.apply_matrix(pdf_matrix(m))?;
+            }
             objects.add_text_object(text)?;
         }
         _ => {
@@ -233,6 +249,9 @@ pub(crate) fn draw_text<'a>(
                     pt(rect.x + 2.0 - b.left().value),
                     pt(baseline - b.bottom().value),
                 )?;
+                if let Some(m) = matrix {
+                    text.apply_matrix(pdf_matrix(m))?;
+                }
                 objects.add_text_object(text)?;
             }
         }
@@ -286,7 +305,8 @@ pub(crate) fn inspect(ann: &PdfPageAnnotation, subtype: AnnotationKind) -> Inspe
         } else if let Some(t) = obj.as_text_object() {
             text_count += 1;
             if out.font_size.is_none() {
-                out.font_size = Some(t.scaled_font_size().value);
+                // Pas `scaled_font_size()` : nul pour un texte tourné d'un quart de tour.
+                out.font_size = Some(crate::content::effective_font_size(t));
             }
         }
     }

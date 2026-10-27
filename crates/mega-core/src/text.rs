@@ -48,6 +48,7 @@ impl Document {
             .pages()
             .get(self.checked_index_unlocked(index)?)?;
         let text = page.text()?;
+        let frame = crate::geometry::frame_of(&page);
         let mut boxes = Vec::with_capacity(text.len().max(0) as usize);
         for c in text.chars().iter() {
             // Un caractère sans valeur Unicode (glyphe de contrôle) ou sans emprise est ignoré.
@@ -56,7 +57,7 @@ impl Document {
             };
             boxes.push(TextBox {
                 ch,
-                rect: Rect::from_pdf(bounds),
+                rect: frame.from_user_space(Rect::from_pdf(bounds)),
             });
         }
         Ok(boxes)
@@ -82,13 +83,14 @@ impl Document {
             .match_case(options.match_case)
             .match_whole_word(options.whole_word);
         let search = text.search(query, &pdf_options)?;
+        let frame = crate::geometry::frame_of(&page);
         let hits = search
             .iter(PdfSearchDirection::SearchForward)
             .map(|segments| SearchHit {
                 page: index,
                 rects: segments
                     .iter()
-                    .map(|s| Rect::from_pdf(s.bounds()))
+                    .map(|s| frame.from_user_space(Rect::from_pdf(s.bounds())))
                     .collect(),
             })
             .collect();

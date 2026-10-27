@@ -2,6 +2,7 @@
 //! Une fonction `run` par sous-commande.
 
 pub mod annots;
+pub mod content;
 pub mod extract;
 pub mod fields;
 pub mod flatten;

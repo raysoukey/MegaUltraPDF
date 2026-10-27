@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
-use crate::geometry::Rect;
+use crate::geometry::{PageFrame, Rect, frame_of};
 
 /// Nombre maximal d'annotations lues par page (un PDF est une donnée non fiable).
 pub const MAX_ANNOTATIONS_PER_PAGE: usize = 2000;
@@ -129,7 +129,7 @@ pub struct Color {
 
 impl Color {
     /// Couleur PDFium avec l'opacité donnée (0-1).
-    fn with_opacity(self, opacity: f32) -> PdfColor {
+    pub(crate) fn with_opacity(self, opacity: f32) -> PdfColor {
         PdfColor::new(
             self.r,
             self.g,
@@ -390,11 +390,12 @@ impl Document {
                 .render_annotations(true);
             page.render_with_config(&config)?;
         }
+        let frame = frame_of(&page);
         page.annotations()
             .iter()
             .take(MAX_ANNOTATIONS_PER_PAGE)
             .enumerate()
-            .map(|(i, ann)| read_annotation(i as u16, &ann))
+            .map(|(i, ann)| read_annotation(i as u16, &ann).map(|a| to_displayed(a, &frame)))
             .collect()
     }
 
@@ -471,24 +472,40 @@ impl Document {
         if index >= MAX_ANNOTATIONS_PER_PAGE {
             return Err(invalid("trop d'annotations sur cette page"));
         }
+        // L'interface parle en espace affiché ; le fichier, en espace utilisateur. Le texte
+        // garde en plus sa mise en page affichée (lignes horizontales à l'écran) : il est
+        // dessiné tel quel puis tourné par la matrice du repère.
+        let frame = frame_of(&pdf_page);
+        let displayed = new;
+        let user = NewAnnotation {
+            geometry: geometry_to_user(&frame, &new.geometry),
+            ..new.clone()
+        };
+        let new = &user;
+        let matrix = (!frame.is_identity()).then(|| frame.matrix_to_user_space());
         let annots = pdf_page.annotations_mut();
         let stroke = new.style.color.with_opacity(new.style.opacity);
         match new.kind {
             AnnotationKind::Note => {
-                let Geometry::Rect { rect } = &new.geometry else {
+                let Geometry::Rect { rect } = &displayed.geometry else {
                     unreachable!("validé plus haut")
                 };
                 let mut a = annots.create_text_annotation(&new.contents)?;
-                // §12.5.6.4 : une note garde sa taille à l'écran et ne tourne pas avec la page.
+                // §12.5.6.4 : une note garde sa taille à l'écran. NoRotate ancre l'icône au
+                // coin haut-gauche du `/Rect` **en espace utilisateur** : sur une page `/Rotate`,
+                // ce coin n'est pas celui vu en haut à gauche et Acrobat décalerait l'icône ;
+                // la note y tourne donc avec la page.
                 a.set_is_zoomable(false)?;
-                a.set_is_rotatable(false)?;
+                if frame.rotate.is_multiple_of(360) {
+                    a.set_is_rotatable(false)?;
+                }
                 let icon = Rect {
                     x: rect.x,
                     y: rect.y + rect.h - appearance::NOTE_ICON_SIZE,
                     w: appearance::NOTE_ICON_SIZE,
                     h: appearance::NOTE_ICON_SIZE,
                 };
-                a.set_bounds(to_pdf_rect(&icon))?;
+                a.set_bounds(to_pdf_rect(&frame.to_user_space(icon)))?;
                 a.set_stroke_color(stroke)?;
                 set_meta(&mut a, new)?;
             }
@@ -562,7 +579,7 @@ impl Document {
                 set_meta(&mut a, new)?;
                 #[allow(clippy::expect_used)]
                 let font = font.expect("jeton de police créé pour Text/Stamp");
-                appearance::draw_text(doc, a.objects_mut(), new, font)?;
+                appearance::draw_text(doc, a.objects_mut(), displayed, font, matrix)?;
             }
         }
         Ok(index as u16)
@@ -601,6 +618,7 @@ impl Document {
             let _guard = engine::guard();
             let page_index = self.checked_index_unlocked(page)?;
             let pdf_page = self.inner().pages().get(page_index)?;
+            let frame = frame_of(&pdf_page);
             let mut ann = pdf_page.annotations().get(usize::from(index))?;
             // Une note garde sa taille (une note tierce peut faire plus de 20 pt) ; seul
             // son coin haut-gauche suit le nouveau rectangle.
@@ -610,7 +628,7 @@ impl Document {
                 w: current.rect.w,
                 h: current.rect.h,
             };
-            ann.set_bounds(to_pdf_rect(&icon))?;
+            ann.set_bounds(to_pdf_rect(&frame.to_user_space(icon)))?;
             return Ok(index);
         }
         if current.kind.is_text_markup() {
@@ -637,6 +655,56 @@ impl Document {
         self.delete_annotation(page, index)?;
         self.add_annotation(page, &new)
     }
+}
+
+/// Applique une conversion de points et de rectangles à une géométrie.
+fn map_geometry(
+    g: &Geometry,
+    point: impl Fn([f32; 2]) -> [f32; 2],
+    rect: impl Fn(Rect) -> Rect,
+) -> Geometry {
+    match g {
+        Geometry::Rect { rect: r } => Geometry::Rect { rect: rect(*r) },
+        Geometry::Quads { rects } => Geometry::Quads {
+            rects: rects.iter().map(|r| rect(*r)).collect(),
+        },
+        Geometry::Line { from, to } => Geometry::Line {
+            from: point(*from),
+            to: point(*to),
+        },
+        Geometry::Strokes { strokes } => Geometry::Strokes {
+            strokes: strokes
+                .iter()
+                .map(|s| s.iter().map(|p| point(*p)).collect())
+                .collect(),
+        },
+    }
+}
+
+/// Géométrie reçue de l'interface (espace affiché) → espace utilisateur du fichier.
+fn geometry_to_user(frame: &PageFrame, g: &Geometry) -> Geometry {
+    map_geometry(
+        g,
+        |p| frame.point_to_user_space(p),
+        |r| frame.to_user_space(r),
+    )
+}
+
+/// Annotation lue dans le fichier (espace utilisateur) → espace affiché.
+fn to_displayed(mut a: Annotation, frame: &PageFrame) -> Annotation {
+    if frame.is_identity() {
+        return a;
+    }
+    a.rect = frame.from_user_space(a.rect);
+    a.quads = a.quads.iter().map(|r| frame.from_user_space(*r)).collect();
+    a.geometry = a.geometry.as_ref().map(|g| {
+        map_geometry(
+            g,
+            |p| frame.point_from_user_space(p),
+            |r| frame.from_user_space(r),
+        )
+    });
+    a
 }
 
 /// Métadonnées communes : contenu, auteur, date de création, impression.

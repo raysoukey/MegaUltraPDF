@@ -47,6 +47,7 @@ pub fn run() {
             commands::search_document,
             commands::outline,
             commands::annotations,
+            commands::page_objects,
             commands::form_fields,
             commands::form_info,
             commands::page_links,

@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Caviardage réel : le contenu caviardé disparaît du fichier, pas seulement de l'écran.
+
+use mega_core::edit::EditCommand;
+use mega_core::edit::EditCommand as Cmd;
+use mega_core::testing::{form_pdf, rich_pdf, rotated_pdf, xobject_text_pdf};
+use mega_core::{CoreError, Document, ObjectKind, Rect};
+
+fn rich() -> Document {
+    Document::from_bytes(rich_pdf(), None).unwrap()
+}
+
+fn page_text(doc: &Document, page: u16) -> String {
+    doc.text_boxes(page)
+        .unwrap()
+        .iter()
+        .map(|b| b.ch)
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
+    Rect { x, y, w, h }
+}
+
+fn pixel(img: &mega_core::RenderedPage, x: u32, y: u32) -> (u8, u8, u8) {
+    let i = ((y * img.width_px + x) * 4) as usize;
+    (img.rgba[i], img.rgba[i + 1], img.rgba[i + 2])
+}
+
+#[test]
+fn rich_fixture_has_text_image_path_and_annotation() {
+    let doc = rich();
+    assert_eq!(page_text(&doc, 0), "Secret123Public");
+    let kinds: Vec<ObjectKind> = doc
+        .page_objects(0)
+        .unwrap()
+        .iter()
+        .map(|o| o.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ObjectKind::Text,
+            ObjectKind::Text,
+            ObjectKind::Image,
+            ObjectKind::Path
+        ]
+    );
+    assert_eq!(doc.annotations(0).unwrap().len(), 1);
+}
+
+#[test]
+fn redaction_removes_text_from_extraction() {
+    let mut doc = rich();
+    let zone = rect(60.0, 690.0, 200.0, 40.0);
+    let report = doc.redact(0, zone).unwrap();
+    assert_eq!((report.texts, report.images, report.annotations), (1, 0, 1));
+    let text = page_text(&doc, 0);
+    assert!(!text.contains("Secret") && !text.contains("123"), "{text}");
+    assert!(text.contains("Public"), "{text}");
+    assert!(
+        doc.annotations(0).unwrap().is_empty(),
+        "le carré qui couvrait le secret"
+    );
+    // Un rectangle noir recouvre la zone.
+    let img = doc.render_page(0, 1.0).unwrap();
+    assert_eq!(pixel(&img, 160, 842 - 710), (0, 0, 0));
+    // Le fichier réenregistré ne contient plus le texte.
+    let reopened = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    assert_eq!(page_text(&reopened, 0), "Public");
+    assert_eq!(
+        pixel(&reopened.render_page(0, 1.0).unwrap(), 160, 842 - 710),
+        (0, 0, 0)
+    );
+    let raw = reopened.to_bytes().unwrap();
+    assert!(
+        !String::from_utf8_lossy(&raw).contains("Secret 123"),
+        "la chaîne ne doit plus apparaître en clair dans le fichier"
+    );
+}
+
+#[test]
+fn redaction_is_an_undoable_command() {
+    let mut doc = rich();
+    let before = doc.render_page(0, 0.5).unwrap();
+    doc.apply(&EditCommand::Redact {
+        page: 0,
+        rect: rect(60.0, 690.0, 200.0, 40.0),
+    })
+    .unwrap();
+    assert_eq!(doc.undo_label().as_deref(), Some("Caviarder"));
+    assert_eq!(page_text(&doc, 0), "Public");
+    doc.undo().unwrap();
+    assert_eq!(page_text(&doc, 0), "Secret123Public");
+    assert_eq!(doc.render_page(0, 0.5).unwrap().rgba, before.rgba);
+}
+
+#[test]
+fn redaction_removes_images_and_annotations() {
+    let mut doc = rich();
+    // L'image est posée en (300, 680) sur 100 × 50 : la zone la chevauche à peine.
+    let report = doc.redact(0, rect(380.0, 700.0, 50.0, 50.0)).unwrap();
+    assert_eq!((report.texts, report.images, report.annotations), (0, 1, 0));
+    let kinds: Vec<ObjectKind> = doc
+        .page_objects(0)
+        .unwrap()
+        .iter()
+        .map(|o| o.kind)
+        .collect();
+    // Les deux textes et le chemin restent ; l'image est partie ; le cache noir est un chemin.
+    assert_eq!(
+        kinds,
+        vec![
+            ObjectKind::Text,
+            ObjectKind::Text,
+            ObjectKind::Path,
+            ObjectKind::Path
+        ]
+    );
+    assert_eq!(page_text(&doc, 0), "Secret123Public");
+    assert_eq!(doc.annotations(0).unwrap().len(), 1);
+}
+
+#[test]
+fn redaction_outside_page_is_refused() {
+    let mut doc = rich();
+    for bad in [
+        rect(-50.0, 100.0, 100.0, 100.0),
+        rect(500.0, 100.0, 200.0, 100.0),
+        rect(100.0, 100.0, 0.0, 100.0),
+        rect(100.0, 100.0, f32::NAN, 100.0),
+    ] {
+        assert!(
+            matches!(doc.redact(0, bad), Err(CoreError::InvalidOperation(_))),
+            "{bad:?}"
+        );
+    }
+    assert!(matches!(
+        doc.redact(4, rect(100.0, 100.0, 10.0, 10.0)),
+        Err(CoreError::PageOutOfRange { .. })
+    ));
+    assert_eq!(page_text(&doc, 0), "Secret123Public");
+    assert_eq!(doc.page_objects(0).unwrap().len(), 4);
+}
+
+#[test]
+fn redaction_on_rotated_page_uses_displayed_rect() {
+    let mut doc = Document::from_bytes(rotated_pdf(), None).unwrap();
+    // « Page 1 » s'affiche vers x 555..650, y 300..330 (voir tests/rotation.rs).
+    let report = doc.redact(0, rect(540.0, 240.0, 55.0, 120.0)).unwrap();
+    assert_eq!(report.texts, 1);
+    assert_eq!(page_text(&doc, 0), "");
+    let img = doc.render_page(0, 1.0).unwrap();
+    assert_eq!(pixel(&img, 565, 400 - 300), (0, 0, 0));
+    // En dehors de la zone, la page est restée blanche.
+    assert_eq!(pixel(&img, 300, 200), (255, 255, 255));
+}
+
+/// C1 (relecture) : l'image caviardée ne doit plus être dans le **fichier**, pas seulement
+/// hors du flux de contenu (son XObject restait référencé par `/Resources`).
+#[test]
+fn redaction_removes_image_and_annotation_bytes_from_saved_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("riche.pdf");
+    std::fs::write(&path, rich_pdf()).unwrap();
+    let mut doc = Document::open(&path, None).unwrap();
+    doc.redact(0, rect(380.0, 700.0, 50.0, 50.0)).unwrap();
+    doc.redact(0, rect(60.0, 690.0, 200.0, 40.0)).unwrap();
+    doc.save().unwrap();
+    let saved = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
+    assert!(
+        !saved.contains("/Image"),
+        "le flux image a disparu du fichier"
+    );
+    assert!(!saved.contains("00FF FF00"), "ses pixels aussi");
+    assert!(
+        !saved.contains("/Square"),
+        "l'annotation retirée a disparu du fichier"
+    );
+    assert!(!saved.contains("Secret 123"));
+    let reopened = Document::open(&path, None).unwrap();
+    assert_eq!(page_text(&reopened, 0), "Public");
+    assert_eq!(
+        pixel(&reopened.render_page(0, 1.0).unwrap(), 160, 842 - 710),
+        (0, 0, 0)
+    );
+}
+
+#[test]
+fn redaction_refuses_encrypted_document() {
+    let bytes = std::fs::read(format!(
+        "{}/../../fixtures/encrypted.pdf",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let mut doc = Document::from_bytes(bytes, Some("secret")).unwrap();
+    let before = doc.page_objects(0).unwrap().len();
+    match doc.redact(0, rect(60.0, 700.0, 200.0, 60.0)) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffré"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        doc.page_objects(0).unwrap().len(),
+        before,
+        "rien n'a changé"
+    );
+}
+
+/// C2 (relecture) : du texte dessiné à travers un XObject resterait sous le cache noir ;
+/// plutôt que de mentir, on refuse et le document reste intact.
+#[test]
+fn redaction_fails_when_text_remains_under_the_zone() {
+    let mut doc = Document::from_bytes(xobject_text_pdf(), None).unwrap();
+    assert_eq!(page_text(&doc, 0), "Cache");
+    let before = doc.render_page(0, 0.5).unwrap();
+    let result = doc.apply(&Cmd::Redact {
+        page: 0,
+        rect: rect(60.0, 690.0, 100.0, 40.0),
+    });
+    match result {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("reste"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(page_text(&doc, 0), "Cache");
+    assert_eq!(
+        doc.render_page(0, 0.5).unwrap().rgba,
+        before.rgba,
+        "pas de cache noir posé"
+    );
+    assert!(!doc.can_undo() && !doc.is_modified());
+}
+
+/// B2 (pdf-expert) : retirer le widget d'un champ laisse sa valeur dans `/AcroForm` ; on
+/// refuse plutôt que de prétendre l'avoir caviardée.
+#[test]
+fn redaction_refuses_form_fields() {
+    let mut doc = Document::from_bytes(form_pdf(), None).unwrap();
+    let before = doc.form_fields(0).unwrap().len();
+    // Le champ « ref » (REF-001) est en [72 460 200 484].
+    match doc.apply(&Cmd::Redact {
+        page: 0,
+        rect: rect(60.0, 450.0, 160.0, 40.0),
+    }) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("champ"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(doc.form_fields(0).unwrap().len(), before);
+    assert!(!doc.is_modified());
+}

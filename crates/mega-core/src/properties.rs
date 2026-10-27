@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
 use crate::engine;
-use crate::error::CoreResult;
+use crate::error::{CoreError, CoreResult};
 
 /// Les métadonnées lisibles d'un document (dictionnaire `/Info`) et sa version PDF.
 ///
@@ -54,10 +54,129 @@ impl Document {
             creator: get(Tag::Creator),
             producer: get(Tag::Producer),
             creation_date: get(Tag::CreationDate),
-            modification_date: get(Tag::ModificationDate),
+            // pdfium-render 0.9.4 demande à PDFium la balise « ModificationDate », qui
+            // n'existe pas (la clé PDF est `/ModDate`) : toujours vide. On la lit nous-mêmes.
+            modification_date: get(Tag::ModificationDate).or_else(|| self.mod_date_unlocked()),
             pdf_version: version_label(&format!("{:?}", self.inner().version())),
             page_count: self.count_unlocked(),
         })
+    }
+}
+
+/// Longueur maximale (caractères) d'un champ de métadonnées écrit.
+pub const MAX_METADATA_CHARS: usize = 1024;
+
+/// Modification partielle des métadonnées : `None` = inchangé, chaîne vide = clé retirée.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MetadataPatch {
+    /// Titre (`/Title`).
+    pub title: Option<String>,
+    /// Auteur (`/Author`).
+    pub author: Option<String>,
+    /// Sujet (`/Subject`).
+    pub subject: Option<String>,
+    /// Mots-clés (`/Keywords`).
+    pub keywords: Option<String>,
+}
+
+impl Document {
+    /// Écrit les métadonnées (`/Info`) par `lopdf` puis recharge le document ; `/ModDate`
+    /// est mis à maintenant. Le dictionnaire XMP éventuel n'est pas touché (documenté).
+    ///
+    /// \[Apprentissage\] pdfium-render ne sait pas écrire les métadonnées (voir
+    /// `testing.rs`) : c'est le cas d'école de l'ADR-0003, un moteur pour lire et afficher,
+    /// l'autre pour poser exactement les clés que la norme décrit (§14.3.3).
+    pub fn set_metadata(&mut self, patch: &MetadataPatch) -> CoreResult<()> {
+        for (name, value) in [
+            ("titre", &patch.title),
+            ("auteur", &patch.author),
+            ("sujet", &patch.subject),
+            ("mots-clés", &patch.keywords),
+        ] {
+            if let Some(v) = value
+                && v.chars().count() > MAX_METADATA_CHARS
+            {
+                return Err(CoreError::InvalidOperation(format!(
+                    "{name} : {MAX_METADATA_CHARS} caractères au plus"
+                )));
+            }
+        }
+        let bytes = self.to_bytes()?;
+        let mut doc = lopdf::Document::load_mem(&bytes).map_err(|e| {
+            CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
+        })?;
+        if doc.is_encrypted() || doc.was_encrypted() {
+            return Err(CoreError::InvalidOperation(
+                "métadonnées d'un PDF chiffré : non modifiables dans cette version".to_string(),
+            ));
+        }
+        let info_id = match doc
+            .trailer
+            .get(b"Info")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
+        {
+            Some(id) if doc.get_dictionary(id).is_ok() => id,
+            _ => {
+                let id = doc.add_object(lopdf::Object::Dictionary(lopdf::Dictionary::new()));
+                doc.trailer.set("Info", lopdf::Object::Reference(id));
+                id
+            }
+        };
+        let info = doc
+            .get_dictionary_mut(info_id)
+            .map_err(|e| CoreError::InvalidOperation(format!("dictionnaire /Info : {e}")))?;
+        for (key, value) in [
+            ("Title", &patch.title),
+            ("Author", &patch.author),
+            ("Subject", &patch.subject),
+            ("Keywords", &patch.keywords),
+        ] {
+            match value.as_deref().map(str::trim) {
+                None => {}
+                Some("") => {
+                    info.remove(key.as_bytes());
+                }
+                Some(text) => info.set(key, crate::forms::write::pdf_text(text)),
+            }
+        }
+        // §7.9.4 : D:YYYYMMDDHHmmSS suivi du décalage horaire (ici UTC).
+        let now = chrono::Utc::now()
+            .format("D:%Y%m%d%H%M%S+00'00'")
+            .to_string();
+        info.set("ModDate", lopdf::Object::string_literal(now));
+        let mut out = Vec::new();
+        doc.save_to(&mut out)?;
+        self.reload_from_bytes(out)
+    }
+}
+
+impl Document {
+    /// `/ModDate` du dictionnaire `/Info`, lu par `lopdf` (jeton déjà pris par l'appelant ;
+    /// `to_bytes` n'en a pas besoin : `save_to_bytes` est appelé directement).
+    fn mod_date_unlocked(&self) -> Option<String> {
+        let bytes = self.inner().save_to_bytes().ok()?;
+        let doc = lopdf::Document::load_mem(&bytes).ok()?;
+        let info = doc.trailer.get(b"Info").ok()?;
+        let (_, info) = doc.dereference(info).ok()?;
+        let raw = info.as_dict().ok()?.get(b"ModDate").ok()?;
+        let (_, raw) = doc.dereference(raw).ok()?;
+        let text = decode_text_string(raw.as_str().ok()?);
+        let text = text.trim().to_string();
+        (!text.is_empty()).then_some(text)
+    }
+}
+
+/// Chaîne de texte PDF (§7.9.2.2) : UTF-16BE si elle commence par le BOM `FE FF`, sinon
+/// PDFDocEncoding, dont les 256 valeurs coïncident avec Latin-1 pour tout ce qu'une date ou
+/// un titre ordinaire contient.
+fn decode_text_string(bytes: &[u8]) -> String {
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        let (pairs, _odd) = rest.as_chunks::<2>();
+        let units: Vec<u16> = pairs.iter().map(|c| u16::from_be_bytes(*c)).collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        bytes.iter().map(|&b| char::from(b)).collect()
     }
 }
 

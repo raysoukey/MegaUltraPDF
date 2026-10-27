@@ -17,7 +17,7 @@ use pdfium_render::prelude::{
 use serde::{Deserialize, Serialize};
 
 mod signature;
-mod write;
+pub(crate) mod write;
 
 pub use signature::SignatureSource;
 

@@ -190,6 +190,61 @@ enum Request {
         id: DocId,
         reply: SyncSender<CoreResult<crate::forms::FormInfo>>,
     },
+    /// Texte d'une page (Lot 6).
+    PageText {
+        id: DocId,
+        page: u16,
+        reply: SyncSender<CoreResult<String>>,
+    },
+    /// Export d'images dans un dossier.
+    ExportImages {
+        id: DocId,
+        spec: crate::export::ImageExport,
+        dir: PathBuf,
+        prefix: String,
+        force: bool,
+        reply: SyncSender<CoreResult<Vec<PathBuf>>>,
+    },
+    /// Export du texte dans un fichier.
+    ExportText {
+        id: DocId,
+        pages: Option<Vec<u16>>,
+        separators: bool,
+        path: PathBuf,
+        reply: SyncSender<CoreResult<()>>,
+    },
+    /// Aperçu d'une optimisation (rien n'est modifié).
+    OptimizePreview {
+        id: DocId,
+        options: crate::optimize::OptimizeOptions,
+        reply: SyncSender<CoreResult<crate::optimize::OptimizeReport>>,
+    },
+    /// État de sécurité.
+    Security {
+        id: DocId,
+        reply: SyncSender<CoreResult<crate::security::SecurityInfo>>,
+    },
+    /// Pièces jointes.
+    Attachments {
+        id: DocId,
+        reply: SyncSender<CoreResult<Vec<crate::attachments::Attachment>>>,
+    },
+    /// Extraction d'une pièce jointe vers un fichier.
+    SaveAttachment {
+        id: DocId,
+        index: u16,
+        path: PathBuf,
+        reply: SyncSender<CoreResult<()>>,
+    },
+    /// Image des différences entre deux pages (PNG) et compteurs.
+    ComparePages {
+        id_a: DocId,
+        page_a: u16,
+        id_b: DocId,
+        page_b: u16,
+        scale: f32,
+        reply: SyncSender<CoreResult<ComparedPages>>,
+    },
     /// Prévisualise une scission (parties calculées, rien d'écrit).
     SplitPlan {
         id: DocId,
@@ -222,6 +277,21 @@ impl Eq for Request {}
 struct Entry {
     doc: Document,
     generation: u64,
+}
+
+/// Image des différences entre deux pages, prête à traverser la frontière (PNG + compteurs).
+#[derive(Debug, Clone)]
+pub struct ComparedPages {
+    /// L'image PNG.
+    pub png: Vec<u8>,
+    /// Pixels différents.
+    pub differing_pixels: u64,
+    /// Pixels de l'image.
+    pub total_pixels: u64,
+    /// Largeur de l'image.
+    pub width_px: u32,
+    /// Hauteur de l'image.
+    pub height_px: u32,
 }
 
 /// Le service : construit l'acteur et rend le premier handle.
@@ -470,6 +540,103 @@ impl ServiceHandle {
         self.call(|reply| Request::FormInfo { id, reply })
     }
 
+    /// Texte d'une page (voir `Document::page_text`).
+    pub fn page_text(&self, id: DocId, page: u16) -> CoreResult<String> {
+        self.call(|reply| Request::PageText { id, page, reply })
+    }
+
+    /// Export d'images (voir `Document::export_images`).
+    pub fn export_images(
+        &self,
+        id: DocId,
+        spec: crate::export::ImageExport,
+        dir: impl Into<PathBuf>,
+        prefix: String,
+        force: bool,
+    ) -> CoreResult<Vec<PathBuf>> {
+        let dir = dir.into();
+        self.call(|reply| Request::ExportImages {
+            id,
+            spec,
+            dir,
+            prefix,
+            force,
+            reply,
+        })
+    }
+
+    /// Export du texte dans un fichier (voir `Document::export_text`).
+    pub fn export_text(
+        &self,
+        id: DocId,
+        pages: Option<Vec<u16>>,
+        separators: bool,
+        path: impl Into<PathBuf>,
+    ) -> CoreResult<()> {
+        let path = path.into();
+        self.call(|reply| Request::ExportText {
+            id,
+            pages,
+            separators,
+            path,
+            reply,
+        })
+    }
+
+    /// Aperçu d'une optimisation (voir `Document::optimize_preview`).
+    pub fn optimize_preview(
+        &self,
+        id: DocId,
+        options: crate::optimize::OptimizeOptions,
+    ) -> CoreResult<crate::optimize::OptimizeReport> {
+        self.call(|reply| Request::OptimizePreview { id, options, reply })
+    }
+
+    /// État de sécurité (voir `Document::security`).
+    pub fn security(&self, id: DocId) -> CoreResult<crate::security::SecurityInfo> {
+        self.call(|reply| Request::Security { id, reply })
+    }
+
+    /// Pièces jointes (voir `Document::attachments`).
+    pub fn attachments(&self, id: DocId) -> CoreResult<Vec<crate::attachments::Attachment>> {
+        self.call(|reply| Request::Attachments { id, reply })
+    }
+
+    /// Extraction d'une pièce jointe (voir `Document::save_attachment`).
+    pub fn save_attachment(
+        &self,
+        id: DocId,
+        index: u16,
+        path: impl Into<PathBuf>,
+    ) -> CoreResult<()> {
+        let path = path.into();
+        self.call(|reply| Request::SaveAttachment {
+            id,
+            index,
+            path,
+            reply,
+        })
+    }
+
+    /// Comparaison visuelle de deux pages de deux documents ouverts.
+    pub fn compare_pages(
+        &self,
+        id_a: DocId,
+        page_a: u16,
+        id_b: DocId,
+        page_b: u16,
+        scale: f32,
+    ) -> CoreResult<ComparedPages> {
+        self.call(|reply| Request::ComparePages {
+            id_a,
+            page_a,
+            id_b,
+            page_b,
+            scale,
+            reply,
+        })
+    }
+
     /// Les parties qu'une scission produirait, selon `mode` (rien n'est écrit).
     pub fn split_plan(
         &self,
@@ -657,6 +824,80 @@ impl Actor {
             }
             Request::FormInfo { id, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.form_info()));
+            }
+            Request::PageText { id, page, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.page_text(page)));
+            }
+            Request::ExportImages {
+                id,
+                spec,
+                dir,
+                prefix,
+                force,
+                reply,
+            } => {
+                let _ = reply.send(
+                    self.entry(id)
+                        .and_then(|e| e.doc.export_images(&spec, &dir, &prefix, force)),
+                );
+            }
+            Request::ExportText {
+                id,
+                pages,
+                separators,
+                path,
+                reply,
+            } => {
+                let result = self.entry(id).and_then(|e| {
+                    let text = e.doc.export_text(pages.as_deref(), separators)?;
+                    crate::edit::write_atomically(&path, text.as_bytes())
+                });
+                let _ = reply.send(result);
+            }
+            Request::OptimizePreview { id, options, reply } => {
+                let _ = reply.send(
+                    self.entry(id)
+                        .and_then(|e| e.doc.optimize_preview(&options)),
+                );
+            }
+            Request::Security { id, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.security()));
+            }
+            Request::Attachments { id, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.attachments()));
+            }
+            Request::SaveAttachment {
+                id,
+                index,
+                path,
+                reply,
+            } => {
+                let _ = reply.send(
+                    self.entry(id)
+                        .and_then(|e| e.doc.save_attachment(index, &path)),
+                );
+            }
+            Request::ComparePages {
+                id_a,
+                page_a,
+                id_b,
+                page_b,
+                scale,
+                reply,
+            } => {
+                let result = self.entry(id_a).and_then(|a| {
+                    let b = self.entry(id_b)?;
+                    let diff =
+                        crate::compare::compare_pages(&a.doc, page_a, &b.doc, page_b, scale)?;
+                    Ok(ComparedPages {
+                        png: diff.image.to_png()?,
+                        differing_pixels: diff.differing_pixels,
+                        total_pixels: diff.total_pixels,
+                        width_px: diff.image.width_px,
+                        height_px: diff.image.height_px,
+                    })
+                });
+                let _ = reply.send(result);
             }
             Request::SplitPlan { id, mode, reply } => {
                 let result = self

@@ -186,6 +186,37 @@ pub enum EditCommand {
         /// Marges et pages.
         spec: crate::overlay::CropSpec,
     },
+    /// Modifie les métadonnées du document (Lot 6).
+    SetMetadata {
+        /// Champs à changer.
+        patch: crate::properties::MetadataPatch,
+    },
+    /// Protège le document par mot de passe (AES-256).
+    Protect {
+        /// Mots de passe et permissions.
+        protection: crate::security::Protection,
+    },
+    /// Retire la protection : avec le mot de passe saisi, sinon celui de l'ouverture.
+    Unprotect {
+        /// Mot de passe saisi (utilisateur ou propriétaire) ; `None` = celui de l'ouverture.
+        #[serde(default)]
+        password: Option<String>,
+    },
+    /// Optimise le document (élagage, compression, images).
+    Optimize {
+        /// Réglages.
+        options: crate::optimize::OptimizeOptions,
+    },
+    /// Joint un fichier au document.
+    AddAttachment {
+        /// Chemin du fichier à joindre.
+        path: String,
+    },
+    /// Retire une pièce jointe.
+    DeleteAttachment {
+        /// Position dans la liste des pièces jointes.
+        index: u16,
+    },
 }
 
 /// Ce qu'une édition doit savoir faire pour entrer dans l'historique.
@@ -254,6 +285,18 @@ impl Command for EditCommand {
             EditCommand::Watermark { .. } => "Filigraner".to_string(),
             EditCommand::PageNumbers { .. } => "Numéroter".to_string(),
             EditCommand::CropPages { .. } => "Recadrer".to_string(),
+            EditCommand::SetMetadata { .. } => "Modifier les métadonnées".to_string(),
+            EditCommand::Protect { .. } => "Protéger le document".to_string(),
+            EditCommand::Unprotect { .. } => "Retirer la protection".to_string(),
+            EditCommand::Optimize { .. } => "Optimiser".to_string(),
+            EditCommand::AddAttachment { path } => format!(
+                "Joindre : {}",
+                Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone())
+            ),
+            EditCommand::DeleteAttachment { .. } => "Retirer la pièce jointe".to_string(),
         }
     }
 
@@ -288,6 +331,11 @@ impl Command for EditCommand {
             EditCommand::Watermark { spec } => Some(pages_label("Filigraner", &spec.pages, doc)),
             EditCommand::PageNumbers { spec } => Some(pages_label("Numéroter", &spec.pages, doc)),
             EditCommand::CropPages { spec } => Some(pages_label("Recadrer", &spec.pages, doc)),
+            EditCommand::DeleteAttachment { index } => doc
+                .attachments()
+                .ok()
+                .and_then(|a| a.into_iter().find(|a| a.index == *index))
+                .map(|a| format!("Retirer la pièce jointe : {}", a.name)),
             _ => None,
         };
         label.unwrap_or_else(|| self.label())
@@ -345,6 +393,22 @@ impl Command for EditCommand {
             EditCommand::Watermark { spec } => doc.add_watermark(spec),
             EditCommand::PageNumbers { spec } => doc.add_page_numbers(spec),
             EditCommand::CropPages { spec } => doc.crop_pages(spec),
+            EditCommand::SetMetadata { patch } => doc.set_metadata(patch),
+            EditCommand::Protect { protection } => doc.protect(protection),
+            EditCommand::Unprotect { password } => doc.unprotect_with(password.as_deref()),
+            EditCommand::Optimize { options } => {
+                // Sans gain, rien ne change : on refuse pour ne pas empiler une étape vide
+                // dans l'historique ni marquer le document « modifié ».
+                let report = doc.optimize(options)?;
+                if report.bytes_after >= report.bytes_before {
+                    return Err(CoreError::InvalidOperation(
+                        "le document est déjà optimisé : rien à gagner".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            EditCommand::AddAttachment { path } => doc.add_attachment(Path::new(path)),
+            EditCommand::DeleteAttachment { index } => doc.delete_attachment(*index),
         }
     }
 }
@@ -377,10 +441,12 @@ impl Default for HistoryLimits {
 }
 
 /// Un instantané : le libellé de la commande qui l'a produit et le document **avant** elle
-/// (pile annuler) ou **après** elle (pile rétablir).
+/// (pile annuler) ou **après** elle (pile rétablir), avec le mot de passe qui permet de
+/// relire ces octets (une protection posée ou retirée change ce mot de passe).
 struct Snapshot {
     label: String,
     bytes: Vec<u8>,
+    password: Option<String>,
 }
 
 /// Historique d'un document.
@@ -448,10 +514,12 @@ impl Document {
     pub fn apply(&mut self, command: &dyn Command) -> CoreResult<()> {
         let label = self.label_for(command);
         let before = self.to_bytes()?;
+        let password_before = self.password().map(str::to_string);
         if let Err(e) = command.apply(self) {
             // Une commande peut échouer après avoir commencé à modifier le document
             // (plusieurs appels PDFium) : on revient à l'instantané pris juste avant,
             // ce qui rend le contrat « inchangé en cas d'erreur » vrai pour toute commande.
+            self.set_password(password_before);
             self.reload_from_bytes(before)?;
             return Err(e);
         }
@@ -465,6 +533,7 @@ impl Document {
         self.history.push_undo(Snapshot {
             label,
             bytes: before,
+            password: password_before,
         });
         self.history.position += 1;
         Ok(())
@@ -482,24 +551,33 @@ impl Document {
             return Err(CoreError::InvalidOperation("rien à annuler".to_string()));
         };
         // Si le rechargement échoue, l'étape est remise en place : rien n'est perdu.
-        let (label, bytes) = match self.swap_in(&snapshot) {
-            Ok(current) => (snapshot.label, current),
+        let (label, bytes, password) = match self.swap_in(&snapshot) {
+            Ok((current, password)) => (snapshot.label, current, password),
             Err(e) => {
                 self.history.undo.push_back(snapshot);
                 return Err(e);
             }
         };
-        self.history.redo.push(Snapshot { label, bytes });
+        self.history.redo.push(Snapshot {
+            label,
+            bytes,
+            password,
+        });
         self.history.position -= 1;
         Ok(())
     }
 
-    /// Remplace le document par l'instantané et retourne les octets de l'état courant
-    /// (pour l'autre pile). En cas d'erreur le document n'a pas changé.
-    fn swap_in(&mut self, snapshot: &Snapshot) -> CoreResult<Vec<u8>> {
+    /// Remplace le document par l'instantané et retourne les octets et le mot de passe de
+    /// l'état courant (pour l'autre pile). En cas d'erreur le document n'a pas changé.
+    fn swap_in(&mut self, snapshot: &Snapshot) -> CoreResult<(Vec<u8>, Option<String>)> {
         let current = self.to_bytes()?;
-        self.reload_from_bytes(snapshot.bytes.clone())?;
-        Ok(current)
+        let current_password = self.password().map(str::to_string);
+        self.set_password(snapshot.password.clone());
+        if let Err(e) = self.reload_from_bytes(snapshot.bytes.clone()) {
+            self.set_password(current_password);
+            return Err(e);
+        }
+        Ok((current, current_password))
     }
 
     /// Rétablit la dernière édition annulée.
@@ -507,14 +585,18 @@ impl Document {
         let Some(snapshot) = self.history.redo.pop() else {
             return Err(CoreError::InvalidOperation("rien à rétablir".to_string()));
         };
-        let (label, bytes) = match self.swap_in(&snapshot) {
-            Ok(current) => (snapshot.label, current),
+        let (label, bytes, password) = match self.swap_in(&snapshot) {
+            Ok((current, password)) => (snapshot.label, current, password),
             Err(e) => {
                 self.history.redo.push(snapshot);
                 return Err(e);
             }
         };
-        self.history.push_undo(Snapshot { label, bytes });
+        self.history.push_undo(Snapshot {
+            label,
+            bytes,
+            password,
+        });
         self.history.position += 1;
         Ok(())
     }

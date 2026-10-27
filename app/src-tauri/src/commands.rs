@@ -130,6 +130,121 @@ pub async fn form_fields(
     blocking(handle, move |h| h.form_fields(id, page)).await
 }
 
+/// Texte d'une page (Lot 6).
+#[tauri::command]
+pub async fn page_text(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    page: u16,
+) -> Result<String, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.page_text(id, page)).await
+}
+
+/// Exporte des pages en images dans un dossier ; retourne les chemins écrits.
+#[tauri::command]
+pub async fn export_images(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    spec: mega_core::export::ImageExport,
+    dir: String,
+    prefix: String,
+    force: bool,
+) -> Result<Vec<String>, AppError> {
+    let handle = service.inner().clone();
+    let paths = blocking(handle, move |h| {
+        h.export_images(id, spec, dir, prefix, force)
+    })
+    .await?;
+    Ok(paths
+        .into_iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect())
+}
+
+/// Exporte le texte des pages dans un fichier.
+#[tauri::command]
+pub async fn export_text(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    pages: Option<Vec<u16>>,
+    separators: bool,
+    path: String,
+) -> Result<(), AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.export_text(id, pages, separators, path)).await
+}
+
+/// Aperçu d'une optimisation : le rapport, sans rien modifier.
+#[tauri::command]
+pub async fn optimize_preview(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    options: mega_core::OptimizeOptions,
+) -> Result<mega_core::OptimizeReport, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.optimize_preview(id, options)).await
+}
+
+/// État de sécurité du document.
+#[tauri::command]
+pub async fn security(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<mega_core::SecurityInfo, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.security(id)).await
+}
+
+/// Pièces jointes du document.
+#[tauri::command]
+pub async fn attachments(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<Vec<mega_core::Attachment>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.attachments(id)).await
+}
+
+/// Écrit une pièce jointe dans un fichier choisi par l'utilisateur.
+#[tauri::command]
+pub async fn save_attachment(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    index: u16,
+    path: String,
+) -> Result<(), AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.save_attachment(id, index, path)).await
+}
+
+/// Compare deux pages : l'image PNG des différences est renvoyée en octets bruts, les
+/// compteurs dans l'en-tête de la réponse (`tauri::ipc::Response` évite le base64).
+#[tauri::command]
+pub async fn compare_pages(
+    service: State<'_, ServiceHandle>,
+    id_a: DocId,
+    page_a: u16,
+    id_b: DocId,
+    page_b: u16,
+    scale: f32,
+) -> Result<tauri::ipc::Response, AppError> {
+    let handle = service.inner().clone();
+    let compared = blocking(handle, move |h| {
+        h.compare_pages(id_a, page_a, id_b, page_b, scale)
+    })
+    .await?;
+    // Les compteurs sont encodés en tête du corps (24 octets, petit-boutiste), suivis du PNG :
+    // le frontend les lit dans le même tampon.
+    let mut body = Vec::with_capacity(compared.png.len() + 24);
+    body.extend_from_slice(&compared.differing_pixels.to_le_bytes());
+    body.extend_from_slice(&compared.total_pixels.to_le_bytes());
+    body.extend_from_slice(&compared.width_px.to_le_bytes());
+    body.extend_from_slice(&compared.height_px.to_le_bytes());
+    body.extend_from_slice(&compared.png);
+    Ok(tauri::ipc::Response::new(body))
+}
+
 /// Nature du formulaire et nombre de champs.
 #[tauri::command]
 pub async fn form_info(

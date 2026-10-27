@@ -177,6 +177,11 @@ impl Document {
         self.password.as_deref()
     }
 
+    /// Change le mot de passe mémorisé (protection posée ou retirée, annuler / rétablir).
+    pub(crate) fn set_password(&mut self, password: Option<String>) {
+        self.password = password;
+    }
+
     /// Change le chemin associé (après « Enregistrer sous »).
     pub(crate) fn set_path(&mut self, path: Option<PathBuf>) {
         self.path = path;

@@ -18,7 +18,8 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | 3 | Annotations (marquages de texte, notes, texte, encre, formes, tampons ; panneau ; rendu des annotations existantes) | ✅ |
 | 4 | Formulaires (champs HTML natifs, remplissage, aplatir, XFA détecté) et signature visuelle | ✅ |
 | 5 | Édition de contenu (objets de page, texte et images, caviardage réel, filigrane, numérotation, recadrage, pages tournées) | ✅ |
-| 6 → 7 | Export/sécurité, finition | ⬜ |
+| 6 | Export (images, texte), impression, métadonnées, protection AES-256, optimisation, pièces jointes, comparaison | ✅ |
+| 7 | Finition et distribution | ⬜ |
 
 ## Prérequis (développement)
 
@@ -65,6 +66,14 @@ cargo run -p mega-cli -- redact rapport.pdf --page 1 --rect 60,740,200,40 -o cav
 cargo run -p mega-cli -- watermark rapport.pdf --text BROUILLON -o marque.pdf
 cargo run -p mega-cli -- number rapport.pdf --template "{n} / {total}" --corner bottom_center -o numerote.pdf
 cargo run -p mega-cli -- crop rapport.pdf --margins 50,50,50,50 --pages 1 -o rogne.pdf
+cargo run -p mega-cli -- export-images rapport.pdf -o images/ --dpi 150        # ou --jpeg --quality 80
+cargo run -p mega-cli -- export-text rapport.pdf -o rapport.txt
+cargo run -p mega-cli -- meta rapport.pdf --title "Titre" --author "Moi" -o meta.pdf
+cargo run -p mega-cli -- protect rapport.pdf --user secret --owner patron --no-print -o verrou.pdf
+cargo run -p mega-cli -- unprotect verrou.pdf --password patron -o ouvert.pdf
+cargo run -p mega-cli -- optimize rapport.pdf --quality 75 --max-px 2048 -o leger.pdf
+cargo run -p mega-cli -- attachments rapport.pdf --extract 0 -o piece.bin
+cargo run -p mega-cli -- compare v1.pdf v2.pdf --page 3 -o diff.png
 ```
 
 Toutes les écritures sont atomiques (fichier temporaire puis renommage) : un échec ne laisse
@@ -79,6 +88,8 @@ scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/annotation.json 
 scripts/ui-check.ps1 -Pdf copie-form.pdf -Scenario scripts/scenarios/formulaire.json  # idem
 scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/contenu.json         # idem (Lot 5)
 scripts/ui-check.ps1 -Pdf copie-rotated.pdf -Scenario scripts/scenarios/rotation.json # page /Rotate 90
+scripts/ui-check.ps1 -Pdf copie.pdf -Scenario scripts/scenarios/export-securite.json  # Lot 6 (modifie et chiffre la copie)
+scripts/ui-check.ps1 -Pdf copie-pj.pdf -Scenario scripts/scenarios/pieces-jointes.json
 ```
 
 Lance l'application avec le port de débogage WebView2, déroule un scénario (clics, touches,

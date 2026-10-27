@@ -3,7 +3,8 @@
 // (`crates/mega-core` et `app/src-tauri/src/commands.rs`) : si l'un change, changer l'autre.
 
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { parseCounters } from '$lib/logic/export';
 
 /** Dimensions d'une page en points (miroir de `mega_core::PageSize`). */
 export interface PageSize {
@@ -99,7 +100,85 @@ export type EditCommand =
   | { kind: 'redact'; page: number; rect: Rect }
   | { kind: 'watermark'; spec: Watermark }
   | { kind: 'page_numbers'; spec: PageNumbering }
-  | { kind: 'crop_pages'; spec: CropSpec };
+  | { kind: 'crop_pages'; spec: CropSpec }
+  | { kind: 'set_metadata'; patch: MetadataPatch }
+  | { kind: 'protect'; protection: Protection }
+  | { kind: 'unprotect'; password: string | null }
+  | { kind: 'optimize'; options: OptimizeOptions }
+  | { kind: 'add_attachment'; path: string }
+  | { kind: 'delete_attachment'; index: number };
+
+/** Format d'export d'images (miroir de `ImageFormat`). */
+export type ImageFormat = { kind: 'png' } | { kind: 'jpeg'; quality: number };
+
+/** Export d'images (miroir de `ImageExport`). */
+export interface ImageExport {
+  pages: number[] | null;
+  format: ImageFormat;
+  dpi: number;
+  with_annotations: boolean;
+}
+
+/** Métadonnées à écrire (miroir de `MetadataPatch`) : absent = inchangé, vide = retiré. */
+export interface MetadataPatch {
+  title?: string;
+  author?: string;
+  subject?: string;
+  keywords?: string;
+}
+
+/** Permissions d'un document protégé (miroir de `security::Permissions`). */
+export interface Permissions {
+  print: boolean;
+  copy: boolean;
+  modify: boolean;
+  annotate: boolean;
+}
+
+/** Demande de protection (miroir de `Protection`). */
+export interface Protection {
+  user_password: string;
+  owner_password: string;
+  permissions: Permissions;
+}
+
+/** État de sécurité (miroir de `SecurityInfo`). */
+export interface SecurityInfo {
+  encrypted: boolean;
+  user_password_required: boolean;
+  permissions: Permissions;
+}
+
+/** Réglages d'optimisation (miroir de `OptimizeOptions`). */
+export interface OptimizeOptions {
+  image_quality: number | null;
+  max_image_px: number | null;
+  compress_streams: boolean;
+}
+
+/** Rapport d'optimisation (miroir de `OptimizeReport`). */
+export interface OptimizeReport {
+  bytes_before: number;
+  bytes_after: number;
+  images_recompressed: number;
+  objects_removed: number;
+}
+
+/** Une pièce jointe (miroir de `Attachment`). */
+export interface Attachment {
+  index: number;
+  name: string;
+  size: number;
+}
+
+/** Résultat d'une comparaison : image PNG et compteurs. */
+export interface ComparedPages {
+  png: Uint8Array<ArrayBuffer>;
+  differing_pixels: number;
+  total_pixels: number;
+  width_px: number;
+  height_px: number;
+}
 
 /** Nature d'un objet de page (miroir de `ObjectKind`). */
 export type ObjectKind = 'text' | 'image' | 'path' | 'form' | 'shading' | 'other';
@@ -366,6 +445,76 @@ export async function formInfo(id: number): Promise<FormInfo> {
   return invoke<FormInfo>('form_info', { id });
 }
 
+export async function pageText(id: number, page: number): Promise<string> {
+  return invoke<string>('page_text', { id, page });
+}
+
+export async function exportImages(
+  id: number,
+  spec: ImageExport,
+  dir: string,
+  prefix: string,
+  force: boolean,
+): Promise<string[]> {
+  return invoke<string[]>('export_images', { id, spec, dir, prefix, force });
+}
+
+export async function exportText(
+  id: number,
+  pages: number[] | null,
+  separators: boolean,
+  path: string,
+): Promise<void> {
+  await invoke('export_text', { id, pages, separators, path });
+}
+
+/** Ce que l'optimisation ferait, sans rien modifier. */
+export async function optimizePreview(
+  id: number,
+  options: OptimizeOptions,
+): Promise<OptimizeReport> {
+  return invoke<OptimizeReport>('optimize_preview', { id, options });
+}
+
+export async function security(id: number): Promise<SecurityInfo> {
+  return invoke<SecurityInfo>('security', { id });
+}
+
+export async function attachments(id: number): Promise<Attachment[]> {
+  return invoke<Attachment[]>('attachments', { id });
+}
+
+export async function saveAttachment(id: number, index: number, path: string): Promise<void> {
+  await invoke('save_attachment', { id, index, path });
+}
+
+/**
+ * Compare deux pages. Le backend renvoie un tampon binaire : 24 octets de compteurs
+ * (deux entiers 64 bits, deux entiers 32 bits, petit-boutiste) puis l'image PNG.
+ */
+export async function comparePages(
+  idA: number,
+  pageA: number,
+  idB: number,
+  pageB: number,
+  scale: number,
+): Promise<ComparedPages> {
+  const raw = await invoke<ArrayBuffer>('compare_pages', { idA, pageA, idB, pageB, scale });
+  return parseCounters(raw);
+}
+
+/** Dialogue natif : n'importe quel fichier ; `null` si annulé. */
+export async function pickAnyFile(): Promise<string | null> {
+  const picked = await open({ multiple: false, directory: false });
+  return typeof picked === 'string' ? picked : null;
+}
+
+/** Dialogue natif d'enregistrement pour un fichier quelconque (texte, pièce jointe). */
+export async function pickSaveFile(defaultPath?: string): Promise<string | null> {
+  const picked = await save({ defaultPath });
+  return typeof picked === 'string' ? picked : null;
+}
+
 /** Dialogue natif : une image PNG ou JPEG ; `null` si annulé. */
 export async function pickImageFile(): Promise<string | null> {
   const picked = await open({
@@ -437,7 +586,6 @@ export async function splitPlan(id: number, mode: SplitMode): Promise<number[][]
 
 /** Dialogue natif « Enregistrer sous » ; `null` si annulé. */
 export async function pickSavePath(defaultPath?: string): Promise<string | null> {
-  const { save } = await import('@tauri-apps/plugin-dialog');
   return save({ defaultPath, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
 }
 

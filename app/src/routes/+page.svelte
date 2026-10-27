@@ -7,7 +7,12 @@
   import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
   import SignatureDialog from '$lib/components/SignatureDialog.svelte';
   import CloseConfirmDialog from '$lib/components/CloseConfirmDialog.svelte';
+  import CompareDialog from '$lib/components/CompareDialog.svelte';
   import CropDialog from '$lib/components/CropDialog.svelte';
+  import ExportDialog from '$lib/components/ExportDialog.svelte';
+  import OptimizeDialog from '$lib/components/OptimizeDialog.svelte';
+  import PrintView from '$lib/components/PrintView.svelte';
+  import ProtectDialog from '$lib/components/ProtectDialog.svelte';
   import NumberingDialog from '$lib/components/NumberingDialog.svelte';
   import RedactConfirmDialog from '$lib/components/RedactConfirmDialog.svelte';
   import TextInsertDialog from '$lib/components/TextInsertDialog.svelte';
@@ -74,8 +79,22 @@
   let watermarkOpen = $state(false);
   let numberingOpen = $state(false);
   let cropOpen = $state(false);
+  let exportOpen = $state(false);
+  let printOpen = $state(false);
+  let protectOpen = $state(false);
+  let optimizeOpen = $state(false);
+  let compareOpen = $state(false);
   const contentDialogOpen = $derived(
-    watermarkOpen || numberingOpen || cropOpen || !!doc?.textInsertRequest || !!doc?.redactRequest,
+    watermarkOpen ||
+      numberingOpen ||
+      cropOpen ||
+      exportOpen ||
+      printOpen ||
+      protectOpen ||
+      optimizeOpen ||
+      compareOpen ||
+      !!doc?.textInsertRequest ||
+      !!doc?.redactRequest,
   );
   let editing = $state<{ annotation: Annotation; page: number } | null>(null);
 
@@ -180,6 +199,9 @@
     // annuler/rétablir y restent ceux du champ.
     if (typing && !e.ctrlKey && !e.key.startsWith('F') && e.key !== 'Escape') return;
     if (typing && (action === 'undo' || action === 'redo')) return;
+    // Ctrl+P n'imprime jamais la fenêtre telle quelle (impression native du WebView) : seule
+    // la vue d'impression le fait, même si un dialogue est ouvert.
+    if (action === 'print') e.preventDefault();
     // Un dialogue modal garde le clavier pour lui (sauf Échap).
     if (
       (docsState.closePrompt ||
@@ -284,6 +306,9 @@
       case 'properties':
         if (doc) propertiesOpen = true;
         break;
+      case 'print':
+        if (doc) printOpen = true;
+        break;
       case 'escape':
         if (docsState.closePrompt) resolveClosePrompt('cancel');
         else if (doc?.signatureRequest) cancelSignature(doc);
@@ -292,6 +317,11 @@
         else if (watermarkOpen) watermarkOpen = false;
         else if (numberingOpen) numberingOpen = false;
         else if (cropOpen) cropOpen = false;
+        else if (printOpen) printOpen = false;
+        else if (exportOpen) exportOpen = false;
+        else if (protectOpen) protectOpen = false;
+        else if (optimizeOpen) optimizeOpen = false;
+        else if (compareOpen) compareOpen = false;
         else if (editing) editing = null;
         else if (mergeOpen) mergeOpen = false;
         else if (splitOpen) splitOpen = false;
@@ -322,6 +352,11 @@
     onhelp={() => (helpOpen = true)}
     onmerge={() => (mergeOpen = true)}
     onsplit={() => doc && (splitOpen = true)}
+    onexport={() => doc && (exportOpen = true)}
+    onprint={() => doc && (printOpen = true)}
+    onprotect={() => doc && (protectOpen = true)}
+    onoptimize={() => doc && (optimizeOpen = true)}
+    oncompare={() => doc && (compareOpen = true)}
   />
   <Tabs />
   {#if doc}
@@ -396,6 +431,21 @@
   {/if}
   {#if doc && cropOpen}
     <CropDialog {doc} onclose={() => (cropOpen = false)} />
+  {/if}
+  {#if doc && exportOpen}
+    <ExportDialog {doc} onclose={() => (exportOpen = false)} />
+  {/if}
+  {#if doc && protectOpen}
+    <ProtectDialog {doc} onclose={() => (protectOpen = false)} />
+  {/if}
+  {#if doc && optimizeOpen}
+    <OptimizeDialog {doc} onclose={() => (optimizeOpen = false)} />
+  {/if}
+  {#if doc && compareOpen}
+    <CompareDialog {doc} onclose={() => (compareOpen = false)} />
+  {/if}
+  {#if doc && printOpen}
+    <PrintView {doc} onclose={() => (printOpen = false)} />
   {/if}
   {#if doc && editing}
     {#key editing.annotation.index}

@@ -2404,6 +2404,7 @@ dependencies = [
  "lopdf",
  "mega-core",
  "pdfium-render",
+ "rand",
  "serde",
  "tempfile",
  "thiserror 2.0.21",

@@ -28,7 +28,7 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 - [x] Thème clair / sombre, suit le système [1]
 - [x] Raccourcis clavier (ouvrir, fermer, zoom, navigation, recherche, rotation) et aide des raccourcis [1]
 - [x] Préférences persistantes (zoom par défaut, mode, thème, dossier récent) [1]
-- [ ] Affichage des pièces jointes du PDF et extraction [6]
+- [x] Affichage des pièces jointes du PDF, extraction, ajout, suppression [6]
 
 ## Pages et documents
 
@@ -75,12 +75,12 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 
 ## Export, impression, sécurité
 
-- [ ] Export en images PNG/JPEG (résolution choisie), export du texte [6]
-- [ ] Impression (dialogue système) [6]
-- [ ] Édition des métadonnées [6]
-- [ ] Chiffrement / mot de passe, retrait du mot de passe [6]
-- [ ] Optimisation : recompression des images, objets inutilisés [6]
-- [ ] Comparaison de deux versions [6]
+- [x] Export en images PNG/JPEG (résolution choisie), export du texte [6]
+- [x] Impression (dialogue système, via la vue d'impression du WebView) [6]
+- [x] Édition des métadonnées (titre, auteur, sujet, mots-clés ; XMP non touché) [6]
+- [x] Chiffrement AES-256 / mot de passe et permissions, retrait du mot de passe [6]
+- [x] Optimisation : recompression / réduction des images, flux compressés, objets inutilisés [6]
+- [x] Comparaison visuelle de deux versions (page par page) [6]
 
 ## Finition et distribution
 

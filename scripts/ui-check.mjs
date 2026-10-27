@@ -129,6 +129,10 @@ for (const step of scenario) {
     const ok = step.assert === undefined ? true : Boolean(value) && !String(value).startsWith('ERREUR');
     if (!ok) failures++;
     console.log(`${ok ? '✔' : '✘'} ${step.label ?? expr} → ${JSON.stringify(value)}`);
+  } else if (step.media !== undefined) {
+    // Émule un média CSS (« print » pour vérifier la feuille d'impression, « » pour revenir).
+    await send('Emulation.setEmulatedMedia', { media: step.media });
+    console.log(`🖨 média : ${step.media || '(écran)'}`);
   } else if (step.shot) {
     const cap = await send('Page.captureScreenshot', { format: 'png' });
     const file = join(outDir, step.shot);

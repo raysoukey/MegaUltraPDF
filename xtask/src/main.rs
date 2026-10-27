@@ -98,5 +98,8 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let rotated = dir.join("rotated.pdf");
     std::fs::write(&rotated, mega_core::testing::rotated_pdf())?;
     println!("écrit : {}", rotated.display());
+    let attachments = dir.join("attachments.pdf");
+    std::fs::write(&attachments, mega_core::testing::attachments_pdf())?;
+    println!("écrit : {}", attachments.display());
     Ok(())
 }

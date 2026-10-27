@@ -35,7 +35,8 @@ export type Action =
   | 'toolStrikeout'
   | 'toolText'
   | 'toolInk'
-  | 'deleteAnnotation';
+  | 'deleteAnnotation'
+  | 'print';
 
 /** Forme minimale d'un événement clavier, indépendante du DOM (testable). */
 export interface KeyLike {
@@ -65,6 +66,7 @@ const BINDINGS: Binding[] = [
   { key: '1', ctrl: true, action: 'fitWidth' },
   { key: '2', ctrl: true, action: 'fitPage' },
   { key: 'i', ctrl: true, action: 'properties' },
+  { key: 'p', ctrl: true, action: 'print' },
   { key: 'z', ctrl: true, action: 'undo' },
   { key: 'y', ctrl: true, action: 'redo' },
   { key: 'z', ctrl: true, shift: true, action: 'redo' },

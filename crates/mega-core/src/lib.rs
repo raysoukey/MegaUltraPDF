@@ -36,21 +36,26 @@
 )]
 
 pub mod annotations;
+pub mod attachments;
 pub mod cleanup;
+pub mod compare;
 pub mod content;
 pub mod document;
 pub mod edit;
 pub mod engine;
 pub mod error;
+pub mod export;
 pub mod forms;
 pub mod geometry;
 pub mod links;
+pub mod optimize;
 pub mod outline;
 pub mod overlay;
 pub mod pages;
 pub mod pagespec;
 pub mod properties;
 pub mod render;
+pub mod security;
 pub mod service;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -59,6 +64,8 @@ pub mod text;
 pub use annotations::{
     Annotation, AnnotationKind, AnnotationPatch, Color, Geometry, NewAnnotation, Style,
 };
+pub use attachments::Attachment;
+pub use compare::PageDiff;
 pub use content::redact::RedactReport;
 pub use content::{FontFamily, ObjectKind, PageObject, TextStyle};
 pub use document::{Document, PageSize};
@@ -69,11 +76,13 @@ pub use forms::{
 };
 pub use geometry::{PageFrame, Rect, Rotation};
 pub use links::{LinkTarget, PageLink};
+pub use optimize::{OptimizeOptions, OptimizeReport};
 pub use outline::OutlineNode;
 pub use overlay::{Corner, CropSpec, PageNumbering, Watermark};
 pub use pagespec::PageSpec;
-pub use properties::DocumentProperties;
+pub use properties::{DocumentProperties, MetadataPatch};
 pub use render::RenderedPage;
+pub use security::{Permissions, Protection, SecurityInfo};
 pub use text::{SearchHit, SearchOptions, TextBox};
 
 /// Version du crate, lue depuis `Cargo.toml` au moment de la compilation.

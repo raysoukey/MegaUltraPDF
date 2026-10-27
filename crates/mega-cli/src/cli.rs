@@ -229,6 +229,171 @@ pub enum Command {
         #[arg(long)]
         password: Option<String>,
     },
+    /// Exporte des pages en images PNG (ou JPEG avec --jpeg) dans un dossier.
+    ExportImages {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Dossier de sortie (créé si besoin).
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Pages (ex. « 1-3 ») ; toutes si absent.
+        #[arg(long)]
+        pages: Option<String>,
+        /// Résolution en points par pouce (36 à 600).
+        #[arg(long, default_value_t = 150)]
+        dpi: u16,
+        /// Produire du JPEG plutôt que du PNG.
+        #[arg(long)]
+        jpeg: bool,
+        /// Qualité JPEG (10 à 100).
+        #[arg(long, default_value_t = 85)]
+        quality: u8,
+        /// Préfixe des fichiers (défaut : nom du fichier source).
+        #[arg(long)]
+        prefix: Option<String>,
+        /// Écraser les fichiers existants.
+        #[arg(long)]
+        force: bool,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Exporte le texte des pages dans un fichier UTF-8.
+    ExportText {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Fichier texte à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Pages (ex. « 2- ») ; toutes si absent.
+        #[arg(long)]
+        pages: Option<String>,
+        /// Ne pas écrire de ligne « ===== Page N ===== » entre les pages.
+        #[arg(long)]
+        no_separators: bool,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Affiche les métadonnées et la sécurité ; avec --title/--author/…, les écrit.
+    Meta {
+        /// Fichier PDF.
+        file: PathBuf,
+        /// Nouveau titre (vide pour retirer).
+        #[arg(long)]
+        title: Option<String>,
+        /// Nouvel auteur.
+        #[arg(long)]
+        author: Option<String>,
+        /// Nouveau sujet.
+        #[arg(long)]
+        subject: Option<String>,
+        /// Nouveaux mots-clés.
+        #[arg(long)]
+        keywords: Option<String>,
+        /// Fichier PDF à écrire (défaut : le fichier lui-même).
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Protège un PDF par mot de passe (AES-256) vers un nouveau fichier.
+    Protect {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Mot de passe d'ouverture (vide : aucun).
+        #[arg(long, default_value = "")]
+        user: String,
+        /// Mot de passe propriétaire (vide : identique au mot de passe d'ouverture).
+        #[arg(long, default_value = "")]
+        owner: String,
+        /// Interdire l'impression.
+        #[arg(long)]
+        no_print: bool,
+        /// Interdire la copie du texte et des images.
+        #[arg(long)]
+        no_copy: bool,
+        /// Interdire la modification.
+        #[arg(long)]
+        no_modify: bool,
+        /// Interdire les annotations et le remplissage de formulaires.
+        #[arg(long)]
+        no_annotate: bool,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe du fichier source, s'il est déjà chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Retire la protection d'un PDF ouvert avec son mot de passe, vers un nouveau fichier.
+    Unprotect {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Mot de passe (utilisateur ou propriétaire).
+        #[arg(long)]
+        password: Option<String>,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+    },
+    /// Optimise un PDF (élagage, compression, images) vers un nouveau fichier.
+    Optimize {
+        /// Fichier PDF source.
+        file: PathBuf,
+        /// Qualité JPEG des images recomprimées (10 à 100).
+        #[arg(long, default_value_t = 75)]
+        quality: u8,
+        /// Dimension maximale des images en pixels (256 à 8192) ; aucune réduction si absent.
+        #[arg(long)]
+        max_px: Option<u32>,
+        /// Ne pas compresser les flux non compressés.
+        #[arg(long)]
+        no_compress: bool,
+        /// Fichier PDF à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Liste les pièces jointes d'un PDF, ou en extrait une.
+    Attachments {
+        /// Fichier PDF.
+        file: PathBuf,
+        /// Index de la pièce jointe à extraire (voir la liste).
+        #[arg(long)]
+        extract: Option<u16>,
+        /// Fichier à écrire (avec --extract).
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Mot de passe, pour un PDF chiffré.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Compare une page de deux PDF et écrit l'image des différences (PNG).
+    Compare {
+        /// Premier fichier.
+        a: PathBuf,
+        /// Second fichier.
+        b: PathBuf,
+        /// Page du premier fichier (à partir de 1).
+        #[arg(long, default_value_t = 1)]
+        page: u16,
+        /// Page du second fichier (défaut : la même).
+        #[arg(long)]
+        page_b: Option<u16>,
+        /// Échelle de rendu (1 = 72 dpi, au plus 4).
+        #[arg(long, default_value_t = 1.0)]
+        scale: f32,
+        /// Image PNG à écrire.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Mot de passe, pour des PDF chiffrés.
+        #[arg(long)]
+        password: Option<String>,
+    },
     /// Recadre des pages par marges « gauche,bas,droite,haut » (0,0,0,0 réinitialise).
     Crop {
         /// Fichier PDF source.

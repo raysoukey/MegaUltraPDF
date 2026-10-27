@@ -54,12 +54,58 @@ impl Document {
     /// Caviarde `rect` (points, espace **affiché**) sur la page `page` : retire les objets
     /// texte et image et les annotations qui touchent la zone, puis la recouvre d'un
     /// rectangle noir. Retourne ce qui a été retiré.
+    ///
+    /// Deux refus protègent la promesse « le contenu disparaît du fichier » : un document
+    /// **chiffré** (les objets retirés resteraient en orphelins, la passe `lopdf` ne pouvant
+    /// pas l'élaguer) et du **texte qui resterait sous le cache** (dessiné à travers un
+    /// formulaire XObject, hors de portée du retrait par objets) : le document est alors
+    /// remis dans son état d'avant.
     pub fn redact(&mut self, page: u16, rect: Rect) -> CoreResult<RedactReport> {
         if !(rect.w > 0.0 && rect.h > 0.0 && rect.w.is_finite() && rect.h.is_finite()) {
             return Err(CoreError::InvalidOperation(
                 "la zone à caviarder est vide".to_string(),
             ));
         }
+        self.checked_index(page)?;
+        self.check_not_encrypted()?;
+        // Instantané pour revenir en arrière si la phase PDFium échoue à mi-chemin ou si du
+        // texte reste sous le cache ; il sert aussi à vérifier que la page supporte la
+        // régénération de son flux (B3).
+        let snapshot = self.to_bytes()?;
+        super::check_regeneration_safe(&snapshot, page)?;
+        let report = match self.redact_objects(page, rect) {
+            Ok(report) => report,
+            Err(e) => {
+                self.reload_from_bytes(snapshot)?;
+                return Err(e);
+            }
+        };
+        let remaining = self
+            .text_boxes(page)?
+            .into_iter()
+            .filter(|b| {
+                let (cx, cy) = (b.rect.x + b.rect.w / 2.0, b.rect.y + b.rect.h / 2.0);
+                cx >= rect.x && cx <= rect.x + rect.w && cy >= rect.y && cy <= rect.y + rect.h
+            })
+            .count();
+        if remaining > 0 {
+            self.reload_from_bytes(snapshot)?;
+            return Err(CoreError::InvalidOperation(format!(
+                "du texte reste sous la zone ({remaining} caractère(s) dessinés via un groupe \
+                 XObject) : le caviardage par objets ne peut pas le retirer"
+            )));
+        }
+        Ok(report)
+    }
+
+    /// Vérifie l'index de page (jeton pris le temps de la vérification).
+    fn checked_index(&self, page: u16) -> CoreResult<()> {
+        let _guard = engine::guard();
+        self.checked_index_unlocked(page).map(|_| ())
+    }
+
+    /// Phase PDFium du caviardage : suppressions, cache noir, régénération du contenu.
+    fn redact_objects(&mut self, page: u16, rect: Rect) -> CoreResult<RedactReport> {
         let _guard = engine::guard();
         let page_index = self.checked_index_unlocked(page)?;
         let doc = self.inner();
@@ -68,6 +114,22 @@ impl Document {
         super::rect_in_page(&frame, &rect)?;
         let zone = frame.to_user_space(rect);
         let mut report = RedactReport::default();
+        // Un widget retiré de `/Annots` laisserait sa valeur dans `/AcroForm /Fields` : on
+        // refuse avant de toucher à quoi que ce soit (aplatir le formulaire d'abord).
+        for ann in pdf_page.annotations().iter() {
+            if ann.annotation_type() == pdfium_render::prelude::PdfPageAnnotationType::Widget
+                && ann
+                    .bounds()
+                    .map(|b| intersects(&Rect::from_pdf(b), &zone))
+                    .unwrap_or(false)
+            {
+                return Err(CoreError::InvalidOperation(
+                    "la zone touche un champ de formulaire : sa valeur resterait dans le \
+                     fichier ; aplatissez le formulaire avant de caviarder"
+                        .to_string(),
+                ));
+            }
+        }
         // Un seul flux régénéré à la fin, pas un par suppression.
         pdf_page.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
         let count = pdf_page.objects().len();

@@ -81,10 +81,21 @@ dialogues partagent `PageScopeSelect`. Aucune chaîne en dur.
 4. `redact.rs` : proposez (sans coder) comment on caviarderait **par caractère** un objet texte
    `Tj` avec `lopdf`, et listez ce qui peut mal tourner (positionnement, polices, `TJ`).
 
+### 7. Ce que les relectures ont apporté
+
+Deux relectures indépendantes (code, conformité PDF) ont trouvé ce que les tests « heureux »
+ne voyaient pas : `lopdf` **déchiffre en silence** un PDF protégé par mot de passe
+propriétaire seul (`is_encrypted()` ment, `was_encrypted()` dit vrai) ; retirer un widget
+laisse sa valeur dans `/AcroForm` ; PDFium régénère un flux en perdant les polices Type 3, les
+images en ligne et les ombrages. La réponse commune : **refuser avec un message précis** plutôt
+que produire un fichier qui ment (ADR-0010 §7), et une fixture par cas
+(`owner-only.pdf`, `fragile_content_pdf`, `xobject_text_pdf`).
+
 ## Ce qui reste ouvert
 
-Police embarquée pour l'Unicode hors WinAnsi, caviardage par caractère, recadrage par
-rectangle tracé, objets de page dans un panneau latéral. Voir le ledger du lot et ADR-0010.
+Police embarquée pour l'Unicode hors WinAnsi, caviardage par caractère et caviardage raster
+des images, recadrage par rectangle tracé, objets de page dans un panneau latéral, popups
+orphelins, avertissement de signature invalidée. Voir le ledger du lot et ADR-0010.
 
 ## Prérequis pour le Lot 6 (export, impression, sécurité)
 

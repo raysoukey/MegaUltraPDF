@@ -132,7 +132,8 @@ fn set_need_appearances(doc: &mut Document) -> CoreResult<()> {
 
 fn load(bytes: &[u8]) -> CoreResult<Document> {
     let doc = Document::load_mem(bytes).map_err(structure)?;
-    if doc.is_encrypted() {
+    // `was_encrypted()` : lopdf déchiffre en silence un mot de passe utilisateur vide.
+    if doc.is_encrypted() || doc.was_encrypted() {
         return Err(CoreError::InvalidOperation(
             "formulaire d'un PDF chiffré : non modifiable dans cette version".to_string(),
         ));

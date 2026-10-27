@@ -491,9 +491,14 @@ impl Document {
                     unreachable!("validé plus haut")
                 };
                 let mut a = annots.create_text_annotation(&new.contents)?;
-                // §12.5.6.4 : une note garde sa taille à l'écran et ne tourne pas avec la page.
+                // §12.5.6.4 : une note garde sa taille à l'écran. NoRotate ancre l'icône au
+                // coin haut-gauche du `/Rect` **en espace utilisateur** : sur une page `/Rotate`,
+                // ce coin n'est pas celui vu en haut à gauche et Acrobat décalerait l'icône ;
+                // la note y tourne donc avec la page.
                 a.set_is_zoomable(false)?;
-                a.set_is_rotatable(false)?;
+                if frame.rotate.is_multiple_of(360) {
+                    a.set_is_rotatable(false)?;
+                }
                 let icon = Rect {
                     x: rect.x,
                     y: rect.y + rect.h - appearance::NOTE_ICON_SIZE,

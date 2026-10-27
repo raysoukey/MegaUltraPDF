@@ -172,6 +172,51 @@ fn invalid(msg: &str) -> CoreError {
     CoreError::InvalidOperation(msg.to_string())
 }
 
+/// Refuse de modifier une page dont PDFium **régénérerait** le flux en perdant du contenu.
+///
+/// Toute édition d'un objet existant (suppression, déplacement, texte, caviardage) fait
+/// réécrire par PDFium le flux entier de la page à partir des objets analysés ; ce
+/// générateur ne sait pas réémettre le texte en police **Type 3**, les images **en ligne**
+/// (`BI … EI`) ni les ombrages (`sh`), qui disparaîtraient en silence. On inspecte la page
+/// avec `lopdf` avant d'y toucher ; l'insertion (nouveau flux) n'est pas concernée.
+pub(crate) fn check_regeneration_safe(bytes: &[u8], page: u16) -> CoreResult<()> {
+    let refuse = |what: &str| {
+        CoreError::InvalidOperation(format!(
+            "cette page contient {what} : PDFium le perdrait en régénérant son contenu ; \
+             modification des objets refusée (l'insertion reste possible)"
+        ))
+    };
+    let Ok(doc) = lopdf::Document::load_mem(bytes) else {
+        // Illisible par lopdf : on ne peut rien garantir.
+        return Err(refuse("un contenu que l'on ne sait pas analyser"));
+    };
+    let Some(page_id) = doc.get_pages().get(&(u32::from(page) + 1)).copied() else {
+        return Err(refuse("un contenu que l'on ne sait pas analyser"));
+    };
+    if let Ok(fonts) = doc.get_page_fonts(page_id)
+        && fonts.values().any(|f| {
+            f.get(b"Subtype")
+                .ok()
+                .and_then(|s| s.as_name().ok())
+                .is_some_and(|n| n == b"Type3")
+        })
+    {
+        return Err(refuse("du texte en police Type 3"));
+    }
+    let content = doc.get_page_content(page_id);
+    let Ok(ops) = lopdf::content::Content::decode(&content) else {
+        return Err(refuse("un contenu que l'on ne sait pas analyser"));
+    };
+    for op in &ops.operations {
+        match op.operator.as_str() {
+            "BI" | "ID" | "EI" => return Err(refuse("une image en ligne")),
+            "sh" => return Err(refuse("un ombrage")),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Taille de police **effective** d'un objet texte : la taille nominale multipliée par
 /// l'échelle verticale de sa matrice, lue comme la norme de la colonne (b, d).
 ///
@@ -237,6 +282,7 @@ impl Document {
 
     /// Supprime l'objet `index` de la page (les index suivants reculent d'un cran).
     pub fn delete_object(&mut self, page: u16, index: u16) -> CoreResult<()> {
+        self.check_page_editable(page)?;
         let _guard = engine::guard();
         let mut pdf_page = self
             .inner()
@@ -256,6 +302,7 @@ impl Document {
         if !(dx.is_finite() && dy.is_finite()) {
             return Err(invalid("déplacement invalide"));
         }
+        self.check_page_editable(page)?;
         let _guard = engine::guard();
         let mut pdf_page = self
             .inner()
@@ -283,6 +330,7 @@ impl Document {
         if text.chars().count() > MAX_OBJECT_TEXT_CHARS {
             return Err(invalid("texte trop long (4096 caractères au plus)"));
         }
+        self.check_page_editable(page)?;
         let _guard = engine::guard();
         let mut pdf_page = self
             .inner()
@@ -401,6 +449,42 @@ impl Document {
         let frame = frame_of(&pdf_page);
         rect_in_page(&frame, &rect)?;
         image::place(&mut pdf_page, &frame, &loaded, &placed)
+    }
+}
+
+impl Document {
+    /// Vérifie que la page `page` existe et supporte la régénération de son contenu
+    /// (voir [`check_regeneration_safe`]). Prend et rend le jeton : à appeler **avant** la
+    /// phase PDFium.
+    fn check_page_editable(&self, page: u16) -> CoreResult<()> {
+        {
+            let _guard = engine::guard();
+            self.checked_index_unlocked(page)?;
+        }
+        self.check_not_encrypted()?;
+        let bytes = self.to_bytes()?;
+        check_regeneration_safe(&bytes, page)
+    }
+
+    /// Refuse l'édition du contenu d'un PDF chiffré : les objets retirés resteraient en
+    /// orphelins dans le fichier (la passe `lopdf` ne peut pas l'élaguer) et l'analyse de
+    /// la page n'est pas possible. Prend et rend le jeton.
+    pub(crate) fn check_not_encrypted(&self) -> CoreResult<()> {
+        let _guard = engine::guard();
+        let unprotected = self
+            .inner()
+            .permissions()
+            .security_handler_revision()
+            .map(|r| r == pdfium_render::prelude::PdfSecurityHandlerRevision::Unprotected)
+            .unwrap_or(false);
+        if unprotected {
+            Ok(())
+        } else {
+            Err(invalid(
+                "édition du contenu d'un PDF chiffré : non prise en charge (le contenu retiré \
+                 resterait dans le fichier)",
+            ))
+        }
     }
 }
 

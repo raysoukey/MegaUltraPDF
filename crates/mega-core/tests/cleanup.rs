@@ -132,3 +132,121 @@ fn cleanup_inklist_follows_ink_strokes() {
         "{tail}"
     );
 }
+
+/// La clé privée `/PDFIUM_HasGeneratedAP` est posée aussi sur les marquages de texte : elle
+/// disparaît du fichier (leur apparence, elle, est conservée : elle est portable).
+#[test]
+fn save_cleanup_strips_private_key_from_markups_but_keeps_their_appearance() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("marquage.pdf");
+    std::fs::write(&path, sample_pdf(1, "marquage")).unwrap();
+    let mut doc = Document::open(&path, None).unwrap();
+    doc.add_annotation(
+        0,
+        &NewAnnotation {
+            kind: AnnotationKind::Highlight,
+            geometry: Geometry::Quads {
+                rects: vec![Rect {
+                    x: 70.0,
+                    y: 750.0,
+                    w: 100.0,
+                    h: 24.0,
+                }],
+            },
+            style: style(),
+            contents: String::new(),
+            author: String::new(),
+        },
+    )
+    .unwrap();
+    doc.render_page(0, 0.5).unwrap();
+    assert!(String::from_utf8_lossy(&doc.to_bytes().unwrap()).contains("PDFIUM_HasGeneratedAP"));
+    let before = doc.render_page(0, 1.0).unwrap();
+    doc.save().unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    assert!(!String::from_utf8_lossy(&saved).contains("PDFIUM_HasGeneratedAP"));
+    let reopened = Document::open(&path, None).unwrap();
+    assert_eq!(reopened.render_page(0, 1.0).unwrap().rgba, before.rgba);
+}
+
+fn fixture_bytes(name: &str) -> Vec<u8> {
+    std::fs::read(format!(
+        "{}/../../fixtures/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+}
+
+/// B1 (pdf-expert) : un PDF protégé par un mot de passe **propriétaire** seul s'ouvre sans mot
+/// de passe ; `lopdf` le déchiffre alors en silence et `is_encrypted()` ment. L'enregistrement
+/// doit conserver le chiffrement (octets PDFium tels quels), et les passes `lopdf` refuser.
+#[test]
+fn owner_password_document_keeps_its_encryption_on_save() {
+    let bytes = fixture_bytes("owner-only.pdf");
+    assert!(String::from_utf8_lossy(&bytes).contains("/Encrypt"));
+    let out = mega_core::cleanup::before_save(&bytes).unwrap();
+    assert!(
+        String::from_utf8_lossy(&out).contains("/Encrypt"),
+        "la passe de nettoyage ne doit pas déchiffrer"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("owner.pdf");
+    std::fs::write(&path, &bytes).unwrap();
+    let mut doc = Document::open(&path, None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    doc.save().unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    assert!(
+        String::from_utf8_lossy(&saved).contains("/Encrypt"),
+        "toujours chiffré"
+    );
+    let reopened = Document::open(&path, None).unwrap();
+    assert_eq!(reopened.page_count(), 3);
+    // Les passes qui réécrivent par lopdf refusent plutôt que de déchiffrer.
+    let err = reopened_watermark_error(&path);
+    assert!(err.contains("chiffré"), "{err}");
+}
+
+fn reopened_watermark_error(path: &std::path::Path) -> String {
+    let mut doc = Document::open(path, None).unwrap();
+    let spec = mega_core::overlay::Watermark {
+        text: "X".to_string(),
+        size: 40.0,
+        opacity: 0.5,
+        angle_deg: 0.0,
+        color: Color { r: 0, g: 0, b: 0 },
+        pages: None,
+    };
+    match doc.add_watermark(&spec) {
+        Err(mega_core::CoreError::InvalidOperation(m)) => m,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A5 (pdf-expert) : deux superpositions successives ne doivent pas emboîter deux enveloppes
+/// `q … Q` (limite de profondeur d'Acrobat) : la nôtre est reconnue et réutilisée.
+#[test]
+fn second_overlay_reuses_the_existing_wrapper() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "double"), None).unwrap();
+    let spec = mega_core::overlay::Watermark {
+        text: "UN".to_string(),
+        size: 40.0,
+        opacity: 0.5,
+        angle_deg: 0.0,
+        color: Color { r: 0, g: 0, b: 0 },
+        pages: None,
+    };
+    doc.add_watermark(&spec).unwrap();
+    doc.add_watermark(&mega_core::overlay::Watermark {
+        text: "DEUX".to_string(),
+        ..spec
+    })
+    .unwrap();
+    let lo = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    let page = lo.get_pages()[&1];
+    let streams = lo.get_page_contents(page);
+    // [q, contenu d'origine, Q, UN, DEUX] : cinq flux, pas sept.
+    assert_eq!(streams.len(), 5, "{streams:?}");
+    let text: String = doc.text_boxes(0).unwrap().iter().map(|b| b.ch).collect();
+    assert!(text.contains("UN") && text.contains("DEUX"));
+}

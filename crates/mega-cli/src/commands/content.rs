@@ -7,7 +7,6 @@
 use std::path::Path;
 
 use anyhow::Context;
-use mega_core::edit::write_atomically;
 use mega_core::overlay::{Corner, CropSpec, PageNumbering, Watermark};
 use mega_core::{Color, Document, EditCommand, ObjectKind, PageObject, PageSpec, Rect};
 
@@ -90,7 +89,9 @@ fn four(spec: &str, what: &str) -> anyhow::Result<[f32; 4]> {
     Ok([a, b, c, d])
 }
 
-/// Applique `command` à `file` et écrit le résultat dans `out`.
+/// Applique `command` à `file` et écrit le résultat dans `out` par `save_as` : même chemin
+/// que l'application (passe de nettoyage `lopdf`, écriture atomique), jamais `to_bytes`
+/// brut, qui conserverait les objets orphelins (annotations retirées comprises).
 fn apply_and_write(
     file: &Path,
     command: &EditCommand,
@@ -99,7 +100,7 @@ fn apply_and_write(
 ) -> anyhow::Result<Document> {
     let mut doc = Document::open(file, password)?;
     doc.apply(command)?;
-    write_atomically(out, &doc.to_bytes()?)
+    doc.save_as(out)
         .with_context(|| format!("écriture de {}", out.display()))?;
     Ok(doc)
 }
@@ -117,7 +118,7 @@ pub fn redact(
     let page = page_index(&doc, page)?;
     // L'appel direct donne le rapport ; la commande d'historique n'en a pas besoin ici.
     let report = doc.redact(page, Rect { x, y, w, h })?;
-    write_atomically(out, &doc.to_bytes()?)
+    doc.save_as(out)
         .with_context(|| format!("écriture de {}", out.display()))?;
     println!(
         "Caviardé : {} texte(s), {} image(s), {} annotation(s) : {}",

@@ -244,3 +244,42 @@ fn text_boxes_on_rotated_page_are_in_displayed_space() {
     assert_eq!(hits.len(), 1);
     assert!(hits[0].rects[0].x > 540.0, "{:?}", hits[0].rects);
 }
+
+/// A3 (pdf-expert) : le drapeau NoRotate ancre l'icône au coin haut-gauche du `/Rect` en
+/// espace **utilisateur** ; sur une page tournée ce coin n'est plus celui que l'on voit en
+/// haut à gauche, et Acrobat décalerait l'icône. Sur une page tournée, la note tourne donc
+/// avec la page (pas de NoRotate) ; sur une page droite, le drapeau reste.
+#[test]
+fn notes_on_rotated_pages_do_not_carry_no_rotate() {
+    let flags = |bytes: Vec<u8>| -> i64 {
+        let lo = lopdf::Document::load_mem(&bytes).unwrap();
+        let page = lo.get_dictionary(lo.get_pages()[&1]).unwrap();
+        let annots = lo.dereference(page.get(b"Annots").unwrap()).unwrap().1;
+        let last = annots.as_array().unwrap().last().unwrap();
+        let (_, dict) = lo.dereference(last).unwrap();
+        dict.as_dict().unwrap().get(b"F").unwrap().as_i64().unwrap()
+    };
+    let note = NewAnnotation {
+        kind: AnnotationKind::Note,
+        geometry: Geometry::Rect {
+            rect: rect(50.0, 300.0, 0.0, 0.0),
+        },
+        style: red(),
+        contents: "Note".to_string(),
+        author: String::new(),
+    };
+    let mut rotated = Document::from_bytes(rotated_pdf(), None).unwrap();
+    rotated.add_annotation(0, &note).unwrap();
+    assert_eq!(
+        flags(rotated.to_bytes().unwrap()) & 16,
+        0,
+        "pas de NoRotate sur page tournée"
+    );
+    let mut straight = Document::from_bytes(mega_core::testing::sample_pdf(1, "n"), None).unwrap();
+    straight.add_annotation(0, &note).unwrap();
+    assert_eq!(
+        flags(straight.to_bytes().unwrap()) & 16,
+        16,
+        "NoRotate conservé sinon"
+    );
+}

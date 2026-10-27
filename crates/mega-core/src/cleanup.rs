@@ -28,18 +28,38 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
         // Un fichier que lopdf ne relit pas est écrit tel que PDFium l'a produit.
         Err(_) => return Ok(bytes.to_vec()),
     };
-    if doc.is_encrypted() {
+    // `is_encrypted()` ne voit que le dictionnaire `/Encrypt` ; or lopdf **déchiffre en
+    // silence** un fichier dont le mot de passe utilisateur est vide (protection « propriétaire »
+    // seule) et retire `/Encrypt` : `was_encrypted()` garde la trace. Dans les deux cas, on ne
+    // réécrit pas : le fichier resterait lisible mais perdrait sa protection.
+    if doc.is_encrypted() || doc.was_encrypted() {
         return Ok(bytes.to_vec());
     }
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
     for page_id in pages {
         clean_page_annotations(&mut doc, page_id)?;
     }
+    let pages_before = doc.get_pages().len();
     doc.prune_objects();
     doc.renumber_objects();
     let mut out = Vec::new();
     doc.save_to(&mut out)?;
+    // Ceinture de sécurité : la réécriture `lopdf` remplace le fichier de l'utilisateur ; si
+    // elle ne se relit pas avec le même nombre de pages, on écrit les octets PDFium tels quels.
+    if !rewrite_is_sane(pages_before, &out) {
+        return Ok(bytes.to_vec());
+    }
     Ok(out)
+}
+
+/// Vrai si `out` se relit comme un PDF non vide ayant encore `pages_before` pages.
+fn rewrite_is_sane(pages_before: usize, out: &[u8]) -> bool {
+    match Document::load_mem(out) {
+        Ok(reloaded) => {
+            reloaded.get_pages().len() == pages_before && reloaded.trailer.get(b"Root").is_ok()
+        }
+        Err(_) => false,
+    }
 }
 
 /// Nettoie chaque annotation d'une page. PDFium écrit une annotation fraîchement créée
@@ -115,21 +135,26 @@ fn subtype(dict: &Dictionary) -> Vec<u8> {
 /// lecture de l'apparence emprunte `doc` en lecture, et Rust interdit de le modifier en
 /// même temps. Calculer d'abord, écrire ensuite, lève le conflit d'emprunts.
 fn cleaned(doc: &Document, dict: &Dictionary) -> Option<Dictionary> {
-    match subtype(dict).as_slice() {
-        b"Text" if dict.has(b"PDFIUM_HasGeneratedAP") => {
-            let mut new_dict = dict.clone();
+    let mut new_dict = dict.clone();
+    let mut changed = false;
+    // La clé privée de PDFium n'a rien à faire dans un fichier, quel que soit le sous-type ;
+    // l'apparence générée, elle, n'est retirée que des notes (icône jaune imposée) : celle
+    // des marquages est portable et attendue par les lecteurs qui ne régénèrent rien.
+    if new_dict.has(b"PDFIUM_HasGeneratedAP") {
+        new_dict.remove(b"PDFIUM_HasGeneratedAP");
+        if subtype(dict).as_slice() == b"Text" {
             new_dict.remove(b"AP");
-            new_dict.remove(b"PDFIUM_HasGeneratedAP");
-            Some(new_dict)
         }
-        b"Ink" if !dict.has(b"InkList") => {
-            let points = ink_points(doc, dict)?;
-            let mut new_dict = dict.clone();
-            new_dict.set("InkList", Object::Array(points));
-            Some(new_dict)
-        }
-        _ => None,
+        changed = true;
     }
+    if subtype(dict).as_slice() == b"Ink"
+        && !dict.has(b"InkList")
+        && let Some(points) = ink_points(doc, dict)
+    {
+        new_dict.set("InkList", Object::Array(points));
+        changed = true;
+    }
+    changed.then_some(new_dict)
 }
 
 /// `/InkList` déduite de l'apparence normale : un tableau de points par sous-chemin.
@@ -185,4 +210,21 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
             .map(|s| Object::Array(s.into_iter().map(Object::Real).collect()))
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_sanity_rejects_truncated_or_page_losing_output() {
+        let bytes = crate::testing::many_pages_pdf(3);
+        assert!(rewrite_is_sane(3, &bytes));
+        assert!(!rewrite_is_sane(4, &bytes), "nombre de pages différent");
+        assert!(
+            !rewrite_is_sane(3, &bytes[..bytes.len() / 2]),
+            "fichier tronqué"
+        );
+        assert!(!rewrite_is_sane(0, b"pas un pdf"));
+    }
 }

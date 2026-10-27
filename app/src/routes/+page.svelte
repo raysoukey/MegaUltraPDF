@@ -22,6 +22,7 @@
   import Tabs from '$lib/components/Tabs.svelte';
   import Toolbar from '$lib/components/Toolbar.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
+  import { isContentTool } from '$lib/logic/content';
   import { selectedText } from '$lib/logic/selection';
   import { actionFor } from '$lib/logic/shortcuts';
   import { nextZoom } from '$lib/logic/zoom';
@@ -235,7 +236,7 @@
         markupSelection('strike_out');
         break;
       case 'deleteAnnotation':
-        if (doc?.selectedObject) deleteSelectedObject(doc);
+        if (doc?.selectedObject && isContentTool(toolState.tool)) deleteSelectedObject(doc);
         else if (doc) deleteSelectedAnnotation(doc);
         break;
       case 'find':

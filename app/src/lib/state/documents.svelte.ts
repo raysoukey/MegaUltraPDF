@@ -453,6 +453,10 @@ function afterEdit(doc: OpenDoc, result: EditResult): void {
   doc.formFields = {};
   doc.formInfo = null;
   doc.pageObjects = {};
+  // Les index d'objets sont positionnels : une sélection survivant à une édition pourrait
+  // désigner un autre objet (annuler une insertion, caviarder). Les actions qui veulent
+  // garder la sélection (déplacer, modifier le texte) la reposent après coup.
+  doc.selectedObject = null;
   doc.page = Math.min(doc.page, Math.max(0, result.summary.page_count - 1));
   nextGeneration(doc);
 }

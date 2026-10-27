@@ -338,7 +338,8 @@ impl Document {
     fn apply_placements(&mut self, placements: Vec<Placement>) -> CoreResult<()> {
         let bytes = self.to_bytes()?;
         let mut doc = LoDocument::load_mem(&bytes).map_err(structure)?;
-        if doc.is_encrypted() {
+        // Voir `cleanup::before_save` : `was_encrypted()` couvre le mot de passe propriétaire seul.
+        if doc.is_encrypted() || doc.was_encrypted() {
             return Err(invalid(
                 "filigrane et numérotation d'un PDF chiffré : non modifiables dans cette version",
             ));
@@ -479,6 +480,26 @@ fn append_content(
             bytes.to_vec(),
         )))
     };
+    // Une enveloppe posée par un appel précédent (premier flux `q`, un flux `Q` plus loin) est
+    // réutilisée : emboîter un `q … Q` par superposition finirait par dépasser la profondeur
+    // que certains lecteurs tolèrent (Acrobat : 28 niveaux).
+    // PDFium peut avoir recomprimé nos petits flux au passage : on compare le contenu décodé.
+    let raw = |doc: &LoDocument, id: &ObjectId| -> Vec<u8> {
+        doc.get_object(*id)
+            .ok()
+            .and_then(|o| o.as_stream().ok())
+            .map(|s| {
+                s.decompressed_content()
+                    .unwrap_or_else(|_| s.content.clone())
+            })
+            .map(|c| c.trim_ascii().to_vec())
+            .unwrap_or_default()
+    };
+    let already_wrapped = existing.first().is_some_and(|id| raw(doc, id) == b"q")
+        && existing.iter().skip(1).any(|id| raw(doc, id) == b"Q");
+    if already_wrapped {
+        wrapped.insert(page_id);
+    }
     if wrapped.insert(page_id) && !existing.is_empty() {
         list.push(Object::Reference(stream(doc, b"q\n")));
         list.extend(existing.iter().map(|id| Object::Reference(*id)));

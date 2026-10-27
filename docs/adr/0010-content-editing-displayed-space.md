@@ -45,7 +45,18 @@ l'écran atterrissait ailleurs.
    retirés, objets orphelins élagués et renumérotés. Un fichier chiffré ou illisible par `lopdf`
    est écrit tel quel.
 6. Toute édition reste une `EditCommand` appliquée par `Document::apply` (ADR-0007) ; la CLI
-   et l'application exécutent le même code.
+   et l'application exécutent le même code, et écrivent par `save_as` (passe de nettoyage
+   comprise), jamais par `to_bytes()` brut.
+7. **Refus plutôt que promesse fausse** (relectures de fin de lot) : l'édition d'objets et le
+   caviardage sont refusés sur un PDF chiffré (les objets retirés resteraient en orphelins :
+   `FPDF_SaveAsCopy` recopie tout et `lopdf` ne peut pas élaguer), sur une page dont PDFium
+   régénérerait le flux en perdant du contenu (police Type 3, image en ligne, ombrage :
+   `content::check_regeneration_safe`), quand la zone touche un champ de formulaire (sa valeur
+   resterait dans `/AcroForm`) et quand du texte reste sous le cache (dessiné via un XObject :
+   vérification par `text_boxes` après retrait, instantané restauré). Toute passe `lopdf`
+   (nettoyage, filigrane, champs) s'abstient sur un fichier chiffré **ou déchiffré en silence**
+   (`was_encrypted()` : mot de passe utilisateur vide), et la réécriture est validée
+   (`rewrite_is_sane`) avant de remplacer les octets PDFium.
 
 ## Conséquences
 
@@ -57,4 +68,6 @@ l'écran atterrissait ailleurs.
 - Deux limites documentées dans l'interface par les libellés : la retouche de texte ne
   recompose pas, le caviardage retire des objets entiers.
 - Dettes reportées : police embarquée (DejaVu) pour l'Unicode hors WinAnsi, caviardage par
-  caractère dans le flux, recadrage par rectangle tracé.
+  caractère dans le flux et caviardage raster des images (un scan pleine page est retiré en
+  entier), recadrage par rectangle tracé, popups orphelins après suppression d'une note
+  tierce, avertissement quand une réécriture invalide une signature numérique.

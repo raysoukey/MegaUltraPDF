@@ -24,6 +24,9 @@
     { tool: 'redact', glyph: '▬' },
   ];
   let menuOpen = $state(false);
+  const hint = $derived(
+    toolState.tool === 'objects' ? t.objectHint : toolState.tool === 'image' ? t.imageTool : null,
+  );
 
   function pick(action: () => void) {
     menuOpen = false;
@@ -49,6 +52,9 @@
     title="{t.deleteObject} (Suppr)"
     onclick={() => deleteSelectedObject(doc)}>🗑</button
   >
+  {#if hint}
+    <span class="hint" role="status">{hint}</span>
+  {/if}
   <div class="menu">
     <button
       type="button"
@@ -87,6 +93,11 @@
   button.active {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 0.8rem;
+    max-width: 22rem;
   }
   .menu {
     position: relative;

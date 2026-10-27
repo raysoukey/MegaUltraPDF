@@ -2,7 +2,8 @@
 //! Caviardage réel : le contenu caviardé disparaît du fichier, pas seulement de l'écran.
 
 use mega_core::edit::EditCommand;
-use mega_core::testing::{rich_pdf, rotated_pdf};
+use mega_core::edit::EditCommand as Cmd;
+use mega_core::testing::{form_pdf, rich_pdf, rotated_pdf, xobject_text_pdf};
 use mega_core::{CoreError, Document, ObjectKind, Rect};
 
 fn rich() -> Document {
@@ -154,4 +155,96 @@ fn redaction_on_rotated_page_uses_displayed_rect() {
     assert_eq!(pixel(&img, 565, 400 - 300), (0, 0, 0));
     // En dehors de la zone, la page est restée blanche.
     assert_eq!(pixel(&img, 300, 200), (255, 255, 255));
+}
+
+/// C1 (relecture) : l'image caviardée ne doit plus être dans le **fichier**, pas seulement
+/// hors du flux de contenu (son XObject restait référencé par `/Resources`).
+#[test]
+fn redaction_removes_image_and_annotation_bytes_from_saved_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("riche.pdf");
+    std::fs::write(&path, rich_pdf()).unwrap();
+    let mut doc = Document::open(&path, None).unwrap();
+    doc.redact(0, rect(380.0, 700.0, 50.0, 50.0)).unwrap();
+    doc.redact(0, rect(60.0, 690.0, 200.0, 40.0)).unwrap();
+    doc.save().unwrap();
+    let saved = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
+    assert!(
+        !saved.contains("/Image"),
+        "le flux image a disparu du fichier"
+    );
+    assert!(!saved.contains("00FF FF00"), "ses pixels aussi");
+    assert!(
+        !saved.contains("/Square"),
+        "l'annotation retirée a disparu du fichier"
+    );
+    assert!(!saved.contains("Secret 123"));
+    let reopened = Document::open(&path, None).unwrap();
+    assert_eq!(page_text(&reopened, 0), "Public");
+    assert_eq!(
+        pixel(&reopened.render_page(0, 1.0).unwrap(), 160, 842 - 710),
+        (0, 0, 0)
+    );
+}
+
+#[test]
+fn redaction_refuses_encrypted_document() {
+    let bytes = std::fs::read(format!(
+        "{}/../../fixtures/encrypted.pdf",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let mut doc = Document::from_bytes(bytes, Some("secret")).unwrap();
+    let before = doc.page_objects(0).unwrap().len();
+    match doc.redact(0, rect(60.0, 700.0, 200.0, 60.0)) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffré"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        doc.page_objects(0).unwrap().len(),
+        before,
+        "rien n'a changé"
+    );
+}
+
+/// C2 (relecture) : du texte dessiné à travers un XObject resterait sous le cache noir ;
+/// plutôt que de mentir, on refuse et le document reste intact.
+#[test]
+fn redaction_fails_when_text_remains_under_the_zone() {
+    let mut doc = Document::from_bytes(xobject_text_pdf(), None).unwrap();
+    assert_eq!(page_text(&doc, 0), "Cache");
+    let before = doc.render_page(0, 0.5).unwrap();
+    let result = doc.apply(&Cmd::Redact {
+        page: 0,
+        rect: rect(60.0, 690.0, 100.0, 40.0),
+    });
+    match result {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("reste"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(page_text(&doc, 0), "Cache");
+    assert_eq!(
+        doc.render_page(0, 0.5).unwrap().rgba,
+        before.rgba,
+        "pas de cache noir posé"
+    );
+    assert!(!doc.can_undo() && !doc.is_modified());
+}
+
+/// B2 (pdf-expert) : retirer le widget d'un champ laisse sa valeur dans `/AcroForm` ; on
+/// refuse plutôt que de prétendre l'avoir caviardée.
+#[test]
+fn redaction_refuses_form_fields() {
+    let mut doc = Document::from_bytes(form_pdf(), None).unwrap();
+    let before = doc.form_fields(0).unwrap().len();
+    // Le champ « ref » (REF-001) est en [72 460 200 484].
+    match doc.apply(&Cmd::Redact {
+        page: 0,
+        rect: rect(60.0, 450.0, 160.0, 40.0),
+    }) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("champ"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(doc.form_fields(0).unwrap().len(), before);
+    assert!(!doc.is_modified());
 }

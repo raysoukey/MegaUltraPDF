@@ -19,6 +19,9 @@ use crate::geometry::{PageFrame, Rect};
 pub const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 /// Dimension maximale (pixels) d'une image.
 pub const MAX_IMAGE_PX: u32 = 8192;
+/// Nombre maximal de pixels d'une image : PDFium écrit les échantillons **non compressés**
+/// (plus un masque alpha), et chaque instantané d'historique en garde une copie.
+pub const MAX_IMAGE_PIXELS: u64 = 16_000_000;
 
 fn invalid(msg: String) -> CoreError {
     CoreError::InvalidOperation(msg)
@@ -45,6 +48,12 @@ pub(crate) fn load_bounded(path: &str) -> CoreResult<DynamicImage> {
     if w > MAX_IMAGE_PX || h > MAX_IMAGE_PX {
         return Err(invalid(format!(
             "image trop grande ({w}×{h} px, maximum {MAX_IMAGE_PX})"
+        )));
+    }
+    if u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS {
+        return Err(invalid(format!(
+            "image trop grande ({w}×{h} px : {} mégapixels, maximum 16)",
+            u64::from(w) * u64::from(h) / 1_000_000
         )));
     }
     image::load_from_memory(&bytes).map_err(|e| invalid(format!("image illisible : {e}")))

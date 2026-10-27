@@ -44,6 +44,12 @@
     return objects.find((o) => o.index === sel.index) ?? null;
   });
 
+  // Quitter les outils de contenu lève la sélection d'objet : sinon « Suppr » agirait sur un
+  // calque devenu invisible.
+  $effect(() => {
+    if (!active && doc.selectedObject?.page === index) selectObject(doc, null);
+  });
+
   let hover = $state<number | null>(null);
   let drag = $state<{ start: Pt; index: number; bounds: Rect } | null>(null);
   let dragDelta = $state<Pt>({ x: 0, y: 0 });
@@ -114,7 +120,8 @@
       const { x: dx, y: dy } = dragDelta;
       drag = null;
       dragDelta = { x: 0, y: 0 };
-      if (Math.hypot(dx, dy) >= 0.5) void moveObject(doc, index, target, dx, dy);
+      // Sous ~2 px écran, c'est un clic avec un léger tremblement, pas un déplacement.
+      if (Math.hypot(dx, dy) * doc.scale >= 2) void moveObject(doc, index, target, dx, dy);
       return;
     }
     if (draft) {

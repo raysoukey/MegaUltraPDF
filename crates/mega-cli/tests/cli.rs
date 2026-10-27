@@ -487,3 +487,36 @@ fn redact_removes_text_from_output() {
         .success()
         .stdout(predicate::str::contains("Page 2"));
 }
+
+/// C3 (relecture) : une annotation retirée par `mega redact` ne doit pas survivre en objet
+/// orphelin dans le fichier produit (contenu secret compris).
+#[test]
+fn redact_output_does_not_keep_removed_annotation_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sans-note.pdf");
+    mega()
+        .args([
+            "redact",
+            &fixture("annotated.pdf"),
+            "--page",
+            "1",
+            "--rect",
+            "40,740,40,40",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 annotation"));
+    let bytes = String::from_utf8_lossy(&std::fs::read(&out).unwrap()).into_owned();
+    assert!(
+        !bytes.contains("FEFF004E006F00740065"),
+        "le contenu de la note a disparu"
+    );
+    assert!(!bytes.contains("(Alice)"), "son auteur aussi");
+    mega()
+        .args(["annots", out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("3 annotation"));
+}

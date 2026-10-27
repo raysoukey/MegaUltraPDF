@@ -212,6 +212,7 @@ export const fr = {
   redact: 'Caviarder',
   redacted: 'Zone caviardée.',
   watermarkTitle: 'Filigrane',
+  watermarkDefaultText: 'BROUILLON',
   watermarkText: 'Texte',
   watermarkSize: 'Taille (pt)',
   watermarkAngle: 'Inclinaison (°)',

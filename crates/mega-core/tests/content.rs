@@ -2,7 +2,7 @@
 //! Objets de page : lecture, suppression, déplacement, remplacement du texte.
 
 use mega_core::edit::EditCommand;
-use mega_core::testing::{rotated_pdf, sample_pdf};
+use mega_core::testing::{fragile_content_pdf, rotated_pdf, sample_pdf};
 use mega_core::{
     Color, CoreError, Document, FontFamily, ObjectKind, Rect, SignatureSource, TextStyle,
 };
@@ -367,4 +367,74 @@ fn insert_image_fits_rect() {
         doc.insert_image(0, placed, &huge.to_string_lossy()),
         Err(CoreError::InvalidOperation(_))
     ));
+}
+
+/// B3 (pdf-expert) : PDFium régénère tout le flux d'une page modifiée et y **perd** le texte
+/// en police Type 3, les images en ligne et les ombrages. Modifier un objet existant sur une
+/// telle page est refusé ; y **ajouter** (nouveau flux) reste permis.
+#[test]
+fn editing_objects_is_refused_when_regeneration_would_lose_content() {
+    for kind in ["type3", "inline", "shading"] {
+        let mut doc = Document::from_bytes(fragile_content_pdf(kind), None).unwrap();
+        let before = doc.render_page(0, 0.5).unwrap();
+        for result in [
+            doc.delete_object(0, 0),
+            doc.move_object(0, 0, 5.0, 0.0),
+            doc.set_object_text(0, 0, "x"),
+            doc.redact(
+                0,
+                Rect {
+                    x: 60.0,
+                    y: 690.0,
+                    w: 100.0,
+                    h: 40.0,
+                },
+            )
+            .map(|_| ()),
+        ] {
+            match result {
+                Err(CoreError::InvalidOperation(m)) => {
+                    assert!(m.contains("régénér"), "{kind} : {m}")
+                }
+                other => panic!("{kind} : {other:?}"),
+            }
+        }
+        assert_eq!(
+            doc.render_page(0, 0.5).unwrap().rgba,
+            before.rgba,
+            "{kind} intact"
+        );
+        // L'insertion ajoute un flux : rien d'existant n'est régénéré.
+        doc.insert_text(
+            0,
+            [72.0, 400.0],
+            "ok",
+            &text_style(FontFamily::Helvetica, false, false, 12.0),
+        )
+        .unwrap();
+        assert!(page_text(&doc, 0).contains("ok"), "{kind}");
+    }
+}
+
+/// A8 (pdf-expert) : PDFium écrit les pixels non compressés ; un budget en pixels borne la
+/// taille du fichier (et de chaque instantané d'historique).
+#[test]
+fn insert_image_refuses_more_than_sixteen_megapixels() {
+    let mut doc = one_page();
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("big.png");
+    image::GrayImage::new(8000, 2100).save(&big).unwrap();
+    match doc.insert_image(
+        0,
+        Rect {
+            x: 50.0,
+            y: 50.0,
+            w: 400.0,
+            h: 400.0,
+        },
+        &big.to_string_lossy(),
+    ) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("pixels"), "{m}"),
+        other => panic!("{other:?}"),
+    }
 }

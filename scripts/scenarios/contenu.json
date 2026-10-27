@@ -36,6 +36,7 @@
   {"key": "z", "ctrl": true},
   {"wait": 2000},
   {"assert": "document.querySelectorAll('.page[data-page=\\'0\\'] .object-layer rect.object').length === 2", "label": "Ctrl+Z : objet revenu"},
+  {"assert": "document.querySelector('button[aria-label=\"Supprimer l’objet\"]').disabled === true", "label": "après Ctrl+Z, plus d'objet sélectionné (Suppr désactivé)"},
   {"click": "button[aria-label='Caviarder']"},
   {"drag": ".page[data-page='0'] .object-layer", "from": [60, 60], "to": [220, 110]},
   {"wait": 500},

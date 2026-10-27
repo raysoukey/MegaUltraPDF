@@ -7,7 +7,7 @@
 
   let { doc, onclose }: { doc: OpenDoc; onclose: () => void } = $props();
 
-  let text = $state('BROUILLON');
+  let text = $state(t.watermarkDefaultText);
   let size = $state(60);
   let opacity = $state(0.3);
   let angle = $state(45);

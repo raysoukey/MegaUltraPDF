@@ -444,3 +444,39 @@ fn signatures_and_signing_through_the_service() {
     assert!(matches!(err, CoreError::WrongPassword), "{err:?}");
     assert!(!other.exists());
 }
+
+/// Lot 10 : une signature visible change l'aspect de la page : le cache de rendu est vidé.
+#[cfg(feature = "signature")]
+#[test]
+fn visible_signature_invalidates_the_render_cache() {
+    use mega_core::digital_signature::{SignAppearance, SignOptions};
+    let handle = PdfService::spawn();
+    let summary = handle.open_bytes(sample_pdf(1, "tampon"), None).unwrap();
+    let id = summary.id;
+    let before = handle
+        .render_png(request(id, 0, 0, Priority::Visible))
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let p12 =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/test-signer.p12");
+    let options = SignOptions {
+        appearance: Some(SignAppearance {
+            page: 0,
+            rect: mega_core::Rect {
+                x: 100.0,
+                y: 100.0,
+                w: 220.0,
+                h: 70.0,
+            },
+            image_path: None,
+        }),
+        ..SignOptions::default()
+    };
+    handle
+        .sign_document(id, dir.path().join("visible.pdf"), &p12, "test", options)
+        .unwrap();
+    let after = handle
+        .render_png(request(id, 0, 0, Priority::Visible))
+        .unwrap();
+    assert_ne!(before, after, "le tampon apparaît au rendu suivant");
+}

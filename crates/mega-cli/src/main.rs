@@ -289,19 +289,25 @@ fn run() {
             reason,
             location,
             contact,
+            page,
+            rect,
+            image,
             out,
             password,
-        } => commands::sign::sign(
-            &file,
-            &p12,
-            &out,
-            mega_core::digital_signature::SignOptions {
-                reason,
-                location,
-                contact,
-            },
-            password.as_deref(),
-        ),
+        } => commands::sign::appearance(page, rect.as_deref(), image).and_then(|appearance| {
+            commands::sign::sign(
+                &file,
+                &p12,
+                &out,
+                mega_core::digital_signature::SignOptions {
+                    reason,
+                    location,
+                    contact,
+                    appearance,
+                },
+                password.as_deref(),
+            )
+        }),
         #[cfg(feature = "signature")]
         Command::Signatures { file, password } => commands::sign::list(&file, password.as_deref()),
         Command::Compare {

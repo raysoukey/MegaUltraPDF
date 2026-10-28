@@ -143,7 +143,7 @@ struct Placement {
 }
 
 /// Nombre au format des flux de contenu (pas de notation exponentielle).
-fn num(v: f32) -> String {
+pub(crate) fn num(v: f32) -> String {
     let s = format!("{v:.3}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s.is_empty() || s == "-0" {
@@ -154,7 +154,7 @@ fn num(v: f32) -> String {
 }
 
 /// Chaîne hexadécimale WinAnsi `<…>` pour `Tj` ; `None` si un caractère n'est pas encodable.
-fn hex_win_ansi(text: &str) -> Option<String> {
+pub(crate) fn hex_win_ansi(text: &str) -> Option<String> {
     let mut out = String::with_capacity(text.len() * 2 + 2);
     out.push('<');
     for c in text.chars() {
@@ -553,7 +553,7 @@ impl Document {
 /// Largeur d'avance d'un texte à `size` points, dans la police qui l'écrira : Helvetica
 /// (table AFM : la même pour tous les lecteurs, sans passer par PDFium) ou, hors WinAnsi, la
 /// police Unicode incorporée (ses largeurs sont aussi celles écrites dans `/W`).
-fn text_width(text: &str, size: f32) -> f32 {
+pub(crate) fn text_width(text: &str, size: f32) -> f32 {
     if fonts::needs_unicode(text) {
         return UnicodeFont::embedded().text_width(text, size);
     }
@@ -566,7 +566,7 @@ fn text_width(text: &str, size: f32) -> f32 {
 
 /// Ajoute à `doc` une police Helvetica (Standard 14, encodage WinAnsi) avec ses largeurs
 /// (`/FirstChar`, `/LastChar`, `/Widths` : B24, Lot 9) et rend sa référence.
-fn helvetica_font(doc: &mut LoDocument) -> ObjectId {
+pub(crate) fn helvetica_font(doc: &mut LoDocument) -> ObjectId {
     let mut font = Dictionary::from_iter(vec![
         ("Type", Object::Name(b"Font".to_vec())),
         ("Subtype", Object::Name(b"Type1".to_vec())),

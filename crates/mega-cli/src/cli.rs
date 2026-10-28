@@ -452,6 +452,16 @@ pub enum Command {
         /// Contact du signataire.
         #[arg(long)]
         contact: Option<String>,
+        /// Page du tampon d'une signature visible (à partir de 1).
+        #[arg(long, default_value_t = 1)]
+        page: u16,
+        /// Tampon visible : `x,y,largeur,hauteur` en points (origine en bas à gauche de la
+        /// page affichée). Sans cette option, la signature est invisible.
+        #[arg(long)]
+        rect: Option<String>,
+        /// Image du tampon visible (PNG ou JPEG).
+        #[arg(long)]
+        image: Option<PathBuf>,
         /// Fichier PDF signé à écrire.
         #[arg(short, long)]
         out: PathBuf,

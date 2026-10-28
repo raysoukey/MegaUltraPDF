@@ -966,7 +966,10 @@ impl Actor {
                 options,
                 reply,
             } => {
-                // Signer enregistre sans changer l'aspect des pages : pas d'invalidation.
+                // Une signature visible dessine un tampon : les rendus en cache sont périmés.
+                if options.appearance.is_some() {
+                    self.cache.invalidate_doc(id);
+                }
                 let result = match self.docs.get_mut(&id) {
                     Some(entry) => std::fs::read(&p12)
                         .map_err(CoreError::from)

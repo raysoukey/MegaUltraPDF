@@ -785,6 +785,45 @@ fn sign_then_signatures_reports_intact() {
         .stdout(predicate::str::contains("Approuvé"));
 }
 
+/// Lot 10 : `--rect` (avec `--page`) rend la signature visible ; un tampon hors page est refusé.
+#[test]
+fn sign_visible_draws_a_stamp_and_verifies() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("visible.pdf");
+    let sign = |rect: &str| {
+        let mut cmd = mega();
+        cmd.args([
+            "sign",
+            &fixture("simple.pdf"),
+            "--p12",
+            &fixture("test-signer.p12"),
+            "--page",
+            "2",
+            "--rect",
+            rect,
+            "-o",
+        ])
+        .arg(&out)
+        .env("MEGA_P12_PASSWORD", "test");
+        cmd
+    };
+    sign("500,100,300,60")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("page"));
+    assert!(!out.exists());
+    sign("100,100,220,70")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("visible"));
+    mega()
+        .arg("signatures")
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("intègre"));
+}
+
 #[test]
 fn sign_with_a_wrong_password_fails_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();

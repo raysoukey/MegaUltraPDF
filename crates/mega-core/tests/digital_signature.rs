@@ -156,6 +156,7 @@ fn options() -> SignOptions {
         reason: Some("Approbation du contrat".to_string()),
         location: Some("Québec".to_string()),
         contact: None,
+        appearance: None,
     }
 }
 
@@ -380,6 +381,25 @@ fn write_signed_samples_for_pyhanko() {
     std::fs::write(
         dir.join("ours-ap.pdf"),
         sign(mega_core::testing::form_with_appearances_pdf(), &ec()),
+    )
+    .unwrap();
+    // Lot 10 : signatures visibles (page droite, page tournée, texte cyrillique).
+    std::fs::write(
+        dir.join("ours-visible.pdf"),
+        sign_visible(
+            fixture("simple.pdf"),
+            visible(1, 100.0, 100.0, 220.0, 70.0),
+            "Accord",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("ours-visible-rotated.pdf"),
+        sign_visible(
+            mega_core::testing::rotated_pdf(),
+            visible(0, 50.0, 50.0, 240.0, 80.0),
+            "Согласовано",
+        ),
     )
     .unwrap();
 }
@@ -653,4 +673,234 @@ fn xref_stream_trailer_is_clean() {
         "{}",
         String::from_utf8_lossy(tail)
     );
+}
+
+// --- Lot 10 : signature visible ---------------------------------------------------------
+
+use mega_core::digital_signature::SignAppearance;
+
+/// Signe `bytes` avec une apparence visible et rend les octets signés.
+fn sign_visible(bytes: Vec<u8>, appearance: SignAppearance, reason: &str) -> Vec<u8> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("visible.pdf");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    let options = SignOptions {
+        reason: Some(reason.to_string()),
+        appearance: Some(appearance),
+        ..SignOptions::default()
+    };
+    doc.sign_to(&path, &rsa(), &options).unwrap();
+    std::fs::read(&path).unwrap()
+}
+
+fn visible(page: u16, x: f32, y: f32, w: f32, h: f32) -> SignAppearance {
+    SignAppearance {
+        page,
+        rect: mega_core::Rect { x, y, w, h },
+        image_path: None,
+    }
+}
+
+/// Le widget de signature du fichier signé (dictionnaire) et son identifiant.
+fn signature_widget(doc: &lopdf::Document) -> (lopdf::ObjectId, lopdf::Dictionary) {
+    doc.objects
+        .iter()
+        .filter_map(|(id, o)| Some((*id, o.as_dict().ok()?.clone())))
+        .find(|(_, d)| d.get(b"FT").ok() == Some(&lopdf::Object::Name(b"Sig".to_vec())))
+        .expect("widget de signature")
+}
+
+fn appearance_stream(doc: &lopdf::Document, widget: &lopdf::Dictionary) -> lopdf::Stream {
+    let ap = widget.get(b"AP").unwrap().as_dict().unwrap();
+    let n = ap.get(b"N").unwrap().as_reference().unwrap();
+    doc.get_object(n).unwrap().as_stream().unwrap().clone()
+}
+
+/// Nombre de pixels sombres d'un rendu dans un rectangle (points affichés, échelle 1).
+fn dark_pixels(img: &mega_core::RenderedPage, x: f32, y: f32, w: f32, h: f32) -> usize {
+    let mut n = 0;
+    for py in (img.height_px as f32 - y - h) as u32..(img.height_px as f32 - y) as u32 {
+        for px in x as u32..(x + w) as u32 {
+            let i = ((py * img.width_px + px) * 4) as usize;
+            if img.rgba[i] < 128 {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+#[test]
+fn visible_signature_verifies_intact() {
+    let signed = sign_visible(
+        fixture("simple.pdf"),
+        visible(1, 100.0, 100.0, 220.0, 70.0),
+        "Accord",
+    );
+    let info = only(signatures(&signed).unwrap());
+    assert_eq!(info.status, SignatureStatus::Intact, "{info:?}");
+    assert!(info.covers_whole_document);
+}
+
+#[test]
+fn visible_signature_widget_has_appearance_and_page_annots() {
+    let signed = sign_visible(
+        fixture("simple.pdf"),
+        visible(1, 100.0, 100.0, 220.0, 70.0),
+        "Accord",
+    );
+    let doc = lopdf::Document::load_mem(&signed).unwrap();
+    let (widget_id, widget) = signature_widget(&doc);
+    let rect: Vec<f32> = widget
+        .get(b"Rect")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o.as_float().unwrap())
+        .collect();
+    assert_eq!(rect, vec![100.0, 100.0, 320.0, 170.0]);
+    let page_id = *doc.get_pages().get(&2).unwrap();
+    assert_eq!(widget.get(b"P").unwrap().as_reference().unwrap(), page_id);
+    let annots = doc.get_page_annotations(page_id).unwrap();
+    assert!(
+        annots
+            .iter()
+            .any(|a| a.get(b"FT").ok() == Some(&lopdf::Object::Name(b"Sig".to_vec())))
+    );
+    let _ = widget_id;
+    let ap = appearance_stream(&doc, &widget);
+    assert!(
+        !ap.decompressed_content()
+            .unwrap_or(ap.content.clone())
+            .is_empty()
+    );
+    // Le tampon est dessiné à l'écran, sur la page visée seulement.
+    let reopened = Document::from_bytes(signed, None).unwrap();
+    let img = reopened.render_page(1, 1.0).unwrap();
+    assert!(
+        dark_pixels(&img, 100.0, 100.0, 220.0, 70.0) > 300,
+        "apparence visible"
+    );
+    let first = reopened.render_page(0, 1.0).unwrap();
+    assert_eq!(dark_pixels(&first, 100.0, 100.0, 220.0, 70.0), 0);
+}
+
+/// Page tournée (`/Rotate 90`, affichée 600 × 400) : le rectangle est en espace affiché et
+/// l'apparence porte la rotation qui la remet droite à l'écran.
+#[test]
+fn visible_signature_on_rotated_page_is_upright() {
+    let signed = sign_visible(
+        mega_core::testing::rotated_pdf(),
+        visible(0, 50.0, 50.0, 240.0, 80.0),
+        "Accord",
+    );
+    let doc = lopdf::Document::load_mem(&signed).unwrap();
+    let (_, widget) = signature_widget(&doc);
+    let ap = appearance_stream(&doc, &widget);
+    let bbox: Vec<f32> = ap
+        .dict
+        .get(b"BBox")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o.as_float().unwrap())
+        .collect();
+    assert_eq!(
+        bbox,
+        vec![0.0, 0.0, 240.0, 80.0],
+        "boîte aux dimensions affichées"
+    );
+    let m: Vec<f32> = ap
+        .dict
+        .get(b"Matrix")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o.as_float().unwrap())
+        .collect();
+    assert_eq!(m.len(), 6);
+    assert!(
+        m[0].abs() < 1e-3 && m[3].abs() < 1e-3,
+        "quart de tour : {m:?}"
+    );
+    let reopened = Document::from_bytes(signed, None).unwrap();
+    let img = reopened.render_page(0, 1.0).unwrap();
+    assert!(
+        dark_pixels(&img, 50.0, 50.0, 240.0, 80.0) > 300,
+        "dessiné sous le rectangle affiché"
+    );
+    assert_eq!(
+        dark_pixels(&img, 300.0, 250.0, 200.0, 100.0),
+        0,
+        "rien ailleurs"
+    );
+}
+
+/// RF4 : un texte d'apparence hors WinAnsi (motif cyrillique) utilise la police Unicode.
+#[test]
+fn non_latin_appearance_text_uses_type0() {
+    let signed = sign_visible(
+        fixture("simple.pdf"),
+        visible(0, 100.0, 100.0, 260.0, 80.0),
+        "Согласовано",
+    );
+    assert_eq!(
+        only(signatures(&signed).unwrap()).status,
+        SignatureStatus::Intact
+    );
+    let doc = lopdf::Document::load_mem(&signed).unwrap();
+    assert!(
+        doc.objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .any(|d| { d.get(b"Subtype").ok() == Some(&lopdf::Object::Name(b"Type0".to_vec())) }),
+        "police Type0 écrite"
+    );
+}
+
+#[test]
+fn visible_signature_with_image() {
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("paraphe.png");
+    image::RgbaImage::from_fn(40, 20, |x, _| {
+        if x < 20 {
+            image::Rgba([0, 0, 200, 255])
+        } else {
+            image::Rgba([0, 0, 0, 0])
+        }
+    })
+    .save(&png)
+    .unwrap();
+    let mut appearance = visible(0, 100.0, 100.0, 260.0, 80.0);
+    appearance.image_path = Some(png.to_string_lossy().into_owned());
+    let signed = sign_visible(fixture("simple.pdf"), appearance, "Accord");
+    assert_eq!(
+        only(signatures(&signed).unwrap()).status,
+        SignatureStatus::Intact
+    );
+    let doc = lopdf::Document::load_mem(&signed).unwrap();
+    let (_, widget) = signature_widget(&doc);
+    let ap = appearance_stream(&doc, &widget);
+    let resources = ap.dict.get(b"Resources").unwrap().as_dict().unwrap();
+    assert!(
+        resources.get(b"XObject").is_ok(),
+        "image dans les ressources"
+    );
+}
+
+#[test]
+fn visible_signature_rect_outside_page_is_refused() {
+    let mut doc = Document::from_bytes(fixture("simple.pdf"), None).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let options = SignOptions {
+        appearance: Some(visible(0, 500.0, 100.0, 300.0, 50.0)),
+        ..SignOptions::default()
+    };
+    let err = doc
+        .sign_to(dir.path().join("x.pdf"), &rsa(), &options)
+        .unwrap_err();
+    assert!(matches!(err, CoreError::InvalidOperation(_)), "{err:?}");
 }

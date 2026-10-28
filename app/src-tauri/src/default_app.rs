@@ -423,4 +423,24 @@ mod tests {
             r#""opened_settings""#
         );
     }
+
+    /// Un PDF ouvert depuis le gestionnaire de fichiers n'arrive à l'application que si la
+    /// ligne `Exec` du fichier `.desktop` porte `%F` (liste des fichiers) ; le modèle par
+    /// défaut de Tauri ne le met pas.
+    #[test]
+    fn desktop_template_passes_the_files() {
+        let template = include_str!("../linux/MegaUltraPDF.desktop");
+        let exec = template
+            .lines()
+            .find(|l| l.starts_with("Exec="))
+            .unwrap_or_default();
+        assert!(exec.ends_with(" %F"), "{exec}");
+        assert!(template.contains("MimeType={{mime_type}}"));
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            conf["bundle"]["linux"]["deb"]["desktopTemplate"],
+            "linux/MegaUltraPDF.desktop"
+        );
+    }
 }

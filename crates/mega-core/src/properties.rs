@@ -189,10 +189,21 @@ impl Document {
 /// écrit, ignoré s'il est mal formé).
 pub(crate) fn parse_pdf_date(text: &str) -> Option<i64> {
     let digits = text.strip_prefix("D:").unwrap_or(text);
-    let base = digits.get(..14)?;
-    let naive = chrono::NaiveDateTime::parse_from_str(base, "%Y%m%d%H%M%S").ok()?;
+    // §7.9.4 : seule l'année est obligatoire ; mois et jour absents valent 01, heures,
+    // minutes et secondes 00. Les champs vont par paires après l'année.
+    let count = digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .take(14)
+        .count();
+    if count < 4 || count % 2 != 0 {
+        return None;
+    }
+    let mut base = digits[..count].to_string();
+    base.push_str(&"0101000000"[count - 4..]);
+    let naive = chrono::NaiveDateTime::parse_from_str(&base, "%Y%m%d%H%M%S").ok()?;
     let mut secs = naive.and_utc().timestamp();
-    let rest = &digits[14..];
+    let rest = &digits[count..];
     let sign = match rest.chars().next() {
         Some('+') => -1,
         Some('-') => 1,
@@ -392,6 +403,34 @@ mod tests {
 #[cfg(test)]
 mod encoding_tests {
     use super::*;
+
+    #[test]
+    fn partial_pdf_dates_are_completed() {
+        let at = |s: &str| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M")
+                .unwrap()
+                .and_utc()
+                .timestamp()
+        };
+        // §7.9.4 : seule l'année est obligatoire ; les champs absents valent 01 ou 00.
+        assert_eq!(parse_pdf_date("D:2024"), Some(at("2024-01-01 00:00")));
+        assert_eq!(parse_pdf_date("D:202403"), Some(at("2024-03-01 00:00")));
+        assert_eq!(parse_pdf_date("D:20240315"), Some(at("2024-03-15 00:00")));
+        assert_eq!(
+            parse_pdf_date("D:202403151230"),
+            Some(at("2024-03-15 12:30"))
+        );
+        assert_eq!(
+            parse_pdf_date("D:202403151230+01'00'"),
+            Some(at("2024-03-15 11:30"))
+        );
+        assert_eq!(
+            parse_pdf_date("D:20240315123045Z"),
+            Some(at("2024-03-15 12:30") + 45)
+        );
+        assert_eq!(parse_pdf_date("D:20"), None, "année incomplète");
+        assert_eq!(parse_pdf_date("D:2024031"), None, "mois tronqué");
+    }
 
     #[test]
     fn pdfdoc_encoding_bullet_euro_and_ligatures() {

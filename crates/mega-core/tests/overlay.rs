@@ -533,3 +533,28 @@ fn ocr_layer_keeps_unmapped_glyphs_searchable() {
         .unwrap();
     assert_eq!(hits.len(), 1);
 }
+
+/// Mineur du Lot 9 : une boîte de mot infinie (OCR fautif) est ignorée, elle n'écrit pas
+/// « inf » dans le flux de contenu.
+#[test]
+fn infinite_word_boxes_are_skipped() {
+    let mut doc = Document::from_bytes(blank_pdf(300.0, 200.0), None).unwrap();
+    doc.add_invisible_words(
+        0,
+        &[
+            word("Infini", 20.0, 100.0, f32::INFINITY, 20.0),
+            word("Haut", 20.0, 100.0, 50.0, f32::INFINITY),
+            word("Normal", 20.0, 50.0, 80.0, 20.0),
+        ],
+    )
+    .unwrap();
+    let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    let page = *saved.get_pages().get(&1).unwrap();
+    let content = String::from_utf8_lossy(&saved.get_page_content(page)).into_owned();
+    assert!(!content.contains("inf"), "{content}");
+    let text = doc.page_text(0).unwrap();
+    assert!(
+        text.contains("Normal") && !text.contains("Infini"),
+        "{text:?}"
+    );
+}

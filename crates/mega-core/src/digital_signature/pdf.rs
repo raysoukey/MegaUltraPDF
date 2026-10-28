@@ -543,10 +543,14 @@ fn push_to_array(
 
 /// Version déclarée par l'en-tête `%PDF-M.m` (`None` si l'en-tête est illisible).
 fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
-    match bytes.get(..5)? {
-        b"%PDF-" => parse_version(bytes.get(5..8)?),
-        _ => None,
+    // L'en-tête peut suivre des octets parasites : les lecteurs le cherchent dans les
+    // 1024 premiers octets (§7.5.2, note).
+    let head = &bytes[..bytes.len().min(1024 + 8)];
+    let at = head.windows(5).position(|w| w == b"%PDF-")?;
+    if at > 1024 {
+        return None;
     }
+    parse_version(head.get(at + 5..at + 8)?)
 }
 
 /// `M.m` → `(M, m)` (chiffres uniques, comme le sont toutes les versions PDF).
@@ -928,6 +932,20 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mineur du Lot 9 : l'en-tête `%PDF-M.m` peut suivre des octets parasites (jusqu'à 1024,
+    /// §7.5.2, toléré par les lecteurs).
+    #[test]
+    fn header_version_is_found_after_leading_junk() {
+        assert_eq!(header_version(b"%PDF-1.4\n"), Some((1, 4)));
+        assert_eq!(
+            header_version(b"\xEF\xBB\xBFjunk\n%PDF-1.3\n"),
+            Some((1, 3))
+        );
+        let mut far = vec![b'x'; 1100];
+        far.extend_from_slice(b"%PDF-1.4");
+        assert_eq!(header_version(&far), None, "au-delà de 1024 octets");
+    }
 
     /// C36 (relecture du Lot 9) : des octets que lopdf ne relit pas mais qui contiennent
     /// `/ByteRange` portent peut-être des signatures : la réécriture est refusée.

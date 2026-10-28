@@ -395,8 +395,10 @@ impl Document {
             let text = w.text.trim_start();
             let word = text.trim_end();
             let r = w.rect;
-            if word.is_empty() || !(r.w > 0.0 && r.h > 0.0) || !(r.x.is_finite() && r.y.is_finite())
-            {
+            // Une boîte vide, négative ou infinie (OCR fautif) est ignorée : elle écrirait
+            // « inf » ou « NaN » dans le flux de contenu.
+            let finite = [r.x, r.y, r.w, r.h].iter().all(|v| v.is_finite());
+            if word.is_empty() || !finite || !(r.w > 0.0 && r.h > 0.0) {
                 continue;
             }
             let width_100 = text_width(word, 100.0);

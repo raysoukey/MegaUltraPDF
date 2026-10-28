@@ -136,10 +136,13 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   toujours fermé (`logic/group.ts`). Dans Git Bash, un argument qui commence par `/` est
   réécrit (`MSYS_NO_PATHCONV=1`) et une apostrophe dans une chaîne `'…'` la coupe.
 - Lot 11 (ADR-0015) : une seule instance (`tauri-plugin-single-instance`, enregistré **en
-  premier**) ; les fichiers d'une seconde instance passent par `PendingPaths` + `open-paths`
+  premier**, Windows et Linux seulement : dépendance et appel sous `cfg`) ; les fichiers d'une seconde instance passent par `PendingPaths` + `open-paths`
   (chemins via `commands::pdf_paths_from_args`, relatifs au dossier de la seconde instance).
   Lecteur par défaut : `default_app.rs` (Windows : on ne peut qu'ouvrir les Paramètres ;
-  Linux : `xdg-mime` ; macOS : marche à suivre). Le greffon NSIS `windows/hooks.nsh` enregistre
+  Linux : `xdg-mime` ; macOS : marche à suivre). « Installé » = la commande d'ouverture du
+  ProgId désigne `current_exe` (NSIS et MSI), jamais la présence d'`uninstall.exe` ; lire
+  `UserChoiceLatest` avant `UserChoice` ; tout programme externe passe par `run` (délai 3 s)
+  et les commandes Tauri qui l'appellent sont `async` + `spawn_blocking`. Le greffon NSIS `windows/hooks.nsh` enregistre
   `Capabilities` / `RegisteredApplications`. Scénarios CDP : étape `launch` (seconde instance
   de `MEGA_APP_EXE`) ; compter les onglets de document par `[role=tablist][aria-label=MegaUltraPDF]`.
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui

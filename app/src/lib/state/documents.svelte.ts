@@ -78,6 +78,7 @@ import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
 import { serialQueue } from '$lib/logic/queue';
 import { redactNotice } from '$lib/logic/redact';
+import { promptAfterOpen } from '$lib/logic/open';
 import { inGroup } from '$lib/logic/group';
 import { t } from '$lib/strings';
 import {
@@ -261,7 +262,7 @@ export async function openPath(path: string, password?: string): Promise<boolean
       view: freshView(),
     });
     docsState.activeId = summary.id;
-    docsState.passwordPrompt = null;
+    docsState.passwordPrompt = promptAfterOpen(docsState.passwordPrompt, path);
     // Signatures du fichier lues dès l'ouverture : le bandeau « document signé » en dépend.
     const opened = docsState.docs.find((d) => d.summary.id === summary.id);
     if (opened) void ensureSignatures(opened);
@@ -286,10 +287,17 @@ export async function openPath(path: string, password?: string): Promise<boolean
   }
 }
 
+// Les ouvertures de plusieurs fichiers (glisser-déposer, Explorateur, seconde instance)
+// passent l'une après l'autre : deux demandes du même fichier ne peuvent pas toutes deux
+// passer le contrôle « déjà ouvert » avant que la première ait fini (relecture du Lot 11).
+const openQueue = serialQueue();
+
 export async function openPaths(paths: string[]): Promise<void> {
-  for (const p of paths) {
-    if (p.toLowerCase().endsWith('.pdf')) await openPath(p);
-  }
+  await openQueue(async () => {
+    for (const p of paths) {
+      if (p.toLowerCase().endsWith('.pdf')) await openPath(p);
+    }
+  });
 }
 
 export function cancelPassword(): void {

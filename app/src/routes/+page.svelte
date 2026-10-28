@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { pickPdfFiles, setTesseractPath, startupFile, takePendingPaths } from '$lib/api';
+  import { pickPdfFiles, setTesseractPath, startupFiles, takePendingPaths } from '$lib/api';
   import type { Annotation } from '$lib/api';
   import AnnotationEditor from '$lib/components/AnnotationEditor.svelte';
   import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
@@ -135,8 +135,8 @@
       await loadSettings();
       applyLanguage();
       if (settings.tesseractPath) void setTesseractPath(settings.tesseractPath).catch(() => {});
-      const path = await startupFile().catch(() => null);
-      if (path) await openPath(path);
+      const startup = await startupFiles().catch(() => [] as string[]);
+      if (startup.length > 0) await openPaths(startup);
       try {
         // macOS : fichiers ouverts depuis le Finder. Le cœur les garde en attente (un
         // démarrage à froid les reçoit avant que la page écoute) ; on les réclame à chaque

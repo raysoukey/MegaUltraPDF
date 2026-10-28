@@ -742,9 +742,9 @@ export async function pickDirectory(): Promise<string | null> {
   return typeof picked === 'string' ? picked : null;
 }
 
-/** Fichier PDF passé en argument au lancement de l'application, s'il y en a un. */
-export async function startupFile(): Promise<string | null> {
-  return invoke<string | null>('startup_file');
+/** Fichiers PDF passés en arguments au lancement de l'application (tous). */
+export async function startupFiles(): Promise<string[]> {
+  return invoke<string[]>('startup_files');
 }
 
 /** Ouvre le dialogue natif et retourne les chemins choisis (vide si annulé). */

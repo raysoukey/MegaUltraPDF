@@ -125,7 +125,7 @@ pub fn run() {
             commands::page_links,
             commands::document_properties,
             commands::file_size,
-            commands::startup_file,
+            commands::startup_files,
             commands::apply_edit,
             commands::undo_edit,
             commands::redo_edit,

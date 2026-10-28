@@ -521,28 +521,55 @@ pub async fn file_size(path: String) -> Result<u64, AppError> {
         .map_err(|e| AppError::new(ErrorKind::Io, format!("Erreur d'accès au fichier : {e}")))
 }
 
-/// Fichier passé en argument de ligne de commande au lancement, s'il y en a un.
+/// Fichiers PDF passés en arguments de ligne de commande au lancement (Lot 11 : tous, pas
+/// seulement le premier ; l'Explorateur en passe plusieurs pour une sélection).
 ///
-/// Permet `mega-app fichier.pdf` (et, en développement, `pnpm tauri dev -- -- fichier.pdf`).
-/// Le frontend l'appelle au démarrage et ouvre le document s'il existe.
+/// Permet `mega-app a.pdf b.pdf` (et, en développement, `pnpm tauri dev -- -- fichier.pdf`).
+/// Le frontend l'appelle au démarrage et ouvre chaque document.
 #[tauri::command]
-pub fn startup_file() -> Option<String> {
+pub fn startup_files() -> Vec<String> {
     // `args_os` plutôt que `args` : ce dernier panique sur un argument qui n'est pas de
     // l'Unicode valide ; ici un tel argument est simplement ignoré.
-    startup_file_from_args(
+    let cwd = std::env::current_dir().unwrap_or_default();
+    pdf_paths_from_args(
         std::env::args_os()
             .skip(1)
             .filter_map(|a| a.into_string().ok()),
+        &cwd,
     )
 }
 
-/// Premier argument qui ressemble à un fichier PDF existant.
-pub fn startup_file_from_args(args: impl IntoIterator<Item = String>) -> Option<String> {
-    args.into_iter().find(|a| {
-        !a.starts_with('-')
-            && a.to_ascii_lowercase().ends_with(".pdf")
-            && std::path::Path::new(a).is_file()
-    })
+/// Les arguments qui désignent un fichier PDF existant, en chemins absolus, dans l'ordre et
+/// sans doublon (Lot 11). Un chemin relatif se lit dans `cwd` : pour une **seconde
+/// instance** relayée à la première, c'est le dossier courant de la seconde. Les options
+/// (`-…`) et les autres fichiers sont ignorés.
+///
+/// \[Apprentissage\] `std::path::absolute` rend un chemin absolu **sans** toucher au disque
+/// (au contraire de `canonicalize`, qui résout les liens et ajoute `\?\` sous Windows) : on
+/// le garde pour l'affichage, et l'on se sert de `canonicalize` seulement pour repérer deux
+/// écritures du même fichier.
+pub fn pdf_paths_from_args(
+    args: impl IntoIterator<Item = String>,
+    cwd: &std::path::Path,
+) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut paths = Vec::new();
+    for arg in args {
+        if arg.starts_with('-') || !arg.to_ascii_lowercase().ends_with(".pdf") {
+            continue;
+        }
+        let path = cwd.join(&arg);
+        if !path.is_file() {
+            continue;
+        }
+        let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+        let shown = std::path::absolute(&path).unwrap_or(path);
+        paths.push(shown.to_string_lossy().into_owned());
+    }
+    paths
 }
 
 #[cfg(test)]
@@ -612,15 +639,51 @@ mod tests {
         assert!(json["languages"].is_array());
     }
 
+    fn fixtures_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
+    }
+
+    /// Lot 11 : tous les PDF existants, dans l'ordre (plusieurs fichiers ouverts d'un coup).
     #[test]
-    fn startup_file_picks_first_existing_pdf_argument() {
+    fn pdf_paths_from_args_keeps_every_existing_pdf() {
+        let args = vec![fixture("simple.pdf"), fixture("rotated.pdf")];
+        let paths = pdf_paths_from_args(args, &fixtures_dir());
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].ends_with("simple.pdf") && paths[1].ends_with("rotated.pdf"));
+        assert!(pdf_paths_from_args(Vec::<String>::new(), &fixtures_dir()).is_empty());
+    }
+
+    /// La seconde instance peut être lancée depuis un autre dossier : un chemin relatif se
+    /// lit par rapport à **son** dossier courant, pas à celui de la première.
+    #[test]
+    fn relative_paths_resolve_against_the_second_instance_dir() {
+        let paths = pdf_paths_from_args(vec!["simple.pdf".to_string()], &fixtures_dir());
+        assert_eq!(paths.len(), 1);
+        assert!(std::path::Path::new(&paths[0]).is_absolute(), "{paths:?}");
+        assert!(std::path::Path::new(&paths[0]).is_file());
+    }
+
+    #[test]
+    fn options_and_non_pdf_are_ignored() {
         let args = vec![
             "--flag".to_string(),
             "inexistant.pdf".to_string(),
+            fixture("test-signer.p12"),
             fixture("simple.pdf"),
         ];
-        assert_eq!(startup_file_from_args(args), Some(fixture("simple.pdf")));
-        assert_eq!(startup_file_from_args(Vec::<String>::new()), None);
+        let paths = pdf_paths_from_args(args, &fixtures_dir());
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("simple.pdf"));
+    }
+
+    #[test]
+    fn duplicates_are_dropped() {
+        let args = vec![
+            fixture("simple.pdf"),
+            "simple.pdf".to_string(),
+            fixture("simple.pdf"),
+        ];
+        assert_eq!(pdf_paths_from_args(args, &fixtures_dir()).len(), 1);
     }
 
     #[tokio::test]

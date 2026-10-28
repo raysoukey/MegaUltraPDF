@@ -1035,10 +1035,12 @@ pub fn note_with_popup_pdf(secret: &str) -> Vec<u8> {
         "<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /Contents (Reponse) \
          /IRT 4 0 R /P 3 0 R >>"
             .to_string(),
-        "<< /Type /StructTreeRoot /K 8 0 R >>".to_string(),
-        "<< /Type /StructElem /S /Annot /P 7 0 R /Pg 3 0 R \
-         /K << /Type /OBJR /Obj 4 0 R /Pg 3 0 R >> >>"
-            .to_string(),
+        "<< /Type /StructTreeRoot /K 8 0 R /ParentTree << /Nums [1 8 0 R] >> >>".to_string(),
+        // L'élément de structure décrit la note par son texte (`/Alt`, demandé par PDF/UA).
+        format!(
+            "<< /Type /StructElem /S /Annot /P 7 0 R /Pg 3 0 R /Alt ({secret}) \
+             /K << /Type /OBJR /Obj 4 0 R /Pg 3 0 R >> >>"
+        ),
     ];
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }

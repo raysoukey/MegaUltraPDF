@@ -312,46 +312,110 @@ fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> Cor
     if dead.is_empty() {
         return Ok(());
     }
-    // 3. Liens `/IRT` et `/OBJR` vers elles : retirés partout, y compris dans les objets directs.
+    // 3. Leur texte d'abord, par précaution : même si un lien oublié les garde atteignables,
+    //    plus rien de lisible n'y reste (relecture du Lot 9).
+    for id in &dead {
+        if let Ok(dict) = doc.get_dictionary_mut(*id) {
+            for key in [
+                b"Contents".as_slice(),
+                b"RC",
+                b"T",
+                b"Subj",
+                b"Popup",
+                b"AP",
+                b"FS",
+            ] {
+                dict.remove(key);
+            }
+        }
+    }
+    // 4. Marqueurs `/OBJR` vers elles rangés en objets indirects.
+    let dead_objr: BTreeSet<ObjectId> = doc
+        .objects
+        .iter()
+        .filter(|(_, o)| o.as_dict().is_ok_and(|d| is_objr_to(d, &dead)))
+        .map(|(id, _)| *id)
+        .collect();
+    // 5. Liens `/IRT` et entrées `/OBJR` vers elles : retirés partout, objets directs compris.
     for object in doc.objects.values_mut() {
-        scrub_links(object, &dead, 0);
+        scrub_links(object, &dead, &dead_objr, 0);
     }
     Ok(())
 }
 
-/// Retire de `object` (et de ce qu'il contient directement) les clés `/IRT` et les `/Obj` de
-/// marqueurs `/OBJR` qui visent une annotation de `dead`. Profondeur bornée : un objet direct
-/// ne peut pas se contenir lui-même, mais un fichier hostile peut l'imbriquer très loin.
-fn scrub_links(object: &mut Object, dead: &BTreeSet<ObjectId>, depth: usize) {
+/// Vrai si `dict` est un marqueur de contenu `/OBJR` dont la cible `/Obj` est dans `dead`.
+fn is_objr_to(dict: &Dictionary, dead: &BTreeSet<ObjectId>) -> bool {
+    dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"OBJR".as_slice())
+        && dict
+            .get(b"Obj")
+            .and_then(Object::as_reference)
+            .is_ok_and(|id| dead.contains(&id))
+}
+
+/// Retire de `object` (et de ce qu'il contient directement) les clés `/IRT` qui visent une
+/// annotation de `dead`, et les entrées `/OBJR` qui la citent dans le `/K` d'un élément de
+/// structure : le marqueur entier part (sa clé `/Obj` est obligatoire, §14.7.4.3), et avec
+/// lui le texte qui décrivait l'annotation (`/Alt`, `/ActualText`, `/E`). Profondeur bornée :
+/// un objet direct ne peut pas se contenir lui-même, mais un fichier hostile peut
+/// l'imbriquer très loin.
+fn scrub_links(
+    object: &mut Object,
+    dead: &BTreeSet<ObjectId>,
+    dead_objr: &BTreeSet<ObjectId>,
+    depth: usize,
+) {
     if depth > 64 {
         return;
     }
-    let targets_dead = |o: Option<&Object>| {
-        o.and_then(|o| o.as_reference().ok())
-            .is_some_and(|id| dead.contains(&id))
+    let is_dead_marker = |o: &Object| match o {
+        Object::Dictionary(d) => is_objr_to(d, dead),
+        Object::Reference(id) => dead_objr.contains(id),
+        _ => false,
     };
     match object {
         Object::Dictionary(dict) => {
-            if targets_dead(dict.get(b"IRT").ok()) {
+            if dict
+                .get(b"IRT")
+                .and_then(Object::as_reference)
+                .is_ok_and(|id| dead.contains(&id))
+            {
                 dict.remove(b"IRT");
             }
-            let is_objr =
-                dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"OBJR".as_slice());
-            if is_objr && targets_dead(dict.get(b"Obj").ok()) {
-                dict.remove(b"Obj");
+            let mut removed = false;
+            let mut emptied = false;
+            match dict.get_mut(b"K") {
+                Ok(Object::Array(kids)) => {
+                    let before = kids.len();
+                    kids.retain(|k| !is_dead_marker(k));
+                    removed = kids.len() != before;
+                    emptied = kids.is_empty();
+                }
+                Ok(k) if is_dead_marker(k) => {
+                    removed = true;
+                    emptied = true;
+                }
+                _ => {}
+            }
+            if emptied {
+                dict.remove(b"K");
+            }
+            if removed {
+                for key in [b"Alt".as_slice(), b"ActualText", b"E"] {
+                    dict.remove(key);
+                }
             }
             for (_, value) in dict.iter_mut() {
-                scrub_links(value, dead, depth + 1);
+                scrub_links(value, dead, dead_objr, depth + 1);
             }
         }
         Object::Array(items) => {
             for item in items.iter_mut() {
-                scrub_links(item, dead, depth + 1);
+                scrub_links(item, dead, dead_objr, depth + 1);
             }
         }
         Object::Stream(stream) => {
             for (_, value) in stream.dict.iter_mut() {
-                scrub_links(value, dead, depth + 1);
+                scrub_links(value, dead, dead_objr, depth + 1);
             }
         }
         _ => {}

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { pickPdfFiles, setTesseractPath, startupFile } from '$lib/api';
+  import { pickPdfFiles, setTesseractPath, startupFile, takePendingPaths } from '$lib/api';
   import type { Annotation } from '$lib/api';
   import AnnotationEditor from '$lib/components/AnnotationEditor.svelte';
   import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
@@ -159,9 +159,16 @@
       const path = await startupFile().catch(() => null);
       if (path) await openPath(path);
       try {
-        // macOS : fichiers ouverts depuis le Finder pendant que l'application tourne.
+        // macOS : fichiers ouverts depuis le Finder. Le cœur les garde en attente (un
+        // démarrage à froid les reçoit avant que la page écoute) ; on les réclame à chaque
+        // signal, et une fois tout de suite pour ceux arrivés avant.
         const { listen } = await import('@tauri-apps/api/event');
-        unlistenOpen = await listen<string[]>('open-paths', (event) => openPaths(event.payload));
+        const openPending = async () => {
+          const paths = await takePendingPaths().catch(() => []);
+          if (paths.length > 0) await openPaths(paths);
+        };
+        unlistenOpen = await listen('open-paths', () => void openPending());
+        await openPending();
       } catch {
         // hors Tauri : pas d'événement
       }

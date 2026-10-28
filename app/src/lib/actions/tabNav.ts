@@ -25,6 +25,8 @@ export function tabNav(node: HTMLElement) {
     const next = tabKey(e.key, current, list.length);
     if (next === null) return;
     e.preventDefault();
+    // Début / Fin sont aussi des raccourcis de page de la visionneuse : la touche s'arrête ici.
+    e.stopPropagation();
     list[next].focus();
     list[next].click();
   }
@@ -32,7 +34,13 @@ export function tabNav(node: HTMLElement) {
   rove();
   // L'onglet sélectionné change (clic, clavier, programme) : on suit.
   const observer = new MutationObserver(rove);
-  observer.observe(node, { subtree: true, attributes: true, attributeFilter: ['aria-selected'] });
+  // Un onglet ajouté plus tard (« Formulaire » après lecture du formulaire) est aussi suivi.
+  observer.observe(node, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['aria-selected'],
+  });
   node.addEventListener('keydown', onkeydown);
   return {
     destroy() {

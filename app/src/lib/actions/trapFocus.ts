@@ -39,14 +39,13 @@ export function trapFocus(node: HTMLElement) {
 
   /** Utilisables, avec un seul arrêt par groupe de boutons radio. */
   function usableList(list: HTMLElement[]): boolean[] {
-    const stops = radioTabStops(
+    return radioTabStops(
       list.map((el) =>
         el instanceof HTMLInputElement && el.type === 'radio'
-          ? { name: el.name || null, checked: el.checked }
-          : { name: null, checked: false },
+          ? { name: el.name || null, checked: el.checked, usable: usable(el) }
+          : { name: null, checked: false, usable: usable(el) },
       ),
     );
-    return list.map((el, i) => stops[i] && usable(el));
   }
 
   // Après le montage complet : un composant qui focalise son premier champ dans `onMount`

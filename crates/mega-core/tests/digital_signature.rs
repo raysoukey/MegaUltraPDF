@@ -572,20 +572,40 @@ fn need_appearances(signed: &lopdf::Document) -> Option<lopdf::Object> {
     form.get(b"NeedAppearances").ok().cloned()
 }
 
+/// Relecture du Lot 9 : la signature ne touche pas `/NeedAppearances` — une apparence
+/// présente peut être périmée (champ rempli sur une page jamais ouverte), et les autres
+/// lecteurs afficheraient alors l'ancienne valeur dans le document signé.
 #[test]
-fn signed_revision_turns_need_appearances_off() {
-    // Tous les champs ont leur apparence : la demande de régénération est retirée.
-    let with_ap = mega_core::testing::form_with_appearances_pdf();
-    let signed = latest(&sign(with_ap, &ec()));
+fn signing_leaves_need_appearances_alone() {
+    for bytes in [
+        mega_core::testing::form_with_appearances_pdf(),
+        fixture("form.pdf"),
+    ] {
+        let signed = latest(&sign(bytes, &ec()));
+        assert_eq!(
+            need_appearances(&signed),
+            Some(lopdf::Object::Boolean(true))
+        );
+    }
+}
+
+/// Relecture du Lot 9 : un catalogue qui déclare déjà une version plus récente que
+/// l'en-tête (`/Version /1.7` avec `%PDF-1.4`) n'est pas ramené à 1.6.
+#[test]
+fn catalog_version_is_never_lowered() {
+    let mut lo = lopdf::Document::load_mem(&fixture("simple.pdf")).unwrap();
+    lo.version = "1.4".to_string();
+    let root = lo.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    lo.get_dictionary_mut(root)
+        .unwrap()
+        .set("Version", lopdf::Object::Name(b"1.7".to_vec()));
+    let mut bytes = Vec::new();
+    lo.save_to(&mut bytes).unwrap();
+    assert!(bytes.starts_with(b"%PDF-1.4"));
+    let signed = latest(&sign(bytes, &rsa()));
     assert_eq!(
-        need_appearances(&signed),
-        Some(lopdf::Object::Boolean(false))
-    );
-    // Des champs sans apparence (form.pdf) : on la garde, sinon ils s'afficheraient vides.
-    let signed = latest(&sign(fixture("form.pdf"), &ec()));
-    assert_eq!(
-        need_appearances(&signed),
-        Some(lopdf::Object::Boolean(true))
+        signed.catalog().unwrap().get(b"Version").unwrap(),
+        &lopdf::Object::Name(b"1.7".to_vec())
     );
 }
 

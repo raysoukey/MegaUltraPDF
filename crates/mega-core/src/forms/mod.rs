@@ -339,9 +339,6 @@ fn clamp(s: String) -> String {
     }
 }
 
-/// \[Apprentissage\] **`match` sur une `enum` de la bibliothèque** : `PdfFormField` est une
-/// enum de pdfium-render, une variante par type de champ, chacune portant un type différent.
-/// On la traduit en notre `FormField` plat, plus simple à sérialiser pour l'interface.
 /// État coché d'une case, lu soi-même (B17, Lot 9) : `/AS` s'il est présent, sinon `/V` ;
 /// cochée si la valeur n'est pas `Off`. pdfium-render ne reconnaît que l'état nommé « Yes »
 /// (une case dont l'état coché s'appelle « On » serait lue décochée).
@@ -352,6 +349,9 @@ fn checked_state(appearance: Option<String>, value: Option<String>) -> bool {
         .is_some_and(|s| !s.is_empty() && s != "Off")
 }
 
+/// \[Apprentissage\] **`match` sur une `enum` de la bibliothèque** : `PdfFormField` est une
+/// enum de pdfium-render, une variante par type de champ, chacune portant un type différent.
+/// On la traduit en notre `FormField` plat, plus simple à sérialiser pour l'interface.
 fn read_field(page: u16, index: u16, rect: Rect, field: &PdfFormField) -> FormField {
     let (name, read_only, required, kind, value, checked, options, multiline, password) =
         match field {

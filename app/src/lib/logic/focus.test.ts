@@ -41,3 +41,18 @@ describe('radioTabStops (C24)', () => {
     expect(radioTabStops([{ name: null, checked: false }])).toEqual([true]);
   });
 });
+
+describe('radioTabStops with unusable radios (relecture du Lot 9)', () => {
+  it('a group whose checked radio is disabled keeps a stop on its first usable radio', () => {
+    expect(
+      radioTabStops([
+        { name: 'g', checked: true, usable: false },
+        { name: 'g', checked: false, usable: true },
+        { name: 'g', checked: false, usable: true },
+      ]),
+    ).toEqual([false, true, false]);
+  });
+  it('an unusable radio is never a stop', () => {
+    expect(radioTabStops([{ name: 'h', checked: false, usable: false }])).toEqual([false]);
+  });
+});

@@ -363,6 +363,12 @@ pub async fn ocr_status(
     blocking(handle, |_| Ok(mega_core::ocr::ocr_status())).await
 }
 
+/// Fichiers reçus du système (Finder) en attente d'ouverture ; la liste est vidée.
+#[tauri::command]
+pub fn take_pending_paths(pending: State<'_, crate::PendingPaths>) -> Vec<String> {
+    pending.take()
+}
+
 /// Chemin de Tesseract choisi dans les préférences (vide ou absent : recherche automatique).
 #[tauri::command]
 pub fn set_tesseract_path(path: Option<String>) {
@@ -551,11 +557,15 @@ mod tests {
     /// main à la recherche automatique.
     #[test]
     fn set_tesseract_path_overrides_the_search() {
-        let me = std::env::current_exe().unwrap();
-        set_tesseract_path(Some(me.to_string_lossy().into_owned()));
-        assert_eq!(mega_core::ocr::find_tesseract(), Some(me.clone()));
+        // Un fichier factice (jamais lancé) : pointer vers l'exécutable de test lui-même
+        // risquerait qu'un autre test en parallèle le lance avec `--list-langs`.
+        let fake = std::env::temp_dir().join(format!("mega-tesseract-{}.txt", std::process::id()));
+        std::fs::write(&fake, b"pas un programme").unwrap();
+        set_tesseract_path(Some(fake.to_string_lossy().into_owned()));
+        assert_eq!(mega_core::ocr::find_tesseract(), Some(fake.clone()));
         set_tesseract_path(Some("   ".to_string()));
-        assert_ne!(mega_core::ocr::find_tesseract(), Some(me));
+        assert_ne!(mega_core::ocr::find_tesseract(), Some(fake.clone()));
+        let _ = std::fs::remove_file(&fake);
     }
 
     #[test]

@@ -556,6 +556,11 @@ export async function ocrStatus(): Promise<OcrStatus> {
   return invoke<OcrStatus>('ocr_status');
 }
 
+/** Fichiers reçus du Finder (macOS) en attente d'ouverture ; la liste est vidée. */
+export async function takePendingPaths(): Promise<string[]> {
+  return invoke<string[]>('take_pending_paths');
+}
+
 /** Chemin de Tesseract choisi dans les préférences (`null` ou vide : recherche automatique). */
 export async function setTesseractPath(path: string | null): Promise<void> {
   return invoke<void>('set_tesseract_path', { path });

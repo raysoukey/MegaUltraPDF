@@ -122,6 +122,9 @@ impl Document {
     }
 
     /// Nouveau document composé des pages `pages` (dans l'ordre donné) ; l'original est intact.
+    /// Le résultat passe par le nettoyage d'enregistrement (`cleanup::before_save`) : une note
+    /// caviardée encore citée par une réponse ne doit pas revenir dans l'extrait (relecture du
+    /// Lot 9). Sert aussi à la scission.
     pub fn extract_pages(&self, pages: &[u16]) -> CoreResult<Vec<u8>> {
         let guard = engine::guard();
         let source: Vec<PdfPageIndex> = pages
@@ -135,7 +138,7 @@ impl Document {
         }
         let mut target = new_document(&guard)?;
         copy_pages(&mut target, self.inner(), &source, 0)?;
-        Ok(target.save_to_bytes()?)
+        crate::cleanup::before_save(&target.save_to_bytes()?)
     }
 
     /// Indices valides, triés, sans doublon ; erreur si la liste est vide ou hors bornes.
@@ -205,7 +208,7 @@ pub fn merge(docs: &[&Document]) -> CoreResult<Vec<u8>> {
     for doc in docs {
         target.pages_mut().append(doc.inner())?;
     }
-    Ok(target.save_to_bytes()?)
+    crate::cleanup::before_save(&target.save_to_bytes()?)
 }
 
 /// Scinde `doc` en autant de PDF que de groupes dans `parts` (indices 0-based).

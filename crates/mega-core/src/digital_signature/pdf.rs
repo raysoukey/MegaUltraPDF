@@ -405,14 +405,14 @@ fn usage_rights(doc: &LoDocument) -> Option<SignatureInfo> {
     })
 }
 
-/// Vrai si chaque widget du document a déjà son apparence (`/AP`) : on peut alors retirer
-/// `/NeedAppearances` sans laisser de champ vide chez les autres lecteurs.
-fn all_widgets_have_appearances(doc: &LoDocument) -> bool {
-    doc.objects
-        .values()
-        .filter_map(|o| o.as_dict().ok())
-        .filter(|d| d.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Widget".as_slice()))
-        .all(|d| d.has(b"AP"))
+/// Vrai si réécrire `bytes` par PDFium risque d'effacer des signatures : celles que lopdf
+/// y lit, ou, si lopdf ne relit pas le fichier, la seule présence de `/ByteRange` (C36,
+/// relecture du Lot 9). Dans le doute, on refuse plutôt que de détruire une signature.
+fn rewrite_would_lose_signatures(bytes: &[u8]) -> bool {
+    match signatures(bytes) {
+        Ok(list) => !list.is_empty(),
+        Err(_) => bytes.windows(10).any(|w| w == b"/ByteRange"),
+    }
 }
 
 /// Noms (`/T`) des champs de premier niveau, pour choisir un nom libre.
@@ -525,13 +525,20 @@ fn push_to_array(
     Ok(())
 }
 
-/// Version mineure de l'en-tête `%PDF-1.x` (`None` si l'en-tête est illisible).
-fn header_minor(bytes: &[u8]) -> Option<u8> {
-    match bytes.get(..7)? {
-        b"%PDF-1." => bytes
-            .get(7)
-            .filter(|c| c.is_ascii_digit())
-            .map(|c| c - b'0'),
+/// Version déclarée par l'en-tête `%PDF-M.m` (`None` si l'en-tête est illisible).
+fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
+    match bytes.get(..5)? {
+        b"%PDF-" => parse_version(bytes.get(5..8)?),
+        _ => None,
+    }
+}
+
+/// `M.m` → `(M, m)` (chiffres uniques, comme le sont toutes les versions PDF).
+fn parse_version(text: &[u8]) -> Option<(u8, u8)> {
+    match text {
+        [major, b'.', minor, ..] if major.is_ascii_digit() && minor.is_ascii_digit() => {
+            Some((major - b'0', minor - b'0'))
+        }
         _ => None,
     }
 }
@@ -575,7 +582,14 @@ pub(crate) fn sign_bytes(
         .get(&1)
         .ok_or_else(|| structure("document sans page"))?;
     let names = top_level_names(&prev);
-    let all_appearances = all_widgets_have_appearances(&prev);
+    // Version effective : la plus haute de l'en-tête et du `/Version` du catalogue (§7.7.2).
+    let catalog_version = prev
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"Version").ok())
+        .and_then(|v| v.as_name().ok())
+        .and_then(parse_version);
+    let effective_version = header_version(base).max(catalog_version);
     let field_name = (1..)
         .map(|n| format!("Signature{n}"))
         .find(|n| !names.contains(n))
@@ -697,14 +711,12 @@ pub(crate) fn sign_bytes(
         .get_dictionary_mut(form_owner)
         .map_err(structure)?;
     form.set("SigFlags", Object::Integer(3));
-    // Un lecteur qui régénère les apparences modifierait le document signé : on retire la
-    // demande dès que tous les champs ont déjà la leur (sinon ils s'afficheraient vides).
-    if all_appearances && form.get(b"NeedAppearances").ok() == Some(&Object::Boolean(true)) {
-        form.set("NeedAppearances", Object::Boolean(false));
-    }
+    // `/NeedAppearances` n'est pas touché : une apparence présente peut être périmée (champ
+    // rempli sur une page jamais ouverte) et les autres lecteurs la régénèrent ainsi.
 
-    // Révision PDF 1.6 au moins (SHA-256 avec `adbe.pkcs7.detached`, §12.8.3.3).
-    if header_minor(base).is_some_and(|minor| minor < 6) {
+    // Révision PDF 1.6 au moins (SHA-256 avec `adbe.pkcs7.detached`, §12.8.3.3) ; jamais
+    // une version déclarée plus récente ramenée à 1.6.
+    if effective_version.is_some_and(|v| v < (1, 6)) {
         inc.opt_clone_object_to_new_document(root_id)
             .map_err(structure)?;
         inc.new_document
@@ -817,7 +829,7 @@ impl Document {
             Err(_) => true,
         };
         if needs_rewrite {
-            if signatures(&base).is_ok_and(|s| !s.is_empty()) {
+            if rewrite_would_lose_signatures(&base) {
                 return Err(refused(
                     "structure du fichier abîmée et déjà signée : l'ajout d'une signature invaliderait les précédentes",
                 ));
@@ -837,5 +849,22 @@ impl Document {
         self.reload_from_bytes(signed.clone())?;
         self.mark_saved(path, signed);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C36 (relecture du Lot 9) : des octets que lopdf ne relit pas mais qui contiennent
+    /// `/ByteRange` portent peut-être des signatures : la réécriture est refusée.
+    #[test]
+    fn rewrite_refusal_when_signatures_cannot_be_read() {
+        assert!(rewrite_would_lose_signatures(
+            b"%PDF-1.7 abime /ByteRange [0 1 2 3] fin"
+        ));
+        assert!(!rewrite_would_lose_signatures(
+            b"%PDF-1.7 abime sans signature"
+        ));
     }
 }

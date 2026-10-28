@@ -48,6 +48,29 @@ fn file_paths(urls: &[tauri::Url]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Fichiers à ouvrir reçus du système (Finder) avant que l'interface les écoute : au
+/// démarrage à froid, l'événement arrive avant le chargement de la page, et un événement
+/// Tauri non écouté est perdu. L'interface les réclame une fois prête (relecture du Lot 9).
+#[derive(Default)]
+pub struct PendingPaths(std::sync::Mutex<Vec<String>>);
+
+impl PendingPaths {
+    /// Ajoute des chemins en attente.
+    pub fn push(&self, paths: Vec<String>) {
+        if let Ok(mut list) = self.0.lock() {
+            list.extend(paths);
+        }
+    }
+
+    /// Rend les chemins en attente et vide la liste.
+    pub fn take(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .map(|mut list| std::mem::take(&mut *list))
+            .unwrap_or_default()
+    }
+}
+
 /// Point d'entrée de l'application (appelé par `main.rs`).
 ///
 /// Si Tauri ne peut pas démarrer (WebView2 absent, configuration invalide), il n'y a rien
@@ -68,6 +91,7 @@ pub fn run() {
     let builder = tauri::Builder::default()
         // Un seul acteur PDFium pour toute l'application ; le handle est clonable.
         .manage(PdfService::spawn())
+        .manage(PendingPaths::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
@@ -94,6 +118,7 @@ pub fn run() {
             commands::all_annotations,
             commands::all_form_fields,
             commands::set_tesseract_path,
+            commands::take_pending_paths,
             commands::pages_with_text,
             commands::signatures,
             commands::sign_document,
@@ -125,7 +150,11 @@ pub fn run() {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect();
             if !paths.is_empty() {
-                let _ = handle.emit("open-paths", paths);
+                // Gardés (démarrage à froid : personne n'écoute encore) et signalés (application
+                // déjà ouverte) ; l'interface vide la liste en les ouvrant.
+                use tauri::Manager;
+                handle.state::<PendingPaths>().push(paths.clone());
+                let _ = handle.emit("open-paths", ());
             }
         }
         let _ = (handle, event);
@@ -150,6 +179,20 @@ mod tests {
             Some(resources.join("pdfium"))
         );
         std::fs::remove_dir_all(&resources).unwrap();
+    }
+
+    /// Relecture du Lot 9 : les chemins reçus avant que l'interface écoute sont gardés,
+    /// puis rendus une seule fois.
+    #[test]
+    fn pending_paths_are_kept_until_taken() {
+        let pending = PendingPaths::default();
+        pending.push(vec!["/a.pdf".to_string()]);
+        pending.push(vec!["/b.pdf".to_string()]);
+        assert_eq!(
+            pending.take(),
+            vec!["/a.pdf".to_string(), "/b.pdf".to_string()]
+        );
+        assert!(pending.take().is_empty());
     }
 
     /// C33 : les fichiers donnés par le Finder (URL `file://`, espaces encodés) deviennent

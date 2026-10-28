@@ -437,11 +437,23 @@ export interface SignatureInfo {
   covers_whole_document: boolean;
 }
 
+/** Tampon d'une signature visible (miroir de `SignAppearance`). */
+export interface SignAppearance {
+  /** Page, à partir de 0. */
+  page: number;
+  /** Rectangle du tampon, points, espace affiché. */
+  rect: Rect;
+  /** Image facultative (PNG ou JPEG). */
+  image_path: string | null;
+}
+
 /** Informations écrites dans une signature (miroir de `SignOptions`). */
 export interface SignOptions {
   reason: string | null;
   location: string | null;
   contact: string | null;
+  /** Tampon visible ; `null` : signature invisible. */
+  appearance: SignAppearance | null;
 }
 
 /** Erreur renvoyée par le backend (miroir de `AppError`). */

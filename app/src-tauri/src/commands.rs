@@ -531,6 +531,21 @@ mod tests {
         format!("{}/../../fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
     }
 
+    /// Lot 10 : l'interface envoie `appearance` (ou rien, comme avant) ; l'image est facultative.
+    #[test]
+    fn sign_options_deserialize_with_or_without_appearance() {
+        let plain: mega_core::digital_signature::SignOptions =
+            serde_json::from_str(r#"{"reason":null,"location":null,"contact":null}"#).unwrap();
+        assert!(plain.appearance.is_none());
+        let visible: mega_core::digital_signature::SignOptions = serde_json::from_str(
+            r#"{"reason":"Accord","location":null,"contact":null,
+                "appearance":{"page":1,"rect":{"x":10,"y":20,"w":220,"h":70}}}"#,
+        )
+        .unwrap();
+        let a = visible.appearance.unwrap();
+        assert_eq!((a.page, a.rect.w, a.image_path), (1, 220.0, None));
+    }
+
     #[test]
     fn signature_info_serializes_for_the_frontend() {
         // Forme attendue par `api.ts` (`SignatureInfo`, `SignatureStatus`).

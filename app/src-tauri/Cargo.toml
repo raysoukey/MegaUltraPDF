@@ -27,6 +27,10 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-opener = "2"
+# Une seule instance (Lot 11) : un PDF ouvert depuis l'Explorateur ou le gestionnaire de
+# fichiers alors que l'application tourne arrive dans la fenêtre existante (nouvel onglet)
+# au lieu d'ouvrir une seconde fenêtre. Greffon officiel Tauri.
+tauri-plugin-single-instance = "2"
 serde.workspace = true
 thiserror.workspace = true
 percent-encoding = "2"

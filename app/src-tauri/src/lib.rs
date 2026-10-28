@@ -71,6 +71,30 @@ impl PendingPaths {
     }
 }
 
+/// Chemins PDF des arguments d'une **seconde instance** (lancée pendant que l'application
+/// tourne) : le premier argument est l'exécutable, les chemins relatifs se lisent dans le
+/// dossier courant de cette seconde instance.
+fn second_instance_paths(argv: &[String], cwd: &str) -> Vec<String> {
+    commands::pdf_paths_from_args(argv.iter().skip(1).cloned(), Path::new(cwd))
+}
+
+/// Relaie à la fenêtre existante les fichiers d'une seconde instance (Lot 11) : gardés dans
+/// [`PendingPaths`] et signalés par `open-paths` (comme le Finder sous macOS), puis la
+/// fenêtre revient au premier plan.
+fn relay_second_instance(app: &tauri::AppHandle, argv: &[String], cwd: &str) {
+    use tauri::{Emitter, Manager};
+    let paths = second_instance_paths(argv, cwd);
+    if !paths.is_empty() {
+        app.state::<PendingPaths>().push(paths);
+        let _ = app.emit("open-paths", ());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 /// Point d'entrée de l'application (appelé par `main.rs`).
 ///
 /// Si Tauri ne peut pas démarrer (WebView2 absent, configuration invalide), il n'y a rien
@@ -89,6 +113,11 @@ pub fn run() {
         mega_core::engine::set_library_dir(dir);
     }
     let builder = tauri::Builder::default()
+        // Enregistré en premier (exigence du greffon) : une seconde instance confie ses
+        // fichiers à la première et s'arrête aussitôt.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            relay_second_instance(app, &argv, &cwd);
+        }))
         // Un seul acteur PDFium pour toute l'application ; le handle est clonable.
         .manage(PdfService::spawn())
         .manage(PendingPaths::default())
@@ -166,6 +195,21 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lot 11 : le premier argument d'une seconde instance est l'exécutable lui-même (même
+    /// s'il finissait par « .pdf ») ; les suivants se lisent dans son dossier courant.
+    #[test]
+    fn second_instance_skips_the_executable_and_reads_its_cwd() {
+        let fixtures = format!("{}/../../fixtures", env!("CARGO_MANIFEST_DIR"));
+        let argv = vec![
+            format!("{fixtures}/simple.pdf"),
+            "rotated.pdf".to_string(),
+            "--flag".to_string(),
+        ];
+        let paths = second_instance_paths(&argv, &fixtures);
+        assert_eq!(paths.len(), 1, "{paths:?}");
+        assert!(paths[0].ends_with("rotated.pdf"));
+    }
 
     #[test]
     fn pdfium_resource_dir_requires_the_staged_folder() {

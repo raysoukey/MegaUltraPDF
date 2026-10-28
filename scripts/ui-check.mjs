@@ -14,7 +14,9 @@
 //   { "type": "texte" }                    saisie de texte (Input.insertText)
 //   { "drag": "sélecteur", "from": [x, y], "to": [x, y] } glisser souris (coordonnées relatives à l'élément)
 //   { "drag": "sélecteur", "fromFrac": [fx, fy], "toFrac": [fx, fy] } idem, en fractions de sa taille
+//   { "launch": ["a.pdf", …] }          lance une seconde instance de l'application (MEGA_APP_EXE)
 
+import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -133,6 +135,12 @@ for (const step of scenario) {
     const ok = step.assert === undefined ? true : Boolean(value) && !String(value).startsWith('ERREUR');
     if (!ok) failures++;
     console.log(`${ok ? '✔' : '✘'} ${step.label ?? expr} → ${JSON.stringify(value)}`);
+  } else if (step.launch !== undefined) {
+    // Seconde instance de l'application (Lot 11) : elle doit confier ses fichiers à la
+    // première et s'arrêter.
+    const exe = process.env.MEGA_APP_EXE;
+    spawn(exe, step.launch, { detached: true, stdio: 'ignore' }).unref();
+    console.log(`🚀 seconde instance : ${step.launch.join(' ')}`);
   } else if (step.media !== undefined) {
     // Émule un média CSS (« print » pour vérifier la feuille d'impression, « » pour revenir).
     await send('Emulation.setEmulatedMedia', { media: step.media });

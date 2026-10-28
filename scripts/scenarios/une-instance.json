@@ -1,0 +1,37 @@
+[
+  {
+    "wait": 1800
+  },
+  {
+    "eval": "(() => { window.__tabs = document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').length; return window.__tabs; })()",
+    "label": "onglets avant (l'application peut en avoir rouvert)"
+  },
+  {
+    "launch": [
+      "fixtures/rotated.pdf",
+      "fixtures/attachments.pdf"
+    ]
+  },
+  {
+    "wait": 5000
+  },
+  {
+    "assert": "(() => { const n = document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').length; return n === window.__tabs + 2 || 'ERREUR ' + window.__tabs + ' → ' + n; })()",
+    "label": "la seconde instance a confié ses deux fichiers à la première (2 onglets de plus)"
+  },
+  {
+    "shot": "01-onglets.png"
+  },
+  {
+    "launch": [
+      "fixtures/rotated.pdf"
+    ]
+  },
+  {
+    "wait": 4000
+  },
+  {
+    "assert": "(() => { const tabs = [...document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]')]; const n = tabs.length; return n === window.__tabs + 2 || 'ERREUR ' + n + ' : ' + tabs.map(t => t.title || t.textContent.trim()).join(' | '); })()",
+    "label": "un fichier déjà ouvert n'ouvre pas de second onglet"
+  }
+]

@@ -135,6 +135,8 @@ export const fr = {
   aboutTagline: 'Lecteur et éditeur PDF libre, sans publicité ni télémétrie.',
   aboutLicense: 'Logiciel libre sous licence GPL-3.0-or-later.',
   aboutPdfium: 'Rendu PDF : PDFium (Google), licence BSD-3-Clause.',
+  aboutFont:
+    'Police incorporée : DejaVu Sans 2.37, licence Bitstream Vera (modifications dans le domaine public).',
   aboutThirdParty: (crates: number, npm: number) =>
     `Composants tiers : ${crates} crates Rust, ${npm} paquets npm`,
   aboutNotices:
@@ -704,6 +706,8 @@ export const en: Strings = {
   aboutTagline: 'Free PDF reader and editor, with no ads and no telemetry.',
   aboutLicense: 'Free software under the GPL-3.0-or-later licence.',
   aboutPdfium: 'PDF rendering: PDFium (Google), BSD-3-Clause licence.',
+  aboutFont:
+    'Embedded font: DejaVu Sans 2.37, Bitstream Vera licence (changes in the public domain).',
   aboutThirdParty: (crates: number, npm: number) =>
     `Third-party components: ${crates} Rust crates, ${npm} npm packages`,
   aboutNotices:

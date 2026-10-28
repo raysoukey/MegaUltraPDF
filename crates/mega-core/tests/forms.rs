@@ -510,3 +510,27 @@ fn checkbox_states_are_read_from_as_then_v() {
     );
     assert_eq!(checked("on"), Some(true), "état coché nommé /On");
 }
+
+/// Lot 10 (B18 du Lot 9) : une valeur cyrillique est écrite en chaîne texte UTF-16BE avec
+/// indicateur d'ordre des octets (`FE FF`), et se relit telle quelle.
+#[test]
+fn cyrillic_field_value_is_utf16() {
+    let mut doc = form();
+    doc.set_field_value(0, 0, &text("Привет")).unwrap();
+    let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    let value = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| match d.get(b"V") {
+            Ok(lopdf::Object::String(bytes, _)) => Some(bytes.clone()),
+            _ => None,
+        })
+        .find(|bytes| bytes.starts_with(&[0xFE, 0xFF]))
+        .expect("valeur en UTF-16BE");
+    assert!(value.len() > 2);
+    assert_eq!(
+        reopen(&doc).form_fields(0).unwrap()[0].value.as_deref(),
+        Some("Привет")
+    );
+}

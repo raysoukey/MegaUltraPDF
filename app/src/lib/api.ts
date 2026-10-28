@@ -742,6 +742,26 @@ export async function pickDirectory(): Promise<string | null> {
   return typeof picked === 'string' ? picked : null;
 }
 
+/** État « lecteur PDF par défaut » du système (miroir de `DefaultAppStatus`). */
+export interface DefaultAppStatus {
+  kind: 'default' | 'other' | 'unknown';
+  handler: string | null;
+  portable: boolean;
+}
+
+/** Ce que l'action « définir comme lecteur par défaut » a fait (miroir de `DefaultAppAction`). */
+export type DefaultAppAction = 'opened_settings' | 'set' | 'instructions' | 'unsupported';
+
+/** Qui ouvre les PDF sur ce système. */
+export async function defaultAppStatus(): Promise<DefaultAppStatus> {
+  return invoke<DefaultAppStatus>('default_app_status');
+}
+
+/** Aide à faire de MegaUltraPDF le lecteur PDF par défaut. */
+export async function makeDefaultApp(): Promise<DefaultAppAction> {
+  return invoke<DefaultAppAction>('make_default_app');
+}
+
 /** Fichiers PDF passés en arguments au lancement de l'application (tous). */
 export async function startupFiles(): Promise<string[]> {
   return invoke<string[]>('startup_files');

@@ -255,3 +255,39 @@ fn metadata_of_encrypted_document_is_edited() {
     let reopened = Document::from_bytes(out, Some("u")).unwrap();
     assert_eq!(reopened.title().as_deref(), Some("Nouveau titre"));
 }
+
+/// Relecture PDF du Lot 10 (C1) : un fichier dont seules les pièces jointes sont chiffrées
+/// (`/StmF /Identity`) n'est pas « déchiffré » en RC4 par lopdf : le nettoyage le laisse tel
+/// que PDFium l'a produit, et le contenu reste lisible.
+#[test]
+fn attachments_only_encryption_is_not_corrupted() {
+    let bytes = mega_core::testing::attachments_only_encrypted_pdf();
+    let doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    assert!(
+        doc.page_text(0).unwrap().contains("Hello Identity"),
+        "fixture lisible"
+    );
+    let out = before_save(&bytes, None).unwrap();
+    let reopened = Document::from_bytes(out, None).unwrap();
+    assert!(reopened.page_text(0).unwrap().contains("Hello Identity"));
+    assert_eq!(reopened.title().as_deref(), Some("Plain title"));
+    // Une passe lopdf (filigrane) refuse clairement au lieu d'abîmer le fichier.
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    let result = doc.add_watermark(&Watermark {
+        text: "X".to_string(),
+        size: 40.0,
+        opacity: 0.5,
+        angle_deg: 0.0,
+        color: Color { r: 0, g: 0, b: 0 },
+        pages: None,
+    });
+    match result {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffr"), "{m}"),
+        Ok(()) => {
+            let again = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+            assert!(again.page_text(0).unwrap().contains("Hello Identity"));
+            assert_eq!(again.title().as_deref(), Some("Plain title"));
+        }
+        Err(other) => panic!("{other:?}"),
+    }
+}

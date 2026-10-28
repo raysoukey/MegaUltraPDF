@@ -21,6 +21,58 @@ use lopdf::{Document as LoDocument, LoadOptions};
 
 use crate::error::{CoreError, CoreResult};
 
+/// Refuse un chiffrement que lopdf ne rechiffrerait pas à l'identique (relecture du Lot 10) :
+/// un filtre `/StmF` ou `/StrF` qui n'est pas une entrée de `/CF` (le nom réservé `Identity`,
+/// « en clair », par exemple : lopdf le traiterait en RC4 et brouillerait le fichier), ou un
+/// `/EFF` (pièces jointes) différent de `/StmF`, que lopdf ne sait pas réécrire.
+fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<()> {
+    let refuse = || {
+        CoreError::InvalidOperation(
+            "document chiffré par filtres (pièces jointes seules, filtre « Identity ») : \
+             non réécrit par cette version"
+                .to_string(),
+        )
+    };
+    let encoded = state.encode().map_err(|_| refuse())?;
+    let version = encoded.get(b"V").and_then(|v| v.as_i64()).unwrap_or(0);
+    if version < 4 {
+        return Ok(());
+    }
+    let filters: Vec<Vec<u8>> = encoded
+        .get(b"CF")
+        .and_then(|cf| cf.as_dict())
+        .map(|cf| cf.iter().map(|(name, _)| name.clone()).collect())
+        .unwrap_or_default();
+    let name_of = |key: &[u8]| encoded.get(key).and_then(|n| n.as_name()).ok();
+    let stream = name_of(b"StmF");
+    for key in [&b"StmF"[..], b"StrF"] {
+        match name_of(key) {
+            Some(name) if filters.iter().any(|f| f.as_slice() == name) => {}
+            _ => return Err(refuse()),
+        }
+    }
+    // `/EFF` n'est pas gardé par lopdf : on le lit dans le dictionnaire `/Encrypt` d'origine,
+    // resté parmi les objets (il n'est jamais déchiffré).
+    let eff = doc.objects.values().find_map(|object| {
+        let dict = object.as_dict().ok()?;
+        let standard = dict.get(b"Filter").and_then(|f| f.as_name()).ok() == Some(b"Standard");
+        (standard && dict.has(b"O") && dict.has(b"U"))
+            .then(|| {
+                dict.get(b"EFF")
+                    .and_then(|e| e.as_name())
+                    .ok()
+                    .map(<[u8]>::to_vec)
+            })
+            .flatten()
+    });
+    if let Some(eff) = eff
+        && Some(eff.as_slice()) != stream
+    {
+        return Err(refuse());
+    }
+    Ok(())
+}
+
 /// Un document `lopdf` déchiffré le temps d'une passe, à rechiffrer à l'identique.
 pub(crate) struct LopdfSession {
     /// Le document, objets en clair.
@@ -49,6 +101,9 @@ impl LopdfSession {
             ));
         }
         let state = doc.encryption_state.take();
+        if let Some(state) = &state {
+            check_crypt_filters(&doc, state)?;
+        }
         Ok(LopdfSession { doc, state })
     }
 

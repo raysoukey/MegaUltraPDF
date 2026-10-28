@@ -34,6 +34,9 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     };
     let doc = &mut session.doc;
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
+    // Le nettoyage ne touche à aucun flux de contenu : on en garde l'empreinte pour vérifier
+    // la relecture (un rechiffrement faux brouillerait le contenu sans changer les pages).
+    let contents_before = page_contents(doc);
     for page_id in &pages {
         clean_page_annotations(doc, *page_id)?;
         identify_annotations(doc, *page_id)?;
@@ -52,7 +55,19 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     if !rewrite_is_sane(pages_before, &out, password) {
         return Ok(bytes.to_vec());
     }
+    let reread = crate::crypt::LopdfSession::load(&out, password).map(|s| page_contents(&s.doc));
+    if reread.ok().as_ref() != Some(&contents_before) {
+        return Ok(bytes.to_vec());
+    }
     Ok(out)
+}
+
+/// Contenu décodé de chaque page, dans l'ordre des pages.
+fn page_contents(doc: &Document) -> Vec<Vec<u8>> {
+    doc.get_pages()
+        .into_values()
+        .map(|id| doc.get_page_content(id))
+        .collect()
 }
 
 /// Objets atteignables depuis la remorque (racine, `/Info`, `/Encrypt`…), en suivant toutes

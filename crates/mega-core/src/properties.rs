@@ -351,12 +351,20 @@ fn xml_escape(text: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-/// Remplace le texte du premier `<rdf:li>` de l'élément `tag` (titre, auteur, sujet : des
-/// listes `rdf:Alt` / `rdf:Seq`) ; `None` si l'élément ou l'entrée manque.
+/// Remplace le texte d'une entrée `<rdf:li>` de l'élément `tag` (titre, auteur, sujet : des
+/// listes `rdf:Alt` / `rdf:Seq`) : celle de langue `x-default` (celle que les lecteurs
+/// affichent) s'il y en a une, sinon la première ; `None` si l'élément ou l'entrée manque.
 fn replace_li(xmp: &str, tag: &str, value: &str) -> Option<String> {
     let start = xmp.find(&format!("<{tag}>"))?;
     let end = start + xmp[start..].find(&format!("</{tag}>"))?;
-    let li = start + xmp[start..end].find("<rdf:li")?;
+    let default = ["xml:lang=\"x-default\"", "xml:lang='x-default'"]
+        .iter()
+        .find_map(|attr| xmp[start..end].find(attr))
+        .and_then(|at| xmp[start..start + at].rfind("<rdf:li"));
+    let li = match default {
+        Some(at) => start + at,
+        None => start + xmp[start..end].find("<rdf:li")?,
+    };
     let open_end = li + xmp[li..end].find('>')? + 1;
     if xmp[..open_end].ends_with("/>") {
         return None;
@@ -374,10 +382,16 @@ fn replace_simple(xmp: &str, tag: &str, value: &str) -> Option<String> {
         let end = from + xmp[from..].find(&format!("</{tag}>"))?;
         return Some(format!("{}{value}{}", &xmp[..from], &xmp[end..]));
     }
-    let attr = format!(" {tag}=\"");
-    let start = xmp.find(&attr)? + attr.len();
-    let end = start + xmp[start..].find('"')?;
-    Some(format!("{}{value}{}", &xmp[..start], &xmp[end..]))
+    // Attribut entre guillemets ou entre apostrophes (les deux sont du XML valide).
+    for quote in ['"', '\''] {
+        let attr = format!(" {tag}={quote}");
+        if let Some(found) = xmp.find(&attr) {
+            let start = found + attr.len();
+            let end = start + xmp[start..].find(quote)?;
+            return Some(format!("{}{value}{}", &xmp[..start], &xmp[end..]));
+        }
+    }
+    None
 }
 
 /// `"Pdf1_7"` → `"1.7"`, `"Unset"` → `"?"`.
@@ -391,6 +405,32 @@ fn version_label(debug: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mineur du Lot 9 : dans une liste multilingue, c'est l'entrée `x-default` que les
+    /// lecteurs affichent ; c'est elle qu'on remplace.
+    #[test]
+    fn xmp_title_replaces_the_x_default_entry() {
+        let xmp = "<dc:title><rdf:Alt><rdf:li xml:lang=\"fr\">Ancien</rdf:li>\
+                   <rdf:li xml:lang=\"x-default\">Old</rdf:li></rdf:Alt></dc:title>";
+        let out = replace_li(xmp, "dc:title", "Nouveau").unwrap();
+        assert!(out.contains("\"fr\">Ancien<"), "{out}");
+        assert!(out.contains("\"x-default\">Nouveau<"), "{out}");
+        // Sans `x-default`, la première entrée.
+        let plain = "<dc:title><rdf:Alt><rdf:li>Old</rdf:li></rdf:Alt></dc:title>";
+        assert!(
+            replace_li(plain, "dc:title", "N")
+                .unwrap()
+                .contains("<rdf:li>N<")
+        );
+    }
+
+    /// Mineur du Lot 9 : propriété en attribut entre apostrophes.
+    #[test]
+    fn xmp_attribute_with_single_quotes_is_replaced() {
+        let xmp = "<rdf:Description pdf:Keywords='ancien'/>";
+        let out = replace_simple(xmp, "pdf:Keywords", "neuf").unwrap();
+        assert_eq!(out, "<rdf:Description pdf:Keywords='neuf'/>");
+    }
 
     #[test]
     fn version_label_formats_debug_name() {

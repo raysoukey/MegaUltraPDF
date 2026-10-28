@@ -308,6 +308,44 @@ fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> Cor
             .filter_map(|item| item.as_reference().ok())
             .collect()
     };
+    // 0. Membres d'un groupe (`/IRT` + `/RT /Group`, §12.5.6.2) dont l'annotation principale
+    //    n'est plus listée : le groupe forme une seule annotation, ils partent avec elle.
+    let primaries = listed(doc);
+    for page_id in pages {
+        let Some((array_id, items)) = page_annots(doc, *page_id) else {
+            continue;
+        };
+        let orphan_member = |item: &Object| {
+            let dict = match item {
+                Object::Reference(id) => doc.get_dictionary(*id).ok(),
+                Object::Dictionary(dict) => Some(dict),
+                _ => None,
+            };
+            dict.is_some_and(|d| {
+                d.get(b"RT").and_then(Object::as_name).ok() == Some(b"Group".as_slice())
+                    && d.get(b"IRT")
+                        .and_then(Object::as_reference)
+                        .is_ok_and(|primary| !primaries.contains(&primary))
+            })
+        };
+        let kept: Vec<Object> = items
+            .iter()
+            .filter(|i| !orphan_member(i))
+            .cloned()
+            .collect();
+        if kept.len() == items.len() {
+            continue;
+        }
+        match array_id {
+            Some(id) => {
+                doc.objects.insert(id, Object::Array(kept));
+            }
+            None => doc
+                .get_dictionary_mut(*page_id)
+                .map_err(structure)?
+                .set("Annots", Object::Array(kept)),
+        }
+    }
     let before = listed(doc);
     // 1. Popups dont le parent n'est plus listé : retirés de `/Annots`.
     for page_id in pages {

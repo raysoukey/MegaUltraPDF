@@ -360,3 +360,47 @@ fn ink_matrix_is_applied() {
         .collect();
     assert_eq!(first, vec![110.0, 120.0]);
 }
+
+/// Mineur du Lot 9 : une annotation membre d'un **groupe** (`/IRT` + `/RT /Group`, §12.5.6.2)
+/// disparaît avec l'annotation principale du groupe.
+#[test]
+fn group_members_go_with_their_primary_annotation() {
+    let mut lo = lopdf::Document::load_mem(&sample_pdf(1, "groupe")).unwrap();
+    let page_id = *lo.get_pages().get(&1).unwrap();
+    let square = |rect: [i64; 4]| {
+        lopdf::Dictionary::from_iter(vec![
+            ("Type", lopdf::Object::Name(b"Annot".to_vec())),
+            ("Subtype", lopdf::Object::Name(b"Square".to_vec())),
+            (
+                "Rect",
+                lopdf::Object::Array(rect.iter().map(|v| lopdf::Object::Integer(*v)).collect()),
+            ),
+            (
+                "C",
+                lopdf::Object::Array(vec![1.into(), 0.into(), 0.into()]),
+            ),
+        ])
+    };
+    let primary = lo.add_object(square([100, 600, 200, 700]));
+    let mut member = square([250, 600, 350, 700]);
+    member.set("IRT", lopdf::Object::Reference(primary));
+    member.set("RT", lopdf::Object::Name(b"Group".to_vec()));
+    let member = lo.add_object(member);
+    lo.get_dictionary_mut(page_id).unwrap().set(
+        "Annots",
+        lopdf::Object::Array(vec![primary.into(), member.into()]),
+    );
+    let mut bytes = Vec::new();
+    lo.save_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert_eq!(doc.annotations(0).unwrap().len(), 2);
+    doc.delete_annotation(0, 0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("groupe.pdf");
+    doc.save_as(&path).unwrap();
+    let reopened = Document::open(&path, None).unwrap();
+    assert!(
+        reopened.annotations(0).unwrap().is_empty(),
+        "membre du groupe parti aussi"
+    );
+}

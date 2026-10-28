@@ -20,6 +20,7 @@
 )]
 
 mod commands;
+mod default_app;
 mod error;
 mod protocol;
 
@@ -155,6 +156,8 @@ pub fn run() {
             commands::document_properties,
             commands::file_size,
             commands::startup_files,
+            commands::default_app_status,
+            commands::make_default_app,
             commands::apply_edit,
             commands::undo_edit,
             commands::redo_edit,

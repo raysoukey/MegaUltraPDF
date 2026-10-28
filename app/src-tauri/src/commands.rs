@@ -539,6 +539,20 @@ pub fn startup_files() -> Vec<String> {
     )
 }
 
+/// État « lecteur PDF par défaut » du système, pour les préférences (Lot 11).
+#[tauri::command]
+pub fn default_app_status() -> crate::default_app::DefaultAppStatus {
+    crate::default_app::status()
+}
+
+/// Aide à faire de MegaUltraPDF le lecteur par défaut (Paramètres de Windows, `xdg-mime`,
+/// marche à suivre sous macOS).
+#[tauri::command]
+pub fn make_default_app(app: tauri::AppHandle) -> crate::default_app::DefaultAppAction {
+    use tauri_plugin_opener::OpenerExt;
+    crate::default_app::make_default(|url| app.opener().open_url(url, None::<&str>).is_ok())
+}
+
 /// Les arguments qui désignent un fichier PDF existant, en chemins absolus, dans l'ordre et
 /// sans doublon (Lot 11). Un chemin relatif se lit dans `cwd` : pour une **seconde
 /// instance** relayée à la première, c'est le dossier courant de la seconde. Les options

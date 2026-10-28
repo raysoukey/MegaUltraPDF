@@ -32,6 +32,13 @@
 6. **Analyser une sortie texte dans une fonction pure.** `parse_reg_progid` et
    `parse_xdg_default` se testent sur des sorties réelles copiées dans les tests, sans lancer
    les programmes.
+7. **Attendre avec une limite** : `try_wait()` demande « fini ? » sans bloquer, ce qui permet
+   d'arrêter (`kill`) un programme qui ne répond pas (`default_app.rs`, fonction `run`).
+8. **Commande Tauri `async` et `spawn_blocking`** : un travail qui attend un autre programme
+   part sur un fil réservé aux tâches bloquantes ; la fenêtre reste fluide (`commands.rs`,
+   `default_app_status`).
+9. **Dépendance réservée à certains systèmes** : `[target.'cfg(...)'.dependencies]` dans
+   `app/src-tauri/Cargo.toml`, et le même `#[cfg(...)]` devant son utilisation (`lib.rs`).
 
 ## Décisions de conception (ADR-0015)
 
@@ -53,6 +60,13 @@
   onglet au départ. Il mesure l'écart avant et après.
 - Le **ProgId** de l'association Windows est le nom donné dans `tauri.conf.json`
   (`MegaUltraPDF.Document`), vérifié dans le registre après une vraie installation.
+
+- **Relecture** : une installation MSI passait pour une version portable (on cherchait
+  `uninstall.exe`, propre à NSIS). On regarde maintenant la commande d'ouverture du ProgId,
+  écrite par les deux installateurs. Windows 11 range aussi son choix dans
+  `UserChoiceLatest`, lu en premier.
+- **Relecture** : deux ouvertures simultanées du même fichier pouvaient créer deux onglets ;
+  elles passent maintenant l'une après l'autre (`openQueue`, `documents.svelte.ts`).
 
 ## Exercices de lecture
 

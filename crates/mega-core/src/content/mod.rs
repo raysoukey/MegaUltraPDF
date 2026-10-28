@@ -182,15 +182,22 @@ fn invalid(msg: &str) -> CoreError {
 /// générateur ne sait pas réémettre le texte en police **Type 3**, les images **en ligne**
 /// (`BI … EI`) ni les ombrages (`sh`), qui disparaîtraient en silence. On inspecte la page
 /// avec `lopdf` avant d'y toucher ; l'insertion (nouveau flux) n'est pas concernée.
-pub(crate) fn check_regeneration_safe(bytes: &[u8], page: u16) -> CoreResult<()> {
+pub(crate) fn check_regeneration_safe(
+    bytes: &[u8],
+    page: u16,
+    password: Option<&str>,
+) -> CoreResult<()> {
     let refuse = |what: &str| {
         CoreError::InvalidOperation(format!(
             "cette page contient {what} : PDFium le perdrait en régénérant son contenu ; \
              modification des objets refusée (l'insertion reste possible)"
         ))
     };
-    let Ok(doc) = lopdf::Document::load_mem(bytes) else {
-        // Illisible par lopdf : on ne peut rien garantir.
+    // Un document chiffré est lu déchiffré (Lot 10) ; illisible par lopdf : on ne peut rien
+    // garantir.
+    let Ok(crate::crypt::LopdfSession { doc, .. }) =
+        crate::crypt::LopdfSession::load(bytes, password)
+    else {
         return Err(refuse("un contenu que l'on ne sait pas analyser"));
     };
     let Some(page_id) = doc.get_pages().get(&(u32::from(page) + 1)).copied() else {
@@ -563,30 +570,8 @@ impl Document {
             let _guard = engine::guard();
             self.checked_index_unlocked(page)?;
         }
-        self.check_not_encrypted()?;
         let bytes = self.to_bytes()?;
-        check_regeneration_safe(&bytes, page)
-    }
-
-    /// Refuse l'édition du contenu d'un PDF chiffré : les objets retirés resteraient en
-    /// orphelins dans le fichier (la passe `lopdf` ne peut pas l'élaguer) et l'analyse de
-    /// la page n'est pas possible. Prend et rend le jeton.
-    pub(crate) fn check_not_encrypted(&self) -> CoreResult<()> {
-        let _guard = engine::guard();
-        let unprotected = self
-            .inner()
-            .permissions()
-            .security_handler_revision()
-            .map(|r| r == pdfium_render::prelude::PdfSecurityHandlerRevision::Unprotected)
-            .unwrap_or(false);
-        if unprotected {
-            Ok(())
-        } else {
-            Err(invalid(
-                "édition du contenu d'un PDF chiffré : non prise en charge (le contenu retiré \
-                 resterait dans le fichier)",
-            ))
-        }
+        check_regeneration_safe(&bytes, page, self.password())
     }
 }
 

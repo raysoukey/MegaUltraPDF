@@ -194,26 +194,6 @@ fn redaction_removes_image_and_annotation_bytes_from_saved_file() {
     );
 }
 
-#[test]
-fn redaction_refuses_encrypted_document() {
-    let bytes = std::fs::read(format!(
-        "{}/../../fixtures/encrypted.pdf",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap();
-    let mut doc = Document::from_bytes(bytes, Some("secret")).unwrap();
-    let before = doc.page_objects(0).unwrap().len();
-    match doc.redact(0, rect(60.0, 700.0, 200.0, 60.0)) {
-        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffré"), "{m}"),
-        other => panic!("{other:?}"),
-    }
-    assert_eq!(
-        doc.page_objects(0).unwrap().len(),
-        before,
-        "rien n'a changé"
-    );
-}
-
 /// C2 (relecture) : du texte dessiné à travers un XObject resterait sous le cache noir ;
 /// plutôt que de mentir, on refuse et le document reste intact.
 #[test]

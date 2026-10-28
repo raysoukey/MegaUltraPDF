@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::annotations::{Color, to_pdf_rect};
 use crate::content::win_ansi_byte;
+use crate::crypt::LopdfSession;
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
@@ -423,22 +424,19 @@ impl Document {
             return Ok(());
         }
         let bytes = self.to_bytes()?;
-        let mut doc = LoDocument::load_mem(&bytes).map_err(structure)?;
-        if doc.is_encrypted() || doc.was_encrypted() {
-            return Err(invalid(
-                "couche de texte d'un PDF chiffré : non modifiable dans cette version",
-            ));
-        }
+        // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
+        let mut session = LopdfSession::load(&bytes, self.password())?;
+        let doc = &mut session.doc;
         let page_id = *doc
             .get_pages()
             .get(&(u32::from(page) + 1))
             .ok_or_else(|| structure("page introuvable"))?;
-        let font_id = helvetica_font(&mut doc);
+        let font_id = helvetica_font(doc);
         let mut entries = vec![("Font", FONT_KEY, font_id)];
         if !writer.is_empty() {
-            entries.push(("Font", UNICODE_FONT_KEY, writer.write(&mut doc)?));
+            entries.push(("Font", UNICODE_FONT_KEY, writer.write(doc)?));
         }
-        ensure_resources(&mut doc, page_id, &entries)?;
+        ensure_resources(doc, page_id, &entries)?;
         let m = frame.matrix_to_user_space();
         let cm = if frame.is_identity() {
             String::new()
@@ -455,22 +453,17 @@ impl Document {
         };
         let content = format!("\nq\n{cm}BT\n3 Tr\n{ops}ET\nQ\n");
         let mut wrapped = BTreeSet::new();
-        append_content(&mut doc, page_id, &mut wrapped, content.into_bytes())?;
-        let mut out = Vec::new();
-        doc.save_to(&mut out)?;
+        append_content(doc, page_id, &mut wrapped, content.into_bytes())?;
+        let out = session.finish()?;
         self.reload_from_bytes(out)
     }
 
     /// Écrit les textes dans le fichier (phase `lopdf`), puis recharge le document.
     fn apply_placements(&mut self, placements: Vec<Placement>) -> CoreResult<()> {
         let bytes = self.to_bytes()?;
-        let mut doc = LoDocument::load_mem(&bytes).map_err(structure)?;
-        // Voir `cleanup::before_save` : `was_encrypted()` couvre le mot de passe propriétaire seul.
-        if doc.is_encrypted() || doc.was_encrypted() {
-            return Err(invalid(
-                "filigrane et numérotation d'un PDF chiffré : non modifiables dans cette version",
-            ));
-        }
+        // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
+        let mut session = LopdfSession::load(&bytes, self.password())?;
+        let doc = &mut session.doc;
         let page_ids: BTreeMap<u32, ObjectId> = doc.get_pages();
         // Une police de chaque sorte au plus, partagée par toutes les pages : Helvetica pour
         // les textes WinAnsi, la police Unicode (sous-ensemble des caractères de **tous** les
@@ -478,7 +471,7 @@ impl Document {
         let helvetica = placements
             .iter()
             .any(|p| !p.unicode)
-            .then(|| helvetica_font(&mut doc));
+            .then(|| helvetica_font(doc));
         let mut writer = Type0Writer::new();
         let mut encoded = Vec::with_capacity(placements.len());
         for p in &placements {
@@ -491,7 +484,7 @@ impl Document {
         let unicode = if writer.is_empty() {
             None
         } else {
-            Some(writer.write(&mut doc)?)
+            Some(writer.write(doc)?)
         };
         let mut states: BTreeMap<u32, (String, ObjectId)> = BTreeMap::new();
         let mut wrapped: BTreeSet<ObjectId> = BTreeSet::new();
@@ -519,7 +512,7 @@ impl Document {
                 })
                 .clone();
             ensure_resources(
-                &mut doc,
+                doc,
                 page_id,
                 &[("Font", font_key, font_id), ("ExtGState", &gs_name, gs_id)],
             )?;
@@ -550,10 +543,9 @@ impl Document {
                 num(p.tm[4]),
                 num(p.tm[5]),
             );
-            append_content(&mut doc, page_id, &mut wrapped, content.into_bytes())?;
+            append_content(doc, page_id, &mut wrapped, content.into_bytes())?;
         }
-        let mut out = Vec::new();
-        doc.save_to(&mut out)?;
+        let out = session.finish()?;
         self.reload_from_bytes(out)
     }
 }

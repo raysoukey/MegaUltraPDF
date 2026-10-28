@@ -163,8 +163,10 @@ fn unprotect_user_password_document() {
     ));
 }
 
+/// Lot 10 : après « Protéger », les passes `lopdf` (filigrane…) rechiffrent avec le même mot
+/// de passe au lieu de refuser.
 #[test]
-fn edits_after_protect_are_refused_by_lopdf_passes() {
+fn edits_after_protect_keep_the_protection() {
     let mut doc = Document::from_bytes(sample_pdf(1, "après"), None).unwrap();
     doc.protect(&protection("secret", "patron", all())).unwrap();
     let spec = mega_core::overlay::Watermark {
@@ -175,13 +177,16 @@ fn edits_after_protect_are_refused_by_lopdf_passes() {
         color: mega_core::Color { r: 0, g: 0, b: 0 },
         pages: None,
     };
-    assert!(matches!(
-        doc.add_watermark(&spec),
-        Err(CoreError::InvalidOperation(_))
-    ));
-    // Les éditions PDFium pures (annotations, pages) restent possibles.
+    doc.add_watermark(&spec).unwrap();
+    assert!(doc.page_text(0).unwrap().contains('X'));
     doc.rotate_pages(&[0], 1).unwrap();
-    assert_eq!(doc.page_count(), 1);
+    let bytes = doc.to_bytes().unwrap();
+    assert!(matches!(
+        Document::from_bytes(bytes.clone(), None),
+        Err(CoreError::PasswordRequired)
+    ));
+    let reopened = Document::from_bytes(bytes, Some("secret")).unwrap();
+    assert!(reopened.page_text(0).unwrap().contains('X'));
 }
 
 /// I3 (relecture) : un fichier AES-256 à mot de passe propriétaire seul (`/P -4`, tout

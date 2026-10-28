@@ -40,6 +40,7 @@ pub mod attachments;
 pub mod cleanup;
 pub mod compare;
 pub mod content;
+pub(crate) mod crypt;
 #[cfg(feature = "signature")]
 pub mod digital_signature;
 pub mod document;

@@ -302,7 +302,7 @@ impl Document {
         let pages = doc.get_pages().len();
         let mut out = Vec::new();
         doc.save_to(&mut out)?;
-        if out.len() >= bytes.len() || !crate::cleanup::rewrite_is_sane(pages, &out) {
+        if out.len() >= bytes.len() || !crate::cleanup::rewrite_is_sane(pages, &out, None) {
             return Ok(OptimizeReport {
                 images_recompressed: 0,
                 objects_removed: 0,

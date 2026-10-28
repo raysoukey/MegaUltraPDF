@@ -23,37 +23,33 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 }
 
 /// Octets prêts à écrire : notes sans apparence imposée, `/InkList` sur les formes, objets
-/// orphelins élagués et renumérotés. Un document chiffré est rendu tel quel.
-pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
-    let mut doc = match Document::load_mem(bytes) {
-        Ok(doc) => doc,
-        // Un fichier que lopdf ne relit pas est écrit tel que PDFium l'a produit.
+/// orphelins élagués et renumérotés. Un document chiffré (ouvert avec `password`) est nettoyé
+/// en clair puis **rechiffré à l'identique** ([`crate::crypt::LopdfSession`], Lot 10).
+pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> {
+    let mut session = match crate::crypt::LopdfSession::load(bytes, password) {
+        Ok(session) => session,
+        // Un fichier que lopdf ne relit (ou ne déchiffre) pas est écrit tel que PDFium l'a
+        // produit, protection comprise.
         Err(_) => return Ok(bytes.to_vec()),
     };
-    // `is_encrypted()` ne voit que le dictionnaire `/Encrypt` ; or lopdf **déchiffre en
-    // silence** un fichier dont le mot de passe utilisateur est vide (protection « propriétaire »
-    // seule) et retire `/Encrypt` : `was_encrypted()` garde la trace. Dans les deux cas, on ne
-    // réécrit pas : le fichier resterait lisible mais perdrait sa protection.
-    if doc.is_encrypted() || doc.was_encrypted() {
-        return Ok(bytes.to_vec());
-    }
+    let doc = &mut session.doc;
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
     for page_id in &pages {
-        clean_page_annotations(&mut doc, *page_id)?;
-        identify_annotations(&mut doc, *page_id)?;
+        clean_page_annotations(doc, *page_id)?;
+        identify_annotations(doc, *page_id)?;
     }
-    drop_dangling_annotation_links(&mut doc, &pages)?;
-    dedupe_font_files(&mut doc);
+    drop_dangling_annotation_links(doc, &pages)?;
+    dedupe_font_files(doc);
     // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
-    crate::properties::stamp_mod_date(&mut doc);
+    crate::properties::stamp_mod_date(doc);
     let pages_before = doc.get_pages().len();
-    prune(&mut doc);
+    prune(doc);
     doc.renumber_objects();
-    let mut out = Vec::new();
-    doc.save_to(&mut out)?;
+    let out = session.finish()?;
     // Ceinture de sécurité : la réécriture `lopdf` remplace le fichier de l'utilisateur ; si
-    // elle ne se relit pas avec le même nombre de pages, on écrit les octets PDFium tels quels.
-    if !rewrite_is_sane(pages_before, &out) {
+    // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages, on écrit les
+    // octets PDFium tels quels.
+    if !rewrite_is_sane(pages_before, &out, password) {
         return Ok(bytes.to_vec());
     }
     Ok(out)
@@ -147,11 +143,13 @@ pub(crate) fn prune(doc: &mut Document) -> usize {
     before - doc.objects.len()
 }
 
-/// Vrai si `out` se relit comme un PDF non vide ayant encore `pages_before` pages.
-pub(crate) fn rewrite_is_sane(pages_before: usize, out: &[u8]) -> bool {
-    match Document::load_mem(out) {
+/// Vrai si `out` se relit (et, s'il est chiffré, se déchiffre avec `password`) comme un PDF
+/// non vide ayant encore `pages_before` pages.
+pub(crate) fn rewrite_is_sane(pages_before: usize, out: &[u8], password: Option<&str>) -> bool {
+    match crate::crypt::LopdfSession::load(out, password) {
         Ok(reloaded) => {
-            reloaded.get_pages().len() == pages_before && reloaded.trailer.get(b"Root").is_ok()
+            reloaded.doc.get_pages().len() == pages_before
+                && reloaded.doc.trailer.get(b"Root").is_ok()
         }
         Err(_) => false,
     }
@@ -613,13 +611,16 @@ mod tests {
     #[test]
     fn rewrite_sanity_rejects_truncated_or_page_losing_output() {
         let bytes = crate::testing::many_pages_pdf(3);
-        assert!(rewrite_is_sane(3, &bytes));
-        assert!(!rewrite_is_sane(4, &bytes), "nombre de pages différent");
+        assert!(rewrite_is_sane(3, &bytes, None));
         assert!(
-            !rewrite_is_sane(3, &bytes[..bytes.len() / 2]),
+            !rewrite_is_sane(4, &bytes, None),
+            "nombre de pages différent"
+        );
+        assert!(
+            !rewrite_is_sane(3, &bytes[..bytes.len() / 2], None),
             "fichier tronqué"
         );
-        assert!(!rewrite_is_sane(0, b"pas un pdf"));
+        assert!(!rewrite_is_sane(0, b"pas un pdf", None));
     }
 }
 

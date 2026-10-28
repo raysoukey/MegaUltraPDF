@@ -70,14 +70,13 @@ fn rect_of(q: pdfium_render::prelude::PdfQuadPoints) -> Rect {
 
 impl Document {
     /// Caviarde `rect` (points, espace **affiché**) sur la page `page` : retire les objets
-    /// texte et image et les annotations qui touchent la zone, puis la recouvre d'un
-    /// rectangle noir. Retourne ce qui a été retiré.
+    /// texte, les tracés contenus et les annotations qui touchent la zone, noircit les images
+    /// sous la zone, puis la recouvre d'un rectangle noir. Retourne ce qui a été fait.
     ///
-    /// Deux refus protègent la promesse « le contenu disparaît du fichier » : un document
-    /// **chiffré** (les objets retirés resteraient en orphelins, la passe `lopdf` ne pouvant
-    /// pas l'élaguer) et du **texte qui resterait sous le cache** (dessiné à travers un
-    /// formulaire XObject, hors de portée du retrait par objets) : le document est alors
-    /// remis dans son état d'avant.
+    /// Un document **chiffré** est traité comme les autres (session `lopdf` rechiffrée à
+    /// l'identique, Lot 10). Un refus protège la promesse « le contenu disparaît du fichier » :
+    /// du **texte qui resterait sous le cache** (dessiné à travers un formulaire XObject, hors
+    /// de portée du retrait par objets) : le document est alors remis dans son état d'avant.
     pub fn redact(&mut self, page: u16, rect: Rect) -> CoreResult<RedactReport> {
         self.mark_changed();
         if !(rect.w > 0.0 && rect.h > 0.0 && rect.w.is_finite() && rect.h.is_finite()) {
@@ -86,12 +85,11 @@ impl Document {
             ));
         }
         self.checked_index(page)?;
-        self.check_not_encrypted()?;
         // Instantané pour revenir en arrière si la phase PDFium échoue à mi-chemin ou si du
         // texte reste sous le cache ; il sert aussi à vérifier que la page supporte la
         // régénération de son flux (B3).
         let snapshot = self.to_bytes()?;
-        super::check_regeneration_safe(&snapshot, page)?;
+        super::check_regeneration_safe(&snapshot, page, self.password())?;
         let report = match self
             .redact_objects(page, rect)
             .and_then(|report| self.redact_images(page, rect, report))
@@ -130,13 +128,14 @@ impl Document {
         mut report: RedactReport,
     ) -> CoreResult<RedactReport> {
         let zone = self.page_frame(page)?.to_user_space(rect);
-        let mut doc = lopdf::Document::load_mem(&self.to_bytes()?)
-            .map_err(|e| CoreError::InvalidOperation(format!("caviardage des images : {e}")))?;
+        // Session `lopdf` : un document chiffré est traité en clair puis rechiffré à l'identique.
+        let mut session = crate::crypt::LopdfSession::load(&self.to_bytes()?, self.password())?;
+        let doc = &mut session.doc;
         let page_id = *doc
             .get_pages()
             .get(&(u32::from(page) + 1))
             .ok_or_else(|| CoreError::InvalidOperation("page introuvable".to_string()))?;
-        let raster = super::raster::redact_images(&mut doc, page_id, &zone)?;
+        let raster = super::raster::redact_images(doc, page_id, &zone)?;
         report.images_removed = raster.removed;
         report.images_redacted = raster.redacted;
         // Vignette (`/Thumb`), données privées d'un éditeur (`/PieceInfo`) et métadonnées XMP
@@ -148,8 +147,7 @@ impl Document {
             }
         }
         if extras || raster != super::raster::RasterReport::default() {
-            let mut out = Vec::new();
-            doc.save_to(&mut out)?;
+            let out = session.finish()?;
             self.reload_from_bytes(out)?;
         }
         Ok(report)

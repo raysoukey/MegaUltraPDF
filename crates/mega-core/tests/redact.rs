@@ -547,3 +547,206 @@ fn redaction_report_is_in_edit_state() {
     doc.undo().unwrap();
     assert!(doc.edit_state().last_redaction.is_none());
 }
+
+// --- Relecture du Lot 10 : formulaires, images alternatives, motifs ----------------------
+
+use lopdf::{Dictionary as LDict, Object as LObj, Stream as LStream};
+
+/// Une image RGB 8 × 8 d'une couleur, éventuellement accompagnée de clés supplémentaires.
+fn rgb_image(rgb: [u8; 3], extra: Vec<(&str, LObj)>) -> LStream {
+    let mut d = LDict::from_iter(vec![
+        ("Type", LObj::Name(b"XObject".to_vec())),
+        ("Subtype", LObj::Name(b"Image".to_vec())),
+        ("Width", LObj::Integer(8)),
+        ("Height", LObj::Integer(8)),
+        ("ColorSpace", LObj::Name(b"DeviceRGB".to_vec())),
+        ("BitsPerComponent", LObj::Integer(8)),
+    ]);
+    for (k, v) in extra {
+        d.set(k, v);
+    }
+    LStream::new(d, rgb.repeat(64))
+}
+
+/// Une page 595 × 842 : `content`, ressources `/XObject` et `/Pattern` données.
+fn page_pdf(content: &str, build: impl FnOnce(&mut lopdf::Document) -> (LDict, LDict)) -> Vec<u8> {
+    let mut doc = lopdf::Document::with_version("1.7");
+    let (xobjects, patterns) = build(&mut doc);
+    let content_id = doc.add_object(LStream::new(LDict::new(), content.as_bytes().to_vec()));
+    let pages_id = doc.new_object_id();
+    let mut resources = LDict::new();
+    resources.set("XObject", LObj::Dictionary(xobjects));
+    if !patterns.is_empty() {
+        resources.set("Pattern", LObj::Dictionary(patterns));
+    }
+    let page = doc.add_object(LDict::from_iter(vec![
+        ("Type", LObj::Name(b"Page".to_vec())),
+        ("Parent", LObj::Reference(pages_id)),
+        (
+            "MediaBox",
+            LObj::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]),
+        ),
+        ("Resources", LObj::Dictionary(resources)),
+        ("Contents", LObj::Reference(content_id)),
+    ]));
+    doc.objects.insert(
+        pages_id,
+        LObj::Dictionary(LDict::from_iter(vec![
+            ("Type", LObj::Name(b"Pages".to_vec())),
+            ("Kids", LObj::Array(vec![page.into()])),
+            ("Count", LObj::Integer(1)),
+        ])),
+    );
+    let catalog = doc.add_object(LDict::from_iter(vec![
+        ("Type", LObj::Name(b"Catalog".to_vec())),
+        ("Pages", LObj::Reference(pages_id)),
+    ]));
+    doc.trailer.set("Root", LObj::Reference(catalog));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+/// Vrai si `needle` apparaît dans un flux (décompressé) du fichier.
+fn in_file(bytes: &[u8], needle: &[u8]) -> bool {
+    let doc = lopdf::Document::load_mem(bytes).unwrap();
+    doc.objects.values().any(|o| {
+        o.as_stream().is_ok_and(|s| {
+            let data = s
+                .decompressed_content()
+                .unwrap_or_else(|_| s.content.clone());
+            data.windows(needle.len()).any(|w| w == needle)
+        })
+    })
+}
+
+/// Un logo (image dans un formulaire XObject) loin de la zone n'empêche plus de caviarder
+/// une image directe ; un formulaire qui touche la zone reste refusé.
+#[test]
+fn form_image_far_from_the_zone_does_not_block_redaction() {
+    let bytes = page_pdf(
+        "q 200 0 0 200 100 100 cm /Im Do Q q 1 0 0 1 400 700 cm /Logo Do Q",
+        |doc| {
+            let image = doc.add_object(rgb_image([255, 0, 0], vec![]));
+            let logo_image = doc.add_object(rgb_image([0, 0, 255], vec![]));
+            let logo = doc.add_object(LStream::new(
+                LDict::from_iter(vec![
+                    ("Type", LObj::Name(b"XObject".to_vec())),
+                    ("Subtype", LObj::Name(b"Form".to_vec())),
+                    (
+                        "BBox",
+                        LObj::Array(vec![0.into(), 0.into(), 100.into(), 50.into()]),
+                    ),
+                    (
+                        "Resources",
+                        LObj::Dictionary(LDict::from_iter(vec![(
+                            "XObject",
+                            LObj::Dictionary(LDict::from_iter(vec![("L", logo_image.into())])),
+                        )])),
+                    ),
+                ]),
+                b"q 100 0 0 50 0 0 cm /L Do Q".to_vec(),
+            ));
+            (
+                LDict::from_iter(vec![("Im", image.into()), ("Logo", logo.into())]),
+                LDict::new(),
+            )
+        },
+    );
+    let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+    let report = doc.redact(0, rect(100.0, 200.0, 100.0, 100.0)).unwrap();
+    assert_eq!(report.images_redacted, 1);
+    let mut near = Document::from_bytes(bytes, None).unwrap();
+    assert!(matches!(
+        near.redact(0, rect(420.0, 710.0, 30.0, 20.0)),
+        Err(CoreError::InvalidOperation(_))
+    ));
+}
+
+/// Les clés qui peuvent garder l'image d'origine (`/Alternates`, `/Metadata`…) ne passent
+/// pas dans la copie noircie.
+#[test]
+fn redacted_image_drops_alternates_and_metadata() {
+    let bytes = page_pdf("q 200 0 0 200 100 100 cm /Im Do Q", |doc| {
+        let alt = doc.add_object(LStream::new(
+            LDict::from_iter(vec![
+                ("Type", LObj::Name(b"XObject".to_vec())),
+                ("Subtype", LObj::Name(b"Image".to_vec())),
+                ("Width", LObj::Integer(18)),
+                ("Height", LObj::Integer(1)),
+                ("ColorSpace", LObj::Name(b"DeviceGray".to_vec())),
+                ("BitsPerComponent", LObj::Integer(8)),
+            ]),
+            b"ALTSECRETALTSECRET".to_vec(),
+        ));
+        let xmp = doc.add_object(LStream::new(
+            LDict::from_iter(vec![
+                ("Type", LObj::Name(b"Metadata".to_vec())),
+                ("Subtype", LObj::Name(b"XML".to_vec())),
+            ]),
+            b"<x:xmpmeta>SECRET-THUMB</x:xmpmeta>".to_vec(),
+        ));
+        let alternates = LObj::Array(vec![LObj::Dictionary(LDict::from_iter(vec![
+            ("Image", alt.into()),
+            ("DefaultForPrinting", LObj::Boolean(true)),
+        ]))]);
+        let image = doc.add_object(rgb_image(
+            [0, 200, 0],
+            vec![("Alternates", alternates), ("Metadata", xmp.into())],
+        ));
+        (LDict::from_iter(vec![("Im", image.into())]), LDict::new())
+    });
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert_eq!(
+        doc.redact(0, rect(100.0, 200.0, 100.0, 100.0))
+            .unwrap()
+            .images_redacted,
+        1
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("alt.pdf");
+    doc.save_as(&path).unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    assert!(!in_file(&saved, b"ALTSECRET"), "image alternative partie");
+    assert!(
+        !in_file(&saved, b"SECRET-THUMB"),
+        "métadonnées de l'image parties"
+    );
+}
+
+/// Une image peinte par un **motif** (tiling pattern) n'est pas atteinte par le caviardage
+/// par objets : refus explicite plutôt qu'un cache noir sur des pixels restés intacts.
+#[test]
+fn image_tiling_pattern_is_refused() {
+    let bytes = page_pdf("/Pattern cs /P1 scn 100 100 200 200 re f", |doc| {
+        let image = doc.add_object(rgb_image([200, 0, 200], vec![]));
+        let pattern = doc.add_object(LStream::new(
+            LDict::from_iter(vec![
+                ("Type", LObj::Name(b"Pattern".to_vec())),
+                ("PatternType", LObj::Integer(1)),
+                ("PaintType", LObj::Integer(1)),
+                ("TilingType", LObj::Integer(1)),
+                (
+                    "BBox",
+                    LObj::Array(vec![0.into(), 0.into(), 20.into(), 20.into()]),
+                ),
+                ("XStep", LObj::Integer(20)),
+                ("YStep", LObj::Integer(20)),
+                (
+                    "Resources",
+                    LObj::Dictionary(LDict::from_iter(vec![(
+                        "XObject",
+                        LObj::Dictionary(LDict::from_iter(vec![("I", image.into())])),
+                    )])),
+                ),
+            ]),
+            b"q 20 0 0 20 0 0 cm /I Do Q".to_vec(),
+        ));
+        (LDict::new(), LDict::from_iter(vec![("P1", pattern.into())]))
+    });
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    match doc.redact(0, rect(150.0, 150.0, 50.0, 50.0)) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("motif"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}

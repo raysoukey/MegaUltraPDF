@@ -268,7 +268,21 @@ fn decode(doc: &LoDocument, stream: &Stream) -> Option<Raster> {
 /// métadonnées…) sans ses filtres, et les échantillons `samples` comprimés en Flate.
 fn rewritten(original: &Dictionary, samples: Vec<u8>) -> Stream {
     let mut dict = original.clone();
-    for key in [&b"Filter"[..], b"DecodeParms", b"Length", b"SMask"] {
+    // Filtres et masque d'origine, mais aussi tout ce qui peut **garder l'image d'origine** :
+    // images alternatives (`/Alternates`, imprimées à la place par certains lecteurs, §8.9.5.4),
+    // métadonnées XMP (une vignette peut y être), image haute résolution externe (`/OPI`),
+    // fichiers associés (`/AF`) (relecture du Lot 10).
+    for key in [
+        &b"Filter"[..],
+        b"DecodeParms",
+        b"Length",
+        b"SMask",
+        b"Alternates",
+        b"Metadata",
+        b"OPI",
+        b"AF",
+        b"DL",
+    ] {
         dict.remove(key);
     }
     let mut stream = Stream::new(dict, samples);
@@ -335,6 +349,83 @@ fn redact_image(doc: &mut LoDocument, id: ObjectId, m: &Matrix, zone: &Rect) -> 
         image.dict.set("SMask", Object::Reference(mask_id));
     }
     Outcome::Replace(doc.add_object(image))
+}
+
+/// Boîte, en espace utilisateur, du formulaire XObject `id` dessiné sous la matrice `ctm` :
+/// sa `/BBox` transformée par sa `/Matrix` puis par `ctm`. `None` si elle est illisible.
+fn form_bounds(doc: &LoDocument, id: ObjectId, ctm: &Matrix) -> Option<Rect> {
+    let dict = &doc.get_object(id).ok()?.as_stream().ok()?.dict;
+    let numbers = |key: &[u8]| -> Option<Vec<f32>> {
+        let array = doc
+            .dereference(dict.get(key).ok()?)
+            .ok()?
+            .1
+            .as_array()
+            .ok()?
+            .clone();
+        array.iter().map(|o| o.as_float().ok()).collect()
+    };
+    let bbox = numbers(b"BBox")?;
+    let [x0, y0, x1, y1] = <[f32; 4]>::try_from(bbox.as_slice()).ok()?;
+    let form_matrix = numbers(b"Matrix")
+        .and_then(|m| <[f32; 6]>::try_from(m.as_slice()).ok())
+        .unwrap_or(IDENTITY);
+    let full = multiply(&form_matrix, ctm);
+    let corners = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].map(|(x, y)| apply(&full, x, y));
+    let (mut lx, mut ly, mut hx, mut hy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for (x, y) in corners {
+        lx = lx.min(x);
+        ly = ly.min(y);
+        hx = hx.max(x);
+        hy = hy.max(y);
+    }
+    Some(Rect {
+        x: lx,
+        y: ly,
+        w: hx - lx,
+        h: hy - ly,
+    })
+}
+
+/// Vrai si la page peint une image par un **motif** (tiling pattern, `/PatternType 1`) ou par
+/// un masque doux d'état graphique (`/ExtGState … /SMask /G`) : ces images ne passent pas par
+/// `Do` dans le flux de la page, le caviardage ne sait pas les atteindre (relecture du Lot 10).
+fn page_paints_hidden_images(doc: &LoDocument, resources: &Dictionary) -> bool {
+    let entries = |key: &[u8]| -> Vec<Object> {
+        resources
+            .get(key)
+            .ok()
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_dict().ok().cloned())
+            .map(|d| d.iter().map(|(_, v)| v.clone()).collect())
+            .unwrap_or_default()
+    };
+    let mut seen = BTreeSet::new();
+    let patterns = entries(b"Pattern").into_iter().any(|value| {
+        let Ok(id) = value.as_reference() else {
+            return false;
+        };
+        let tiling = doc
+            .get_object(id)
+            .ok()
+            .and_then(|o| o.as_stream().ok())
+            .and_then(|s| s.dict.get(b"PatternType").ok())
+            .and_then(|t| t.as_i64().ok())
+            == Some(1);
+        tiling && form_has_images(doc, id, &mut seen)
+    });
+    let masks = entries(b"ExtGState").into_iter().any(|value| {
+        let group = doc
+            .dereference(&value)
+            .ok()
+            .and_then(|(_, gs)| gs.as_dict().ok().cloned())
+            .and_then(|gs| gs.get(b"SMask").ok().cloned())
+            .and_then(|mask| doc.dereference(&mask).ok().map(|(_, m)| m.clone()))
+            .and_then(|mask| mask.as_dict().ok().cloned())
+            .and_then(|mask| mask.get(b"G").and_then(Object::as_reference).ok());
+        group.is_some_and(|id| form_has_images(doc, id, &mut seen))
+    });
+    patterns || masks
 }
 
 /// Vrai si le formulaire XObject `id` dessine (lui ou un formulaire qu'il appelle) une image.
@@ -408,6 +499,13 @@ pub(crate) fn redact_images(
         .and_then(|x| doc.dereference(x).ok())
         .and_then(|(_, x)| x.as_dict().ok().cloned())
         .unwrap_or_default();
+    if page_paints_hidden_images(doc, &resources) {
+        return Err(CoreError::InvalidOperation(
+            "la page peint une image par un motif ou un masque : le caviardage d'images ne \
+             peut pas l'atteindre"
+                .to_string(),
+        ));
+    }
     let content = Content::decode(&doc.get_page_content(page_id)).map_err(structure)?;
 
     let mut report = RasterReport::default();
@@ -484,10 +582,13 @@ pub(crate) fn redact_images(
                         }
                     }
                     (Some(id), Some(b"Form")) => {
-                        // La boîte du formulaire est inconnue ici sans lire `/BBox` et
-                        // `/Matrix` : on refuse dès qu'il contient une image.
+                        // Un formulaire qui dessine une image n'est refusé que s'il touche la
+                        // zone : sa boîte (`/BBox`, transformée par `/Matrix` puis par la
+                        // matrice courante, §8.10.1). Un logo loin de la zone ne bloque rien.
                         let mut seen = BTreeSet::new();
-                        if form_has_images(doc, id, &mut seen) {
+                        let touches = form_bounds(doc, id, &ctm)
+                            .is_none_or(|bounds| intersects(&bounds, zone));
+                        if touches && form_has_images(doc, id, &mut seen) {
                             return Err(CoreError::InvalidOperation(
                                 "une image de la page est dessinée à travers un groupe \
                                  XObject : le caviardage d'images ne peut pas l'atteindre"

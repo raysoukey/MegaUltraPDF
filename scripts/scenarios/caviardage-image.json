@@ -1,0 +1,48 @@
+[
+  { "wait": 1800 },
+  {
+    "eval": "(() => { const b = document.querySelector(\"button[aria-label='Page unique']\"); if (b) b.click(); return true; })()",
+    "label": "mode page unique (s'il ne l'est pas déjà : préférence mémorisée)"
+  },
+  { "wait": 600 },
+  { "click": "button[aria-label='Ajuster à la page']" },
+  { "wait": 1200 },
+  { "click": "button[aria-label='Caviarder']" },
+  {
+    "drag": ".page[data-page='0'] .object-layer",
+    "fromFrac": [0.18, 0.655],
+    "toFrac": [0.32, 0.75],
+    "label": "zone dans le quart haut-gauche de l'image (100..300 × 100..300 pt)"
+  },
+  { "wait": 500 },
+  {
+    "assert": "document.querySelector('#redact-title') !== null && document.querySelector('#redact-title').closest('.dialog').textContent.includes('images noircies')",
+    "label": "confirmation : les images seront noircies sous la zone"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('.dialog button')].find(b => b.textContent.trim() === 'Caviarder').click(); return true; })()",
+    "label": "clic « Caviarder »"
+  },
+  { "wait": 2500 },
+  {
+    "assert": "(document.querySelector('.toast') && document.querySelector('.toast').textContent.includes('1 image(s)')) || 'ERREUR ' + (document.querySelector('.toast') || {}).textContent + ' / ' + (document.querySelector('main .error') || {}).textContent",
+    "label": "compte rendu : 1 image noircie"
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Caviarder\"]') !== null",
+    "label": "caviardage annulable"
+  },
+  { "shot": "01-image-caviardee.png" },
+  { "click": "button[aria-label='Objets de la page']" },
+  { "wait": 1200 },
+  {
+    "assert": "document.querySelectorAll('.page[data-page=\\'0\\'] rect.object[data-kind=image]').length === 2",
+    "label": "les deux images restent (la première remplacée, noircie dessous)"
+  },
+  { "key": "z", "ctrl": true },
+  { "wait": 2000 },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Caviarder\"]') === null",
+    "label": "Ctrl+Z annule le caviardage"
+  }
+]

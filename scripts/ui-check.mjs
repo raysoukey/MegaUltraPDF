@@ -13,6 +13,7 @@
 //   { "key": "F1", "ctrl": true, "shift": false } touche clavier (événements CDP)
 //   { "type": "texte" }                    saisie de texte (Input.insertText)
 //   { "drag": "sélecteur", "from": [x, y], "to": [x, y] } glisser souris (coordonnées relatives à l'élément)
+//   { "drag": "sélecteur", "fromFrac": [fx, fy], "toFrac": [fx, fy] } idem, en fractions de sa taille
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -101,8 +102,11 @@ async function pressKey(step) {
 async function drag(step) {
   const r = await rectOf(step.drag);
   if (!r) throw new Error(`élément introuvable : ${step.drag}`);
-  const [fx, fy] = step.from;
-  const [tx, ty] = step.to;
+  // `fromFrac` / `toFrac` : fractions de la largeur et de la hauteur de l'élément (indépendantes
+  // du zoom), sinon `from` / `to` en pixels.
+  const at = (px, frac) => (frac ? [frac[0] * r.w, frac[1] * r.h] : px);
+  const [fx, fy] = at(step.from, step.fromFrac);
+  const [tx, ty] = at(step.to, step.toFrac);
   const mouse = (type, x, y, extra = {}) =>
     send('Input.dispatchMouseEvent', { type, x: r.x + x, y: r.y + y, button: 'left', ...extra });
   await mouse('mouseMoved', fx, fy);

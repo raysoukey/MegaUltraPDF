@@ -123,6 +123,18 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   un code `SigIssue`, traduit dans `strings.ts` (`sigIssues`). Une édition sans effet réel
   (OCR sans mot) n'ajoute pas d'étape : `Command::changed_document`. CLI : option globale
   `--force` ; toute sortie passe par `save_as` (ou `cleanup::before_save`).
+- Lot 10 (ADR-0014) : texte hors WinAnsi = police Unicode **DejaVu Sans** ; Helvetica reste le
+  défaut (`fonts::needs_unicode`). Passes `lopdf` : `fonts::unicode::Type0Writer` (encoder
+  **tous** les textes avant `write`, une police par passe) ; PDFium : `unicode_font_unlocked`
+  (jeton remis à zéro par `replace_inner`). Refuser un texte visible par
+  `fonts::check_drawable` (CJK). Caviardage des images : `content/raster.rs` (lopdf, CTM,
+  nouvelle image, ôter le nom remplacé des ressources sinon l'ancienne reste dans le
+  fichier). Toute passe `lopdf` qui réécrit un document passe par `crypt::LopdfSession`
+  (déchiffre, puis rechiffre à l'identique) ; `cleanup::before_save(bytes, password)`.
+  Signature visible : rectangle affiché → `page_frame` **avant** `sign_bytes`, rotation dans
+  la `/Matrix` de l'apparence. Groupe d'annulation : `begin_edit_group` / `end_edit_group`,
+  toujours fermé (`logic/group.ts`). Dans Git Bash, un argument qui commence par `/` est
+  réécrit (`MSYS_NO_PATHCONV=1`) et une apostrophe dans une chaîne `'…'` la coupe.
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
   produirait un paquet sans PDFium). Les ressources sont dans la surcouche
   `tauri.release.conf.json` car `tauri-build` les exige à chaque compilation.

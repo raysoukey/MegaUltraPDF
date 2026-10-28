@@ -44,6 +44,13 @@ pub struct Document {
     /// Vrai dès qu'une modification éloigne le document de `file_bytes` ; redevient faux à
     /// l'enregistrement, ou quand annuler / rétablir ramène à l'état enregistré.
     pub(crate) changed: bool,
+    /// Compte rendu du caviardage que la dernière édition vient d'appliquer (sinon `None`) :
+    /// l'interface le reçoit avec l'état de l'historique pour avertir l'utilisateur.
+    pub(crate) last_redaction: Option<crate::content::redact::RedactReport>,
+    /// Police Unicode (DejaVu Sans) déjà chargée dans le `PdfDocument` courant : chaque
+    /// chargement incorpore une copie entière de la police, on la réutilise donc tant que
+    /// le document PDFium n'est pas remplacé (voir [`Document::replace_inner`]).
+    unicode_font: Option<pdfium_render::prelude::PdfFontToken>,
 }
 
 impl std::fmt::Debug for Document {
@@ -100,6 +107,8 @@ impl Document {
             history: crate::edit::History::new(crate::edit::HistoryLimits::default()),
             file_bytes,
             changed: false,
+            last_redaction: None,
+            unicode_font: None,
         })
     }
 
@@ -194,6 +203,24 @@ impl Document {
     /// sous le jeton que l'appelant tient.
     pub(crate) fn replace_inner(&mut self, inner: PdfDocument<'static>) {
         self.inner = Some(inner);
+        // Le jeton de police désignait l'ancien document : il ne vaut plus rien.
+        self.unicode_font = None;
+    }
+
+    /// Jeton de la police Unicode incorporée dans le document PDFium courant, chargée au
+    /// premier besoin (l'appelant tient déjà le jeton de [`engine::guard`]).
+    pub(crate) fn unicode_font_unlocked(
+        &mut self,
+    ) -> CoreResult<pdfium_render::prelude::PdfFontToken> {
+        if let Some(token) = self.unicode_font {
+            return Ok(token);
+        }
+        let token = self
+            .inner_mut()
+            .fonts_mut()
+            .load_true_type_from_bytes(crate::fonts::unicode::DEJAVU_SANS, true)?;
+        self.unicode_font = Some(token);
+        Ok(token)
     }
 
     /// Mot de passe d'ouverture (pour recharger des octets issus de ce document).

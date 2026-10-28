@@ -195,8 +195,8 @@ export interface PageObject {
   font: string | null;
 }
 
-/** Famille de police Standard 14 (miroir de `FontFamily`). */
-export type FontFamily = 'helvetica' | 'times' | 'courier';
+/** Famille de police : Standard 14 ou Unicode incorporée (miroir de `FontFamily`). */
+export type FontFamily = 'helvetica' | 'times' | 'courier' | 'unicode';
 
 /** Style d'un texte inséré (miroir de `TextStyle`). */
 export interface TextStyle {
@@ -210,7 +210,10 @@ export interface TextStyle {
 /** Ce qu'un caviardage a retiré (miroir de `RedactReport`). */
 export interface RedactReport {
   texts: number;
-  images: number;
+  images_removed: number;
+  images_redacted: number;
+  paths_removed: number;
+  paths_kept: number;
   annotations: number;
 }
 
@@ -371,6 +374,8 @@ export interface EditState {
   can_redo: boolean;
   undo_label: string | null;
   redo_label: string | null;
+  /** Compte rendu du caviardage que l'édition vient d'appliquer (sinon `null`). */
+  last_redaction: RedactReport | null;
 }
 
 /** Résultat d'une édition (miroir de `EditResult`). */
@@ -432,11 +437,23 @@ export interface SignatureInfo {
   covers_whole_document: boolean;
 }
 
+/** Tampon d'une signature visible (miroir de `SignAppearance`). */
+export interface SignAppearance {
+  /** Page, à partir de 0. */
+  page: number;
+  /** Rectangle du tampon, points, espace affiché. */
+  rect: Rect;
+  /** Image facultative (PNG ou JPEG). */
+  image_path: string | null;
+}
+
 /** Informations écrites dans une signature (miroir de `SignOptions`). */
 export interface SignOptions {
   reason: string | null;
   location: string | null;
   contact: string | null;
+  /** Tampon visible ; `null` : signature invisible. */
+  appearance: SignAppearance | null;
 }
 
 /** Erreur renvoyée par le backend (miroir de `AppError`). */
@@ -671,6 +688,16 @@ export async function redoEdit(id: number): Promise<EditResult> {
 
 export async function editState(id: number): Promise<EditState> {
   return invoke<EditState>('edit_state', { id });
+}
+
+/** Ouvre le groupe d'annulation d'une reconnaissance de texte sur `pages` pages. */
+export async function beginEditGroup(id: number, pages: number): Promise<void> {
+  return invoke<void>('begin_edit_group', { id, pages });
+}
+
+/** Ferme le groupe d'annulation ouvert. */
+export async function endEditGroup(id: number): Promise<EditState> {
+  return invoke<EditState>('end_edit_group', { id });
 }
 
 /** Enregistre à son chemin, ou dans `path` (« Enregistrer sous »). */

@@ -352,6 +352,28 @@ pub async fn edit_state(
     blocking(handle, move |h| h.edit_state(id)).await
 }
 
+/// Ouvre le groupe d'annulation d'une reconnaissance de texte sur `pages` pages : les pages
+/// reconnues une à une ne forment qu'un pas d'annulation.
+#[tauri::command]
+pub async fn begin_edit_group(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    pages: usize,
+) -> Result<(), AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.begin_edit_group(id, pages)).await
+}
+
+/// Ferme le groupe d'annulation ouvert et rend l'état de l'historique.
+#[tauri::command]
+pub async fn end_edit_group(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<EditState, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.end_edit_group(id)).await
+}
+
 /// État de Tesseract pour l'OCR : trouvé ou non, et ses langues installées.
 #[tauri::command]
 pub async fn ocr_status(
@@ -529,6 +551,21 @@ mod tests {
 
     fn fixture(name: &str) -> String {
         format!("{}/../../fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// Lot 10 : l'interface envoie `appearance` (ou rien, comme avant) ; l'image est facultative.
+    #[test]
+    fn sign_options_deserialize_with_or_without_appearance() {
+        let plain: mega_core::digital_signature::SignOptions =
+            serde_json::from_str(r#"{"reason":null,"location":null,"contact":null}"#).unwrap();
+        assert!(plain.appearance.is_none());
+        let visible: mega_core::digital_signature::SignOptions = serde_json::from_str(
+            r#"{"reason":"Accord","location":null,"contact":null,
+                "appearance":{"page":1,"rect":{"x":10,"y":20,"w":220,"h":70}}}"#,
+        )
+        .unwrap();
+        let a = visible.appearance.unwrap();
+        assert_eq!((a.page, a.rect.w, a.image_path), (1, 220.0, None));
     }
 
     #[test]

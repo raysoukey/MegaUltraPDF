@@ -15,10 +15,11 @@
 //! l'exécution (RSA ou ECDSA, d'après le fichier) avec une `enum`, puis appelle le même
 //! constructeur CMS, générique sur ces traits.
 
+mod appearance;
 pub mod cms;
 mod pdf;
 
-pub use pdf::{SignOptions, SignatureInfo, signatures};
+pub use pdf::{SignAppearance, SignOptions, SignatureInfo, signatures};
 
 use der::Decode;
 use p12_keystore::{KeyStore, KeyStoreEntry, Pkcs12ImportPolicy};

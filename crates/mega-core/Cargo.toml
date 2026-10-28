@@ -41,6 +41,12 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 lopdf = "0.46.0"
 # Clé de fichier AES-256 de la protection par mot de passe (Lot 6) ; déjà dans l'arbre via lopdf.
 rand = "0.10"
+# Police Unicode incorporée (Lot 10) : lecture des tables `cmap`, `hmtx`, `head` de DejaVu Sans
+# (pur Rust, sans allocation ni code `unsafe` exposé ; fonctions avancées désactivées).
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+# Sous-ensemble de la police incorporée par nos flux `lopdf` : seuls les glyphes utilisés
+# entrent dans le fichier (quelques Ko au lieu de 750). Sans les polices variables.
+subsetter = { version = "0.2", default-features = false }
 # Signature numérique (feature `signature`, Lot 8) : génération RustCrypto stable « der 0.7 »
 # (CMS détaché avec `builder`, certificats X.509, RSA PKCS#1 v1.5, ECDSA P-256, SHA-256) ;
 # lecture des fichiers PKCS#12 par `p12-keystore` (seule bibliothèque complète pour PBES2 et

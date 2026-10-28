@@ -147,6 +147,9 @@ pub fn render_markdown(entries: &[Entry]) -> String {
          (Google, licence BSD-3-Clause), compilé par le projet pdfium-binaries (MIT) ; \
          le texte de ces licences et de celles des bibliothèques incluses dans PDFium est \
          livré avec l'application, à côté de la bibliothèque PDFium.\n\n\
+         Il incorpore aussi la police **DejaVu Sans** 2.37 (licence Bitstream Vera, \
+         modifications DejaVu dans le domaine public) pour écrire le grec, le cyrillique et \
+         le latin étendu dans les PDF ; sa licence complète figure plus bas.\n\n\
          Les tableaux ci-dessous couvrent toutes les plateformes pour les crates, et les \
          outils de construction : ils sont un sur-ensemble de ce qui est réellement embarqué. \
          Les textes complets des licences suivent les tableaux.\n",
@@ -167,8 +170,14 @@ pub fn render_markdown(entries: &[Entry]) -> String {
             ));
         }
     }
+    md.push_str("\n## Police DejaVu Sans 2.37\n\n```text\n");
+    md.push_str(DEJAVU_LICENSE.trim_end());
+    md.push_str("\n```\n");
     md
 }
+
+/// Licence de la police DejaVu Sans incorporée dans `mega-core` (Lot 10).
+const DEJAVU_LICENSE: &str = include_str!("../../crates/mega-core/assets/fonts/LICENSE-DejaVu.txt");
 
 /// Fichiers de licence d'un paquet : ceux de son dossier (non récursif) dont le nom commence
 /// par `LICENSE`, `LICENCE`, `COPYING`, `NOTICE` ou `UNLICENSE`, quelle que soit la casse,
@@ -454,6 +463,14 @@ mod tests {
         assert!(md.contains("## Crates Rust (1)"));
         assert!(md.contains("## Paquets npm (1)"));
         assert!(md.find("| serde |").unwrap() < md.find("## Paquets npm").unwrap());
+    }
+
+    /// Lot 10 : la police DejaVu Sans incorporée est citée, avec le texte de sa licence.
+    #[test]
+    fn markdown_mentions_the_embedded_dejavu_font() {
+        let md = render_markdown(&[]);
+        assert!(md.contains("DejaVu Sans"), "mention");
+        assert!(md.contains("Bitstream Vera"), "texte de la licence");
     }
 
     #[test]

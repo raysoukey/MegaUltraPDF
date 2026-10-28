@@ -61,6 +61,7 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 - [x] Aplatir le formulaire [4]
 - [x] Signature visuelle : image ou dessin, placement, enregistrement (contenu de page) [4]
 - [x] Signature numérique cryptographique (PKCS#12, CMS, mise à jour incrémentale) et vérification des signatures, y compris celles d'autres outils (option `signature`) [8]
+- [x] Signature numérique **visible** (tampon : nom, date, motif, image facultative ; pages tournées) ; vérification SHA-384/512 [10]
 
 ## Édition de contenu
 
@@ -69,6 +70,7 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 - [x] Déplacer / supprimer des objets de page [5]
 - [x] Modifier le texte existant quand c'est possible (même police, même position) [5]
 - [x] Caviardage réel (objets texte/image et annotations retirés du fichier, cache noir) [5]
+- [x] Caviardage d'une partie d'image (pixels noircis sous la zone, masque compris) et des tracés ; vignettes de page retirées [10]
 - [x] Filigrane texte (flux `lopdf`, opacité, inclinaison) ; filigrane image reporté [5]
 - [x] Numérotation des pages, en-têtes et pieds de page (modèle `{n}`, `{total}`, `{titre}`) [5]
 - [x] Recadrage des pages (marges, `/CropBox`) [5]
@@ -92,6 +94,9 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 - [x] Ouverture d'un PDF depuis le Finder macOS (événement `RunEvent::Opened`) [9] — compilé par la CI macOS, vérification sur un vrai Mac à faire
 - [x] Aucun appel réseau, aucune télémétrie (vérifié par test : sources, CSP) [0 → 7]
 - [x] OCR par Tesseract en couche de texte invisible, page par page, annulable (option `ocr`) [8]
+- [x] OCR de plusieurs pages annulable en un seul pas ; couche invisible en Unicode (grec, cyrillique, CJK recherchables) [10]
+- [x] Texte Unicode (grec, cyrillique, latin étendu) partout où l'application écrit : filigrane, numéros, texte inséré, retouche, texte libre, tampon (police DejaVu Sans incorporée) [10]
+- [x] Documents chiffrés : nettoyage, filigrane, caviardage, formulaires, métadonnées, en gardant la même protection [10]
 
 ## Qualité transversale (chaque lot)
 

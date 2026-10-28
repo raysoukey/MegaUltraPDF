@@ -138,7 +138,8 @@ impl Document {
         }
         let mut target = new_document(&guard)?;
         copy_pages(&mut target, self.inner(), &source, 0)?;
-        crate::cleanup::before_save(&target.save_to_bytes()?)
+        // Document neuf assemblé par PDFium : jamais chiffré.
+        crate::cleanup::before_save(&target.save_to_bytes()?, None)
     }
 
     /// Indices valides, triés, sans doublon ; erreur si la liste est vide ou hors bornes.
@@ -208,7 +209,7 @@ pub fn merge(docs: &[&Document]) -> CoreResult<Vec<u8>> {
     for doc in docs {
         target.pages_mut().append(doc.inner())?;
     }
-    crate::cleanup::before_save(&target.save_to_bytes()?)
+    crate::cleanup::before_save(&target.save_to_bytes()?, None)
 }
 
 /// Scinde `doc` en autant de PDF que de groupes dans `parts` (indices 0-based).

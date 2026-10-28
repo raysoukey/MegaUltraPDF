@@ -508,6 +508,20 @@ pub(crate) struct History {
     redo: Vec<Snapshot>,
     position: u64,
     saved_position: Option<u64>,
+    /// Groupe d'éditions ouvert (voir [`Document::begin_edit_group`]).
+    group: Option<Group>,
+}
+
+/// Un groupe d'éditions qui ne fera qu'**un** pas d'annulation : son libellé, et si sa
+/// première édition a déjà déposé l'instantané « avant ».
+struct Group {
+    label: String,
+    recorded: bool,
+}
+
+/// Libellé du pas d'annulation d'une reconnaissance de texte sur `pages` pages.
+pub fn ocr_group_label(pages: usize) -> String {
+    format!("Reconnaître le texte ({})", plural(pages, "page", "pages"))
 }
 
 impl History {
@@ -518,6 +532,7 @@ impl History {
             redo: Vec::new(),
             position: 0,
             saved_position: Some(0),
+            group: None,
         }
     }
 
@@ -548,6 +563,9 @@ pub struct EditState {
     pub undo_label: Option<String>,
     /// Libellé de l'étape à rétablir.
     pub redo_label: Option<String>,
+    /// Compte rendu du caviardage que l'édition qui vient d'avoir lieu a appliqué, pour que
+    /// l'interface signale par exemple les tracés seulement recouverts ; `None` sinon.
+    pub last_redaction: Option<crate::content::redact::RedactReport>,
 }
 
 impl Document {
@@ -560,6 +578,8 @@ impl Document {
     /// Applique une commande et l'enregistre dans l'historique. Si la commande échoue,
     /// ni le document ni l'historique ne changent.
     pub fn apply(&mut self, command: &dyn Command) -> CoreResult<()> {
+        // Le compte rendu d'un caviardage ne vaut que pour l'édition qui l'a produit.
+        self.last_redaction = None;
         let label = self.label_for(command);
         let before = self.to_bytes()?;
         let password_before = self.password().map(str::to_string);
@@ -580,6 +600,19 @@ impl Document {
             self.changed = changed_before;
             return Ok(());
         }
+        // Dans un groupe déjà commencé, l'instantané « avant » est déjà déposé : la
+        // nouvelle édition s'y fond (un seul pas d'annulation pour tout le groupe).
+        let label = match &mut self.history.group {
+            Some(group) if group.recorded => {
+                self.changed = true;
+                return Ok(());
+            }
+            Some(group) => {
+                group.recorded = true;
+                group.label.clone()
+            }
+            None => label,
+        };
         if !self.history.redo.is_empty() {
             self.history.redo.clear();
             // L'état enregistré appartenait peut-être à la branche abandonnée.
@@ -604,8 +637,40 @@ impl Document {
         command.label_in(self)
     }
 
+    /// Ouvre un **groupe** d'éditions : jusqu'à [`Document::end_edit_group`], toutes les
+    /// éditions appliquées ne forment qu'un pas d'annulation, nommé `label`. Sert à l'OCR de
+    /// plusieurs pages, appliqué page par page pour montrer la progression et pouvoir
+    /// s'arrêter. Un groupe déjà ouvert est remplacé.
+    ///
+    /// \[Apprentissage\] **État explicite** : plutôt qu'un booléen « en groupe » et un libellé
+    /// séparés, une `Option<Group>` : `None` hors groupe, `Some` avec tout ce qu'il faut
+    /// savoir sinon. Impossible d'avoir un libellé sans groupe.
+    pub fn begin_edit_group(&mut self, label: String) {
+        self.history.group = Some(Group {
+            label,
+            recorded: false,
+        });
+    }
+
+    /// Ferme le groupe ouvert par [`Document::begin_edit_group`] (sans effet hors groupe).
+    pub fn end_edit_group(&mut self) {
+        self.history.group = None;
+    }
+
+    /// Refuse annuler / rétablir pendant un groupe : l'instantané du groupe n'est pas fini.
+    fn check_no_group(&self) -> CoreResult<()> {
+        if self.history.group.is_some() {
+            return Err(CoreError::InvalidOperation(
+                "une opération en plusieurs étapes est en cours : attendez sa fin".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Annule la dernière édition.
     pub fn undo(&mut self) -> CoreResult<()> {
+        self.check_no_group()?;
+        self.last_redaction = None;
         let Some(snapshot) = self.history.undo.pop_back() else {
             return Err(CoreError::InvalidOperation("rien à annuler".to_string()));
         };
@@ -643,6 +708,8 @@ impl Document {
 
     /// Rétablit la dernière édition annulée.
     pub fn redo(&mut self) -> CoreResult<()> {
+        self.check_no_group()?;
+        self.last_redaction = None;
         let Some(snapshot) = self.history.redo.pop() else {
             return Err(CoreError::InvalidOperation("rien à rétablir".to_string()));
         };
@@ -704,6 +771,7 @@ impl Document {
             can_redo: self.can_redo(),
             undo_label: self.undo_label(),
             redo_label: self.redo_label(),
+            last_redaction: self.last_redaction,
         }
     }
 
@@ -766,7 +834,7 @@ impl Document {
             bytes
         };
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
-        crate::cleanup::before_save(&bytes)
+        crate::cleanup::before_save(&bytes, self.password())
     }
 
     /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.

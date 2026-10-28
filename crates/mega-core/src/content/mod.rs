@@ -11,6 +11,7 @@
 //! plutôt que de garder des index en mémoire — la même discipline que pour `/Annots`.
 
 pub mod image;
+pub(crate) mod raster;
 pub mod redact;
 
 use std::collections::BTreeSet;
@@ -41,7 +42,8 @@ const LINE_HEIGHT: f32 = 1.2;
 const FIRST_BASELINE: f32 = 0.8;
 
 /// Famille de police d'un texte inséré : les trois familles **Standard 14** que tout
-/// lecteur PDF possède, donc jamais besoin d'embarquer une police.
+/// lecteur PDF possède (jamais besoin d'embarquer une police), plus la police Unicode
+/// incorporée pour les écritures que WinAnsi ne couvre pas (Lot 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FontFamily {
@@ -51,6 +53,9 @@ pub enum FontFamily {
     Times,
     /// À chasse fixe (Courier).
     Courier,
+    /// Police Unicode incorporée (DejaVu Sans, Lot 10) : grec, cyrillique, latin étendu.
+    /// Choisie d'office pour un texte hors WinAnsi, quelle que soit la famille demandée.
+    Unicode,
 }
 
 /// Style d'un texte inséré dans le contenu.
@@ -104,10 +109,6 @@ pub(crate) fn win_ansi_byte(c: char) -> Option<u8> {
         _ => return None,
     };
     Some(special)
-}
-
-fn is_win_ansi(c: char) -> bool {
-    win_ansi_byte(c).is_some()
 }
 
 /// Nature d'un objet de page.
@@ -181,15 +182,22 @@ fn invalid(msg: &str) -> CoreError {
 /// générateur ne sait pas réémettre le texte en police **Type 3**, les images **en ligne**
 /// (`BI … EI`) ni les ombrages (`sh`), qui disparaîtraient en silence. On inspecte la page
 /// avec `lopdf` avant d'y toucher ; l'insertion (nouveau flux) n'est pas concernée.
-pub(crate) fn check_regeneration_safe(bytes: &[u8], page: u16) -> CoreResult<()> {
+pub(crate) fn check_regeneration_safe(
+    bytes: &[u8],
+    page: u16,
+    password: Option<&str>,
+) -> CoreResult<()> {
     let refuse = |what: &str| {
         CoreError::InvalidOperation(format!(
             "cette page contient {what} : PDFium le perdrait en régénérant son contenu ; \
              modification des objets refusée (l'insertion reste possible)"
         ))
     };
-    let Ok(doc) = lopdf::Document::load_mem(bytes) else {
-        // Illisible par lopdf : on ne peut rien garantir.
+    // Un document chiffré est lu déchiffré (Lot 10) ; illisible par lopdf : on ne peut rien
+    // garantir.
+    let Ok(crate::crypt::LopdfSession { doc, .. }) =
+        crate::crypt::LopdfSession::load(bytes, password)
+    else {
         return Err(refuse("un contenu que l'on ne sait pas analyser"));
     };
     let Some(page_id) = doc.get_pages().get(&(u32::from(page) + 1)).copied() else {
@@ -379,11 +387,20 @@ impl Document {
         }
         self.check_page_editable(page)?;
         let _guard = engine::guard();
-        let mut pdf_page = self
-            .inner()
-            .pages()
-            .get(self.checked_index_unlocked(page)?)?;
+        let page_index = self.checked_index_unlocked(page)?;
+        // Un texte hors WinAnsi demande la police Unicode (chargée avant d'emprunter la page).
+        let unicode = if crate::fonts::needs_unicode(text) {
+            crate::fonts::check_drawable(text)?;
+            Some(self.unicode_font_unlocked()?)
+        } else {
+            None
+        };
+        let doc = self.inner();
+        let mut pdf_page = doc.pages().get(page_index)?;
         check_index(&pdf_page, index)?;
+        // Une police standard (non incorporée) n'a pas ces lettres : l'objet est remplacé par
+        // un objet neuf en police Unicode, même matrice, même couleur, même place dans le flux.
+        let mut replacement = None;
         {
             let mut obj = pdf_page.objects().get(usize::from(index))?;
             let t = obj
@@ -399,7 +416,7 @@ impl Document {
                     bytes.get(6) == Some(&b'+') && bytes.iter().take(6).all(u8::is_ascii_uppercase);
                 (subset || font.is_embedded().unwrap_or(false)).then_some(name)
             };
-            if let Some(name) = restricted {
+            if let Some(name) = &restricted {
                 let known: BTreeSet<char> = t.text().chars().collect();
                 // L'espace est admise : un sous-ensemble la contient presque toujours.
                 if let Some(c) = text.chars().find(|c| *c != ' ' && !known.contains(c)) {
@@ -409,7 +426,26 @@ impl Document {
                     )));
                 }
             }
-            t.set_text(text)?;
+            match unicode {
+                Some(font) if restricted.is_none() => {
+                    replacement =
+                        Some((font, t.matrix()?, t.unscaled_font_size(), t.fill_color()?));
+                }
+                _ => {
+                    t.set_text(text)?;
+                }
+            }
+        }
+        if let Some((font, matrix, size, color)) = replacement {
+            let position = usize::from(index);
+            pdf_page.objects_mut().remove_object_at_index(position)?;
+            let mut t = PdfPageTextObject::new(doc, text, font, size)?;
+            t.set_fill_color(color)?;
+            // Un objet neuf a la matrice identité : la composer revient à poser l'ancienne.
+            t.apply_matrix(matrix)?;
+            pdf_page
+                .objects_mut()
+                .insert_object_at_index(position, PdfPageObject::from(t))?;
         }
         pdf_page.regenerate_content()?;
         Ok(())
@@ -418,9 +454,9 @@ impl Document {
 
 impl Document {
     /// Insère `text` (une ligne par `\n`, interligne 1,2 × taille) dont le coin haut-gauche
-    /// est `at` (points, espace **affiché**). Refuse un texte vide ou trop long, un caractère
-    /// hors WinAnsi (les polices Standard 14 ne savent pas l'afficher), une taille hors
-    /// bornes et un point hors page.
+    /// est `at` (points, espace **affiché**). Un texte hors WinAnsi est écrit avec la police
+    /// Unicode incorporée. Refuse un texte vide ou trop long, un caractère qu'aucune de nos
+    /// polices ne possède (CJK), une taille hors bornes et un point hors page.
     pub fn insert_text(
         &mut self,
         page: u16,
@@ -435,14 +471,7 @@ impl Document {
         if text.chars().count() > MAX_OBJECT_TEXT_CHARS {
             return Err(invalid("texte trop long (4096 caractères au plus)"));
         }
-        if let Some(c) = text
-            .chars()
-            .find(|c| !is_win_ansi(*c) && *c != '\n' && *c != '\r')
-        {
-            return Err(CoreError::InvalidOperation(format!(
-                "caractère non pris en charge : « {c} » (polices standard, encodage WinAnsi)"
-            )));
-        }
+        crate::fonts::check_drawable(text)?;
         if !(style.size.is_finite() && (MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&style.size)) {
             return Err(invalid(
                 "la taille de police doit être comprise entre 4 et 400 points",
@@ -454,9 +483,19 @@ impl Document {
         let _guard = engine::guard();
         let page_index = self.checked_index_unlocked(page)?;
         // La police est enregistrée sur le document (emprunt mutable, terminé avant la suite).
-        let font = {
+        // Hors WinAnsi, les polices Standard 14 dessineraient des « ÿ » : la police Unicode
+        // remplace la famille demandée (sans gras ni italique : DejaVu Sans seule est
+        // incorporée).
+        let family = if crate::fonts::needs_unicode(text) {
+            FontFamily::Unicode
+        } else {
+            style.family
+        };
+        let font = if family == FontFamily::Unicode {
+            self.unicode_font_unlocked()?
+        } else {
             let fonts = self.inner_mut().fonts_mut();
-            match (style.family, style.bold, style.italic) {
+            match (family, style.bold, style.italic) {
                 (FontFamily::Helvetica, false, false) => fonts.helvetica(),
                 (FontFamily::Helvetica, true, false) => fonts.helvetica_bold(),
                 (FontFamily::Helvetica, false, true) => fonts.helvetica_oblique(),
@@ -469,6 +508,7 @@ impl Document {
                 (FontFamily::Courier, true, false) => fonts.courier_bold(),
                 (FontFamily::Courier, false, true) => fonts.courier_oblique(),
                 (FontFamily::Courier, true, true) => fonts.courier_bold_oblique(),
+                (FontFamily::Unicode, _, _) => return Err(invalid("police Unicode attendue")),
             }
         };
         let doc = self.inner();
@@ -530,30 +570,8 @@ impl Document {
             let _guard = engine::guard();
             self.checked_index_unlocked(page)?;
         }
-        self.check_not_encrypted()?;
         let bytes = self.to_bytes()?;
-        check_regeneration_safe(&bytes, page)
-    }
-
-    /// Refuse l'édition du contenu d'un PDF chiffré : les objets retirés resteraient en
-    /// orphelins dans le fichier (la passe `lopdf` ne peut pas l'élaguer) et l'analyse de
-    /// la page n'est pas possible. Prend et rend le jeton.
-    pub(crate) fn check_not_encrypted(&self) -> CoreResult<()> {
-        let _guard = engine::guard();
-        let unprotected = self
-            .inner()
-            .permissions()
-            .security_handler_revision()
-            .map(|r| r == pdfium_render::prelude::PdfSecurityHandlerRevision::Unprotected)
-            .unwrap_or(false);
-        if unprotected {
-            Ok(())
-        } else {
-            Err(invalid(
-                "édition du contenu d'un PDF chiffré : non prise en charge (le contenu retiré \
-                 resterait dans le fichier)",
-            ))
-        }
+        check_regeneration_safe(&bytes, page, self.password())
     }
 }
 

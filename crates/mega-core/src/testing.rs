@@ -789,6 +789,102 @@ pub fn heavy_images_pdf() -> Vec<u8> {
     out
 }
 
+/// Couleur du quadrant haut-gauche de l'image de [`image_mosaic_pdf`] : ses octets
+/// `C0 FF EE` répétés forment un motif qu'aucun autre objet du fichier ne contient.
+pub const MOSAIC_SECRET: [u8; 3] = [0xC0, 0xFF, 0xEE];
+
+/// Trois pages pour le caviardage d'images (Lot 10) :
+/// - page 0 : l'image « mosaïque » 64 × 64 RGB (quadrants : haut-gauche [`MOSAIC_SECRET`],
+///   haut-droit rouge, bas-gauche vert `(0, 128, 0)`, bas-droit bleu) posée en
+///   `100 100 200 200` (x, y, largeur, hauteur), et une image bleue 32 × 32 dont le masque
+///   `/SMask` rend la moitié gauche transparente, posée en `350 100 100 100` ;
+/// - page 1 : la **même** image mosaïque (même objet), au même endroit ;
+/// - page 2 : `/Rotate 90`, la même image mosaïque au même endroit (espace utilisateur).
+///
+/// Toutes les pages font 595 × 842 points (MediaBox).
+pub fn image_mosaic_pdf() -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    let mut doc = lopdf::Document::with_version("1.7");
+    let image_dict = |w: i64, h: i64, cs: &str| {
+        let mut d = Dictionary::new();
+        d.set("Type", Object::Name(b"XObject".to_vec()));
+        d.set("Subtype", Object::Name(b"Image".to_vec()));
+        d.set("Width", w);
+        d.set("Height", h);
+        d.set("ColorSpace", Object::Name(cs.as_bytes().to_vec()));
+        d.set("BitsPerComponent", 8);
+        d
+    };
+    // Rangées de haut en bas, pixels de gauche à droite (§8.9.5.1).
+    let mut mosaic = Vec::with_capacity(64 * 64 * 3);
+    for row in 0..64 {
+        for col in 0..64 {
+            let rgb = match (row < 32, col < 32) {
+                (true, true) => MOSAIC_SECRET,
+                (true, false) => [255, 0, 0],
+                (false, true) => [0, 128, 0],
+                (false, false) => [0, 0, 255],
+            };
+            mosaic.extend_from_slice(&rgb);
+        }
+    }
+    let mut mosaic = Stream::new(image_dict(64, 64, "DeviceRGB"), mosaic);
+    mosaic.compress().expect("compression Flate");
+    let mosaic_id = doc.add_object(mosaic);
+    let mut alpha = Vec::with_capacity(32 * 32);
+    for _row in 0..32 {
+        for col in 0..32 {
+            alpha.push(if col < 16 { 0u8 } else { 255 });
+        }
+    }
+    let smask_id = doc.add_object(Stream::new(image_dict(32, 32, "DeviceGray"), alpha));
+    let mut masked = image_dict(32, 32, "DeviceRGB");
+    masked.set("SMask", Object::Reference(smask_id));
+    let masked_id = doc.add_object(Stream::new(masked, [0u8, 0, 255].repeat(32 * 32)));
+
+    let pages_id = doc.new_object_id();
+    let mut kids = Vec::new();
+    for (index, content) in [
+        "q 200 0 0 200 100 100 cm /ImA Do Q q 100 0 0 100 350 100 cm /ImB Do Q",
+        "q 200 0 0 200 100 100 cm /ImA Do Q",
+        "q 200 0 0 200 100 100 cm /ImA Do Q",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let content_id =
+            doc.add_object(Stream::new(Dictionary::new(), content.as_bytes().to_vec()));
+        let mut xobjects = Dictionary::new();
+        xobjects.set("ImA", Object::Reference(mosaic_id));
+        xobjects.set("ImB", Object::Reference(masked_id));
+        let mut resources = Dictionary::new();
+        resources.set("XObject", Object::Dictionary(xobjects));
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name(b"Page".to_vec()));
+        page.set("Parent", Object::Reference(pages_id));
+        page.set("MediaBox", vec![0.into(), 0.into(), 595.into(), 842.into()]);
+        page.set("Resources", Object::Dictionary(resources));
+        page.set("Contents", Object::Reference(content_id));
+        if index == 2 {
+            page.set("Rotate", 90);
+        }
+        kids.push(Object::Reference(doc.add_object(page)));
+    }
+    let mut pages = Dictionary::new();
+    pages.set("Type", Object::Name(b"Pages".to_vec()));
+    pages.set("Kids", kids);
+    pages.set("Count", 3);
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let mut catalog = Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    let catalog_id = doc.add_object(catalog);
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
 /// Une page avec deux **pièces jointes** (`/Names /EmbeddedFiles`, §7.11.4) écrites à la
 /// main : `notes.txt` (« Bonjour monde », 13 octets) et `données.csv` (20 octets, nom non
 /// ASCII dans `/UF` en UTF-16BE). Le texte de la page dit « Pièces jointes ».
@@ -1097,6 +1193,55 @@ fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {
     out.push_str(&format!(
         "trailer\n<< /Size {} /Root 1 0 R /Info {info_id} 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
         info_id + 1
+    ));
+    out.into_bytes()
+}
+
+/// Un PDF dont **seules les pièces jointes** seraient chiffrées (option Acrobat « chiffrer les
+/// pièces jointes seulement », §7.6.6) : `/StmF /Identity /StrF /Identity /EFF /StdCF`. Le
+/// contenu (« Hello Identity ») et le titre (« Plain title ») sont en clair ; mot de passe
+/// d'ouverture vide, propriétaire `owner`, `/O` et `/U` calculés pour ces valeurs (RC4
+/// 128 bits, révision 4, `/P -4`, premier `/ID` `00112233…eeff`).
+pub fn attachments_only_encrypted_pdf() -> Vec<u8> {
+    let content = "BT /F1 24 Tf 72 700 Td (Hello Identity) Tj ET";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
+         /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        "<< /Filter /Standard /V 4 /R 4 /Length 128 /P -4 \
+         /O <566fa873ee33c797cd3b904fdadf814afa34df9a38f6ed41b984e2c6da2aa6f5> \
+         /U <60cb14e897d58381f951427876a7804100000000000000000000000000000000> \
+         /CF << /StdCF << /Type /CryptFilter /CFM /V2 /Length 16 /AuthEvent /DocOpen >> >> \
+         /StmF /Identity /StrF /Identity /EFF /StdCF >>"
+            .to_string(),
+        "<< /Title (Plain title) >>".to_string(),
+    ];
+    let mut out = String::from("%PDF-1.6\n");
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{body}\nendobj\n", i + 1));
+    }
+    let xref = out.len();
+    out.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objects.len() + 1
+    ));
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    let id = "<00112233445566778899aabbccddeeff>";
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R /Info 7 0 R /Encrypt 6 0 R /ID [{id}{id}] >>\n\
+         startxref\n{xref}\n%%EOF\n",
+        objects.len() + 1
     ));
     out.into_bytes()
 }

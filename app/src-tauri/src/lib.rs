@@ -130,6 +130,8 @@ pub fn run() {
             commands::undo_edit,
             commands::redo_edit,
             commands::edit_state,
+            commands::begin_edit_group,
+            commands::end_edit_group,
             commands::save_document,
             commands::extract_pages,
             commands::merge_files,

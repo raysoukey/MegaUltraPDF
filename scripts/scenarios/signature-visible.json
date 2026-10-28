@@ -1,0 +1,38 @@
+[
+  { "wait": 1800 },
+  {
+    "eval": "(() => { document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]').click(); return true; })()",
+    "label": "menu Fichier (bouton de menu partagé)"
+  },
+  { "wait": 300 },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=menuitem]')].find((b) => b.textContent.includes('Signer numériquement')).click(); return true; })()",
+    "label": "Signer numériquement…"
+  },
+  { "wait": 500 },
+  {
+    "assert": "document.querySelector('[role=dialog] h2').textContent === 'Signer numériquement'",
+    "label": "dialogue de signature ouvert"
+  },
+  {
+    "assert": "document.querySelector('#sign-corner') === null",
+    "label": "signature invisible par défaut (pas de position)"
+  },
+  {
+    "eval": "(() => { const box = [...document.querySelectorAll('[role=dialog] input[type=checkbox]')].find(c => c.parentElement.textContent.includes('Signature visible')); box.click(); return !!box; })()",
+    "label": "cocher « Signature visible »"
+  },
+  { "wait": 300 },
+  {
+    "assert": "document.querySelector('#sign-corner') !== null && document.querySelectorAll('#sign-corner option').length === 4",
+    "label": "choix de la position : 4 coins"
+  },
+  {
+    "assert": "document.querySelector('[role=dialog]').textContent.includes('aucune (texte seul)')",
+    "label": "image facultative (aucune par défaut)"
+  },
+  { "shot": "01-signature-visible.png" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  { "assert": "!document.querySelector('[role=dialog]')", "label": "Échap ferme le dialogue" }
+]

@@ -95,14 +95,16 @@ fn save_cleanup_strips_note_ap_and_adds_inklist() {
     assert_eq!(reopened.render_page(0, 1.0).unwrap().rgba, before.rgba);
 }
 
+/// Sans le mot de passe d'ouverture, un document chiffré ne peut pas être déchiffré : il est
+/// écrit tel que PDFium l'a produit (avec le mot de passe : voir `tests/encrypted.rs`).
 #[test]
-fn cleanup_keeps_encrypted_bytes() {
+fn cleanup_without_password_keeps_encrypted_bytes() {
     let bytes = std::fs::read(format!(
         "{}/../../fixtures/encrypted.pdf",
         env!("CARGO_MANIFEST_DIR")
     ))
     .unwrap();
-    let out = mega_core::cleanup::before_save(&bytes).unwrap();
+    let out = mega_core::cleanup::before_save(&bytes, None).unwrap();
     assert_eq!(out, bytes);
 }
 
@@ -123,7 +125,7 @@ fn cleanup_inklist_follows_ink_strokes() {
     )
     .unwrap();
     let raw = doc.to_bytes().unwrap();
-    let out = mega_core::cleanup::before_save(&raw).unwrap();
+    let out = mega_core::cleanup::before_save(&raw, None).unwrap();
     let text = String::from_utf8_lossy(&out);
     let i = text.find("/InkList").expect("InkList");
     let tail = &text[i..i + 80];
@@ -179,12 +181,12 @@ fn fixture_bytes(name: &str) -> Vec<u8> {
 
 /// B1 (pdf-expert) : un PDF protégé par un mot de passe **propriétaire** seul s'ouvre sans mot
 /// de passe ; `lopdf` le déchiffre alors en silence et `is_encrypted()` ment. L'enregistrement
-/// doit conserver le chiffrement (octets PDFium tels quels), et les passes `lopdf` refuser.
+/// doit conserver le chiffrement, et les passes `lopdf` le rechiffrer (Lot 10).
 #[test]
 fn owner_password_document_keeps_its_encryption_on_save() {
     let bytes = fixture_bytes("owner-only.pdf");
     assert!(String::from_utf8_lossy(&bytes).contains("/Encrypt"));
-    let out = mega_core::cleanup::before_save(&bytes).unwrap();
+    let out = mega_core::cleanup::before_save(&bytes, None).unwrap();
     assert!(
         String::from_utf8_lossy(&out).contains("/Encrypt"),
         "la passe de nettoyage ne doit pas déchiffrer"
@@ -202,12 +204,15 @@ fn owner_password_document_keeps_its_encryption_on_save() {
     );
     let reopened = Document::open(&path, None).unwrap();
     assert_eq!(reopened.page_count(), 3);
-    // Les passes qui réécrivent par lopdf refusent plutôt que de déchiffrer.
-    let err = reopened_watermark_error(&path);
-    assert!(err.contains("chiffré"), "{err}");
+    // Lot 10 : les passes qui réécrivent par lopdf rechiffrent au lieu de refuser.
+    let bytes = reopened_watermarked(&path);
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("/Encrypt"),
+        "filigrané et toujours chiffré"
+    );
 }
 
-fn reopened_watermark_error(path: &std::path::Path) -> String {
+fn reopened_watermarked(path: &std::path::Path) -> Vec<u8> {
     let mut doc = Document::open(path, None).unwrap();
     let spec = mega_core::overlay::Watermark {
         text: "X".to_string(),
@@ -217,10 +222,9 @@ fn reopened_watermark_error(path: &std::path::Path) -> String {
         color: Color { r: 0, g: 0, b: 0 },
         pages: None,
     };
-    match doc.add_watermark(&spec) {
-        Err(mega_core::CoreError::InvalidOperation(m)) => m,
-        other => panic!("{other:?}"),
-    }
+    doc.add_watermark(&spec).unwrap();
+    assert!(doc.page_text(0).unwrap().contains('X'));
+    doc.to_bytes().unwrap()
 }
 
 /// A5 (pdf-expert) : deux superpositions successives ne doivent pas emboîter deux enveloppes
@@ -291,7 +295,7 @@ fn saved_annotations_have_nm_and_p() {
         doc.add_annotation(0, &shape(AnnotationKind::Rect, x, 100.0, 80.0, 40.0))
             .unwrap();
     }
-    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap()).unwrap();
+    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap(), None).unwrap();
     let saved = lopdf::Document::load_mem(&out).unwrap();
     let annots = annots_of(&saved);
     assert_eq!(annots.len(), 2);
@@ -313,7 +317,7 @@ fn ellipse_ink_list_samples_the_curves() {
         &shape(AnnotationKind::Ellipse, 100.0, 100.0, 200.0, 100.0),
     )
     .unwrap();
-    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap()).unwrap();
+    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap(), None).unwrap();
     let saved = lopdf::Document::load_mem(&out).unwrap();
     let (_, dict) = annots_of(&saved).remove(0);
     let points: Vec<f32> = dict
@@ -343,7 +347,8 @@ fn ellipse_ink_list_samples_the_curves() {
 /// Une apparence avec `/Matrix` : les points de l'`/InkList` sont dans l'espace de la page.
 #[test]
 fn ink_matrix_is_applied() {
-    let out = mega_core::cleanup::before_save(&mega_core::testing::ink_with_matrix_pdf()).unwrap();
+    let out =
+        mega_core::cleanup::before_save(&mega_core::testing::ink_with_matrix_pdf(), None).unwrap();
     let saved = lopdf::Document::load_mem(&out).unwrap();
     let (_, dict) = annots_of(&saved).remove(0);
     let first: Vec<f32> = dict.get(b"InkList").unwrap().as_array().unwrap()[0]
@@ -354,4 +359,48 @@ fn ink_matrix_is_applied() {
         .map(|v| v.as_float().unwrap())
         .collect();
     assert_eq!(first, vec![110.0, 120.0]);
+}
+
+/// Mineur du Lot 9 : une annotation membre d'un **groupe** (`/IRT` + `/RT /Group`, §12.5.6.2)
+/// disparaît avec l'annotation principale du groupe.
+#[test]
+fn group_members_go_with_their_primary_annotation() {
+    let mut lo = lopdf::Document::load_mem(&sample_pdf(1, "groupe")).unwrap();
+    let page_id = *lo.get_pages().get(&1).unwrap();
+    let square = |rect: [i64; 4]| {
+        lopdf::Dictionary::from_iter(vec![
+            ("Type", lopdf::Object::Name(b"Annot".to_vec())),
+            ("Subtype", lopdf::Object::Name(b"Square".to_vec())),
+            (
+                "Rect",
+                lopdf::Object::Array(rect.iter().map(|v| lopdf::Object::Integer(*v)).collect()),
+            ),
+            (
+                "C",
+                lopdf::Object::Array(vec![1.into(), 0.into(), 0.into()]),
+            ),
+        ])
+    };
+    let primary = lo.add_object(square([100, 600, 200, 700]));
+    let mut member = square([250, 600, 350, 700]);
+    member.set("IRT", lopdf::Object::Reference(primary));
+    member.set("RT", lopdf::Object::Name(b"Group".to_vec()));
+    let member = lo.add_object(member);
+    lo.get_dictionary_mut(page_id).unwrap().set(
+        "Annots",
+        lopdf::Object::Array(vec![primary.into(), member.into()]),
+    );
+    let mut bytes = Vec::new();
+    lo.save_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert_eq!(doc.annotations(0).unwrap().len(), 2);
+    doc.delete_annotation(0, 0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("groupe.pdf");
+    doc.save_as(&path).unwrap();
+    let reopened = Document::open(&path, None).unwrap();
+    assert!(
+        reopened.annotations(0).unwrap().is_empty(),
+        "membre du groupe parti aussi"
+    );
 }

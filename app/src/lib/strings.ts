@@ -135,6 +135,8 @@ export const fr = {
   aboutTagline: 'Lecteur et éditeur PDF libre, sans publicité ni télémétrie.',
   aboutLicense: 'Logiciel libre sous licence GPL-3.0-or-later.',
   aboutPdfium: 'Rendu PDF : PDFium (Google), licence BSD-3-Clause.',
+  aboutFont:
+    'Police incorporée : DejaVu Sans 2.37, licence Bitstream Vera (modifications dans le domaine public).',
   aboutThirdParty: (crates: number, npm: number) =>
     `Composants tiers : ${crates} crates Rust, ${npm} paquets npm`,
   aboutNotices:
@@ -172,6 +174,16 @@ export const fr = {
   signPassword: 'Mot de passe du certificat',
   signReason: 'Motif',
   signLocation: 'Lieu',
+  signVisible: 'Signature visible (tampon sur la page courante)',
+  signCorner: 'Position',
+  signCorners: {
+    bottom_right: 'En bas à droite',
+    bottom_left: 'En bas à gauche',
+    top_right: 'En haut à droite',
+    top_left: 'En haut à gauche',
+  } as Record<string, string>,
+  signImage: 'Image',
+  signNoImage: 'aucune (texte seul)',
   signContact: 'Contact',
   signSubmit: 'Signer et enregistrer sous…',
   signDone: 'Document signé et enregistré',
@@ -361,16 +373,25 @@ export const fr = {
     helvetica: 'Helvetica (sans empattement)',
     times: 'Times (avec empattement)',
     courier: 'Courier (à chasse fixe)',
+    unicode: 'DejaVu Sans (grec, cyrillique… ; incorporée)',
   } as Record<string, string>,
+  fontUnicodeHint:
+    'Un texte grec, cyrillique ou en latin étendu est écrit en DejaVu Sans (incorporée), quelle que soit la police choisie.',
   bold: 'Gras',
   italic: 'Italique',
   insert: 'Insérer',
   imageTool: 'Tracez un rectangle, puis choisissez une image.',
   redactTitle: 'Caviarder la zone',
   redactConfirm:
-    'Les textes, images et annotations qui touchent la zone seront retirés du fichier et recouverts de noir (annulable avec Ctrl+Z).',
+    'Les textes et annotations qui touchent la zone seront retirés du fichier, les images noircies sous la zone, puis tout sera recouvert de noir (annulable avec Ctrl+Z).',
   redact: 'Caviarder',
   redacted: 'Zone caviardée.',
+  redactDone: (texts: number, images: number, paths: number, annotations: number) =>
+    `Zone caviardée : ${texts} texte(s), ${images} image(s), ${paths} tracé(s), ${annotations} annotation(s) retirés ou noircis.`,
+  redactPathsKept: (n: number) =>
+    `${n} tracé(s) traversant la zone sont seulement recouverts de noir (leur forme reste dans le fichier).`,
+  redactImagesRemoved: (n: number) =>
+    `${n} image(s) retirée(s) en entier (format qu'on ne sait pas noircir en partie) : vérifiez la page, Ctrl+Z pour annuler.`,
   watermarkTitle: 'Filigrane',
   watermarkDefaultText: 'BROUILLON',
   watermarkText: 'Texte',
@@ -701,6 +722,8 @@ export const en: Strings = {
   aboutTagline: 'Free PDF reader and editor, with no ads and no telemetry.',
   aboutLicense: 'Free software under the GPL-3.0-or-later licence.',
   aboutPdfium: 'PDF rendering: PDFium (Google), BSD-3-Clause licence.',
+  aboutFont:
+    'Embedded font: DejaVu Sans 2.37, Bitstream Vera licence (changes in the public domain).',
   aboutThirdParty: (crates: number, npm: number) =>
     `Third-party components: ${crates} Rust crates, ${npm} npm packages`,
   aboutNotices:
@@ -738,6 +761,16 @@ export const en: Strings = {
   signPassword: 'Certificate password',
   signReason: 'Reason',
   signLocation: 'Location',
+  signVisible: 'Visible signature (stamp on the current page)',
+  signCorner: 'Position',
+  signCorners: {
+    bottom_right: 'Bottom right',
+    bottom_left: 'Bottom left',
+    top_right: 'Top right',
+    top_left: 'Top left',
+  } as Record<string, string>,
+  signImage: 'Image',
+  signNoImage: 'none (text only)',
   signContact: 'Contact',
   signSubmit: 'Sign and save as…',
   signDone: 'Document signed and saved',
@@ -926,16 +959,25 @@ export const en: Strings = {
     helvetica: 'Helvetica (sans serif)',
     times: 'Times (serif)',
     courier: 'Courier (monospace)',
+    unicode: 'DejaVu Sans (Greek, Cyrillic…; embedded)',
   } as Record<string, string>,
+  fontUnicodeHint:
+    'Greek, Cyrillic or extended Latin text is written in DejaVu Sans (embedded), whatever font is chosen.',
   bold: 'Bold',
   italic: 'Italic',
   insert: 'Insert',
   imageTool: 'Draw a rectangle, then choose an image.',
   redactTitle: 'Redact the area',
   redactConfirm:
-    'Text, images and annotations touching the area will be removed from the file and covered in black (undo with Ctrl+Z).',
+    'Text and annotations touching the area will be removed from the file, images blacked out under the area, then everything covered in black (undo with Ctrl+Z).',
   redact: 'Redact',
   redacted: 'Area redacted.',
+  redactDone: (texts: number, images: number, paths: number, annotations: number) =>
+    `Area redacted: ${texts} text(s), ${images} image(s), ${paths} path(s), ${annotations} annotation(s) removed or blacked out.`,
+  redactPathsKept: (n: number) =>
+    `${n} path(s) crossing the area are only covered in black (their shape stays in the file).`,
+  redactImagesRemoved: (n: number) =>
+    `${n} image(s) removed entirely (a format that cannot be partly blacked out): check the page, Ctrl+Z to undo.`,
   watermarkTitle: 'Watermark',
   watermarkDefaultText: 'DRAFT',
   watermarkText: 'Text',

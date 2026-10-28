@@ -22,7 +22,6 @@ use pdfium_render::prelude::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::content::win_ansi_byte;
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
@@ -346,19 +345,11 @@ fn validate(new: &NewAnnotation) -> CoreResult<()> {
             {
                 return Err(invalid("le texte ne peut pas être vide"));
             }
-            // Texte libre et tampon sont **dessinés** en Helvetica (WinAnsi) : un caractère
-            // hors de cet alphabet s'afficherait « ÿ » (B5, Lot 9). Une note, elle, garde son
-            // commentaire en Unicode (il n'est pas dessiné).
-            if matches!(new.kind, AnnotationKind::Text | AnnotationKind::Stamp)
-                && let Some(c) = new
-                    .contents
-                    .chars()
-                    .find(|c| !matches!(c, '\n' | '\r') && win_ansi_byte(*c).is_none())
-            {
-                return Err(invalid(&format!(
-                    "caractère « {c} » hors de l'alphabet de la police (WinAnsi) : utilisez une \
-                     note pour un commentaire libre"
-                )));
+            // Texte libre et tampon sont **dessinés** : en Helvetica (WinAnsi) ou, hors de cet
+            // alphabet, en police Unicode (Lot 10). Seul un caractère absent des deux est
+            // refusé. Une note, elle, garde tout son commentaire (il n'est pas dessiné).
+            if matches!(new.kind, AnnotationKind::Text | AnnotationKind::Stamp) {
+                crate::fonts::check_drawable(&new.contents)?;
             }
         }
         AnnotationKind::Rect | AnnotationKind::Ellipse => {
@@ -520,8 +511,13 @@ impl Document {
         let page_index = self.checked_index_unlocked(page)?;
         // La police intégrée est enregistrée sur le document (emprunt mutable, terminé avant
         // la suite) ; les objets texte y font référence par jeton.
-        let font = matches!(new.kind, AnnotationKind::Text | AnnotationKind::Stamp)
-            .then(|| self.inner_mut().fonts_mut().helvetica());
+        let font = if !matches!(new.kind, AnnotationKind::Text | AnnotationKind::Stamp) {
+            None
+        } else if crate::fonts::needs_unicode(&new.contents) {
+            Some(self.unicode_font_unlocked()?)
+        } else {
+            Some(self.inner_mut().fonts_mut().helvetica())
+        };
         let doc = self.inner();
         let mut pdf_page = doc.pages().get(page_index)?;
         let index = pdf_page.annotations().len();

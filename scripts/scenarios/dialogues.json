@@ -1,0 +1,51 @@
+[
+  { "wait": 1800 },
+  { "key": "F1" },
+  { "wait": 400 },
+  { "assert": "document.querySelectorAll('[role=dialog]').length === 1", "label": "F1 ouvre l'aide (un seul dialogue)" },
+  { "key": "F1" },
+  { "wait": 400 },
+  { "assert": "document.querySelectorAll('[role=dialog]').length === 0", "label": "F1 referme l'aide" },
+  {
+    "eval": "(() => { document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]').click(); return true; })()",
+    "label": "menu Fichier"
+  },
+  { "wait": 300 },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=menuitem]')].find((b) => b.textContent.includes('Propriétés')).click(); return true; })()",
+    "label": "Propriétés…"
+  },
+  { "wait": 500 },
+  { "assert": "document.querySelectorAll('[role=dialog]').length === 1", "label": "propriétés ouvertes" },
+  { "key": "p", "ctrl": true },
+  { "wait": 400 },
+  {
+    "assert": "document.querySelectorAll('[role=dialog]').length === 1 && !document.querySelector('.print-view')",
+    "label": "Ctrl+P pendant un dialogue : pas de second dialogue"
+  },
+  { "key": "Escape" },
+  { "wait": 300 },
+  { "assert": "document.querySelectorAll('[role=dialog]').length === 0", "label": "Échap ferme les propriétés" },
+  {
+    "assert": "document.activeElement && document.activeElement.getAttribute('aria-haspopup') === 'menu'",
+    "label": "le focus revient au bouton du menu"
+  },
+  { "key": ",", "ctrl": true },
+  { "wait": 400 },
+  { "assert": "document.querySelectorAll('[role=dialog]').length === 1", "label": "Ctrl+, ouvre les préférences" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  { "assert": "document.querySelectorAll('[role=dialog]').length === 0", "label": "Échap les ferme" },
+  {
+    "eval": "(() => { const t = document.querySelector('button[aria-haspopup=menu][title=\"Fichier\"]'); t.focus(); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); return true; })()",
+    "label": "↑ sur le bouton de menu"
+  },
+  { "wait": 300 },
+  {
+    "assert": "document.activeElement && document.activeElement.getAttribute('role') === 'menuitem' && document.activeElement.textContent.includes('Préférences')",
+    "label": "↑ ouvre le menu sur son dernier élément"
+  },
+  { "key": "Escape" },
+  { "wait": 300 },
+  { "assert": "!document.querySelector('[role=menu]')", "label": "Échap ferme le menu" }
+]

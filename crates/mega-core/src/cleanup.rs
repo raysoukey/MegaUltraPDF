@@ -23,39 +23,51 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 }
 
 /// Octets prêts à écrire : notes sans apparence imposée, `/InkList` sur les formes, objets
-/// orphelins élagués et renumérotés. Un document chiffré est rendu tel quel.
-pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
-    let mut doc = match Document::load_mem(bytes) {
-        Ok(doc) => doc,
-        // Un fichier que lopdf ne relit pas est écrit tel que PDFium l'a produit.
+/// orphelins élagués et renumérotés. Un document chiffré (ouvert avec `password`) est nettoyé
+/// en clair puis **rechiffré à l'identique** (`crypt::LopdfSession`, Lot 10).
+pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> {
+    let mut session = match crate::crypt::LopdfSession::load(bytes, password) {
+        Ok(session) => session,
+        // Un fichier que lopdf ne relit (ou ne déchiffre) pas est écrit tel que PDFium l'a
+        // produit, protection comprise.
         Err(_) => return Ok(bytes.to_vec()),
     };
-    // `is_encrypted()` ne voit que le dictionnaire `/Encrypt` ; or lopdf **déchiffre en
-    // silence** un fichier dont le mot de passe utilisateur est vide (protection « propriétaire »
-    // seule) et retire `/Encrypt` : `was_encrypted()` garde la trace. Dans les deux cas, on ne
-    // réécrit pas : le fichier resterait lisible mais perdrait sa protection.
-    if doc.is_encrypted() || doc.was_encrypted() {
+    let doc = &mut session.doc;
+    let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
+    // Le nettoyage ne touche à aucun flux de contenu : on en garde l'empreinte pour vérifier
+    // la relecture (un rechiffrement faux brouillerait le contenu sans changer les pages).
+    let contents_before = page_contents(doc);
+    for page_id in &pages {
+        clean_page_annotations(doc, *page_id)?;
+        identify_annotations(doc, *page_id)?;
+    }
+    drop_dangling_annotation_links(doc, &pages)?;
+    dedupe_font_files(doc);
+    // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
+    crate::properties::stamp_mod_date(doc);
+    let pages_before = doc.get_pages().len();
+    prune(doc);
+    doc.renumber_objects();
+    let out = session.finish()?;
+    // Ceinture de sécurité : la réécriture `lopdf` remplace le fichier de l'utilisateur ; si
+    // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages, on écrit les
+    // octets PDFium tels quels.
+    if !rewrite_is_sane(pages_before, &out, password) {
         return Ok(bytes.to_vec());
     }
-    let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
-    for page_id in &pages {
-        clean_page_annotations(&mut doc, *page_id)?;
-        identify_annotations(&mut doc, *page_id)?;
-    }
-    drop_dangling_annotation_links(&mut doc, &pages)?;
-    // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
-    crate::properties::stamp_mod_date(&mut doc);
-    let pages_before = doc.get_pages().len();
-    prune(&mut doc);
-    doc.renumber_objects();
-    let mut out = Vec::new();
-    doc.save_to(&mut out)?;
-    // Ceinture de sécurité : la réécriture `lopdf` remplace le fichier de l'utilisateur ; si
-    // elle ne se relit pas avec le même nombre de pages, on écrit les octets PDFium tels quels.
-    if !rewrite_is_sane(pages_before, &out) {
+    let reread = crate::crypt::LopdfSession::load(&out, password).map(|s| page_contents(&s.doc));
+    if reread.ok().as_ref() != Some(&contents_before) {
         return Ok(bytes.to_vec());
     }
     Ok(out)
+}
+
+/// Contenu décodé de chaque page, dans l'ordre des pages.
+fn page_contents(doc: &Document) -> Vec<Vec<u8>> {
+    doc.get_pages()
+        .into_values()
+        .map(|id| doc.get_page_content(id))
+        .collect()
 }
 
 /// Objets atteignables depuis la remorque (racine, `/Info`, `/Encrypt`…), en suivant toutes
@@ -89,6 +101,55 @@ pub(crate) fn reachable(doc: &Document) -> BTreeSet<ObjectId> {
     seen
 }
 
+/// Fait pointer les descripteurs de police vers **un seul** exemplaire de chaque programme
+/// de police identique (`/FontFile`, `/FontFile2`, `/FontFile3`) ; l'élagage retire ensuite
+/// les copies. Rend le nombre de références réécrites.
+///
+/// PDFium incorpore la police Unicode **entière** à chaque chargement (Lot 10) : après un
+/// rechargement du document (filigrane, annuler…), une nouvelle insertion de texte en
+/// recharge une copie. Sans cette passe, chaque copie ajouterait environ 400 Ko au fichier.
+pub(crate) fn dedupe_font_files(doc: &mut Document) -> usize {
+    use std::collections::BTreeMap;
+    const KEYS: [&[u8]; 3] = [b"FontFile", b"FontFile2", b"FontFile3"];
+    // Programme de police (filtre + octets) → premier objet qui le porte.
+    let mut first: BTreeMap<(Vec<u8>, Vec<u8>), ObjectId> = BTreeMap::new();
+    let mut rewrites: Vec<(ObjectId, &'static [u8], ObjectId)> = Vec::new();
+    for (id, object) in &doc.objects {
+        let Ok(dict) = object.as_dict() else {
+            continue;
+        };
+        if dict.get(b"Type").ok() != Some(&Object::Name(b"FontDescriptor".to_vec())) {
+            continue;
+        }
+        for key in KEYS {
+            let Ok(file) = dict.get(key).and_then(Object::as_reference) else {
+                continue;
+            };
+            let Some(Ok(stream)) = doc.objects.get(&file).map(Object::as_stream) else {
+                continue;
+            };
+            let filter = stream
+                .dict
+                .get(b"Filter")
+                .ok()
+                .map(|f| format!("{f:?}").into_bytes())
+                .unwrap_or_default();
+            let canonical = *first
+                .entry((filter, stream.content.clone()))
+                .or_insert(file);
+            if canonical != file {
+                rewrites.push((*id, key, canonical));
+            }
+        }
+    }
+    for (descriptor, key, canonical) in &rewrites {
+        if let Ok(dict) = doc.get_dictionary_mut(*descriptor) {
+            dict.set(*key, Object::Reference(*canonical));
+        }
+    }
+    rewrites.len()
+}
+
 /// Retire les objets inatteignables (orphelins) et rend leur nombre.
 pub(crate) fn prune(doc: &mut Document) -> usize {
     let keep = reachable(doc);
@@ -97,11 +158,13 @@ pub(crate) fn prune(doc: &mut Document) -> usize {
     before - doc.objects.len()
 }
 
-/// Vrai si `out` se relit comme un PDF non vide ayant encore `pages_before` pages.
-pub(crate) fn rewrite_is_sane(pages_before: usize, out: &[u8]) -> bool {
-    match Document::load_mem(out) {
+/// Vrai si `out` se relit (et, s'il est chiffré, se déchiffre avec `password`) comme un PDF
+/// non vide ayant encore `pages_before` pages.
+pub(crate) fn rewrite_is_sane(pages_before: usize, out: &[u8], password: Option<&str>) -> bool {
+    match crate::crypt::LopdfSession::load(out, password) {
         Ok(reloaded) => {
-            reloaded.get_pages().len() == pages_before && reloaded.trailer.get(b"Root").is_ok()
+            reloaded.doc.get_pages().len() == pages_before
+                && reloaded.doc.trailer.get(b"Root").is_ok()
         }
         Err(_) => false,
     }
@@ -260,6 +323,44 @@ fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> Cor
             .filter_map(|item| item.as_reference().ok())
             .collect()
     };
+    // 0. Membres d'un groupe (`/IRT` + `/RT /Group`, §12.5.6.2) dont l'annotation principale
+    //    n'est plus listée : le groupe forme une seule annotation, ils partent avec elle.
+    let primaries = listed(doc);
+    for page_id in pages {
+        let Some((array_id, items)) = page_annots(doc, *page_id) else {
+            continue;
+        };
+        let orphan_member = |item: &Object| {
+            let dict = match item {
+                Object::Reference(id) => doc.get_dictionary(*id).ok(),
+                Object::Dictionary(dict) => Some(dict),
+                _ => None,
+            };
+            dict.is_some_and(|d| {
+                d.get(b"RT").and_then(Object::as_name).ok() == Some(b"Group".as_slice())
+                    && d.get(b"IRT")
+                        .and_then(Object::as_reference)
+                        .is_ok_and(|primary| !primaries.contains(&primary))
+            })
+        };
+        let kept: Vec<Object> = items
+            .iter()
+            .filter(|i| !orphan_member(i))
+            .cloned()
+            .collect();
+        if kept.len() == items.len() {
+            continue;
+        }
+        match array_id {
+            Some(id) => {
+                doc.objects.insert(id, Object::Array(kept));
+            }
+            None => doc
+                .get_dictionary_mut(*page_id)
+                .map_err(structure)?
+                .set("Annots", Object::Array(kept)),
+        }
+    }
     let before = listed(doc);
     // 1. Popups dont le parent n'est plus listé : retirés de `/Annots`.
     for page_id in pages {
@@ -563,13 +664,16 @@ mod tests {
     #[test]
     fn rewrite_sanity_rejects_truncated_or_page_losing_output() {
         let bytes = crate::testing::many_pages_pdf(3);
-        assert!(rewrite_is_sane(3, &bytes));
-        assert!(!rewrite_is_sane(4, &bytes), "nombre de pages différent");
+        assert!(rewrite_is_sane(3, &bytes, None));
         assert!(
-            !rewrite_is_sane(3, &bytes[..bytes.len() / 2]),
+            !rewrite_is_sane(4, &bytes, None),
+            "nombre de pages différent"
+        );
+        assert!(
+            !rewrite_is_sane(3, &bytes[..bytes.len() / 2], None),
             "fichier tronqué"
         );
-        assert!(!rewrite_is_sane(0, b"pas un pdf"));
+        assert!(!rewrite_is_sane(0, b"pas un pdf", None));
     }
 }
 

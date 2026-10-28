@@ -80,7 +80,7 @@ fn set_metadata_is_undoable_and_updates_mod_date() {
 }
 
 #[test]
-fn set_metadata_validates_and_refuses_encrypted() {
+fn set_metadata_validates_and_keeps_owner_protection() {
     let mut d = doc();
     let long = "x".repeat(1025);
     assert!(matches!(
@@ -96,13 +96,16 @@ fn set_metadata_validates_and_refuses_encrypted() {
     ))
     .unwrap();
     let mut protected = Document::from_bytes(bytes, None).unwrap();
-    match protected.set_metadata(&MetadataPatch {
-        title: Some("x".to_string()),
-        ..MetadataPatch::default()
-    }) {
-        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffré"), "{m}"),
-        other => panic!("{other:?}"),
-    }
+    // Lot 10 : la protection « propriétaire seul » est conservée (rechiffrement).
+    protected
+        .set_metadata(&MetadataPatch {
+            title: Some("x".to_string()),
+            ..MetadataPatch::default()
+        })
+        .unwrap();
+    assert_eq!(protected.title().as_deref(), Some("x"));
+    let out = protected.to_bytes().unwrap();
+    assert!(String::from_utf8_lossy(&out).contains("/Encrypt"));
 }
 
 // --- Lot 9 : XMP, /Info direct, contrôles, /ModDate (C11-C16) ----------------------------

@@ -6,7 +6,9 @@ use std::path::Path;
 
 use anyhow::Context;
 use mega_core::Document;
-use mega_core::digital_signature::{SignOptions, SignatureInfo, SignatureStatus, SigningIdentity};
+use mega_core::digital_signature::{
+    SignAppearance, SignOptions, SignatureInfo, SignatureStatus, SigningIdentity,
+};
 
 use super::info::display_safe;
 
@@ -47,12 +49,50 @@ pub fn sign(
     let mut doc = Document::open(file, password)?;
     doc.sign_to(out, &identity, &options)
         .with_context(|| format!("signature de {}", file.display()))?;
+    let kind = if options.appearance.is_some() {
+        "signature visible"
+    } else {
+        "signature invisible"
+    };
     println!(
-        "Document signé par « {} » : {}",
+        "Document signé par « {} » ({kind}) : {}",
         display_safe(&identity.signer_name()),
         out.display()
     );
     Ok(())
+}
+
+/// Le tampon d'une signature visible d'après `--page`, `--rect` et `--image` ; `None` sans
+/// `--rect` (signature invisible).
+pub fn appearance(
+    page: u16,
+    rect: Option<&str>,
+    image: Option<std::path::PathBuf>,
+) -> anyhow::Result<Option<SignAppearance>> {
+    let Some(rect) = rect else {
+        anyhow::ensure!(
+            image.is_none(),
+            "--image demande --rect (signature visible)"
+        );
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        page >= 1,
+        "--page : les pages sont numérotées à partir de 1"
+    );
+    let parts: Vec<f32> = rect
+        .split(',')
+        .map(|s| s.trim().parse::<f32>())
+        .collect::<Result<_, _>>()
+        .context("--rect : quatre nombres attendus, séparés par des virgules")?;
+    let [x, y, w, h] = parts[..] else {
+        anyhow::bail!("--rect : quatre nombres attendus, séparés par des virgules");
+    };
+    Ok(Some(SignAppearance {
+        page: page - 1,
+        rect: mega_core::Rect { x, y, w, h },
+        image_path: image.map(|p| p.to_string_lossy().into_owned()),
+    }))
 }
 
 /// Verdict lisible d'une signature.

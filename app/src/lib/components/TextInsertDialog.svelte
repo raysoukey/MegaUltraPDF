@@ -66,11 +66,12 @@
       <label class="row">
         {t.fontFamily}
         <select bind:value={family}>
-          {#each ['helvetica', 'times', 'courier'] as f (f)}
+          {#each ['helvetica', 'times', 'courier', 'unicode'] as f (f)}
             <option value={f}>{t.fontFamilies[f]}</option>
           {/each}
         </select>
       </label>
+      <p class="hint">{t.fontUnicodeHint}</p>
       <div class="row">
         <label><input type="checkbox" bind:checked={bold} /> {t.bold}</label>
         <label><input type="checkbox" bind:checked={italic} /> {t.italic}</label>
@@ -92,6 +93,12 @@
 </div>
 
 <style>
+  .hint {
+    margin: 0 0 0.4rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+    max-width: 24rem;
+  }
   .col {
     display: flex;
     flex-direction: column;

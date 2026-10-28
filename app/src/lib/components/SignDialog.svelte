@@ -4,7 +4,8 @@
   // « Signer et enregistrer sous… ». Le mot de passe ne quitte ce dialogue que pour la
   // commande de signature ; il n'est jamais gardé.
   import { trapFocus } from '$lib/actions/trapFocus';
-  import { pickCertificateFile } from '$lib/api';
+  import { pickCertificateFile, pickImageFile } from '$lib/api';
+  import { stampRect, type StampCorner } from '$lib/logic/stamp';
   import { signAndSave, type OpenDoc } from '$lib/state/documents.svelte';
   import { settings } from '$lib/state/settings.svelte';
   import { t } from '$lib/strings';
@@ -21,7 +22,11 @@
   let reason = $state('');
   let location = $state('');
   let contact = $state(settings.author);
+  let visible = $state(false);
+  let corner = $state<StampCorner>('bottom_right');
+  let image = $state<string | null>(null);
   let error = $state('');
+  const corners: StampCorner[] = ['bottom_right', 'bottom_left', 'top_right', 'top_left'];
 
   const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
   const orNull = (s: string) => (s.trim() ? s.trim() : null);
@@ -29,6 +34,18 @@
   async function choose() {
     const picked = await pickCertificateFile();
     if (picked) certificate = picked;
+  }
+
+  async function chooseImage() {
+    const picked = await pickImageFile();
+    if (picked) image = picked;
+  }
+
+  /** Tampon sur la page courante, au coin choisi (taille affichée de la page). */
+  function appearance() {
+    const size = doc.summary.pages[doc.page];
+    if (!visible || !size) return null;
+    return { page: doc.page, rect: stampRect(size, corner), image_path: image };
   }
 
   async function submit() {
@@ -39,6 +56,7 @@
       reason: orNull(reason),
       location: orNull(location),
       contact: orNull(contact),
+      appearance: appearance(),
     });
     busy = false;
     if (result === null) onclose();
@@ -75,6 +93,22 @@
         <input id="sign-location" type="text" maxlength="200" bind:value={location} />
         <label for="sign-contact">{t.signContact}</label>
         <input id="sign-contact" type="text" maxlength="200" bind:value={contact} />
+        <span></span>
+        <label class="check"><input type="checkbox" bind:checked={visible} /> {t.signVisible}</label
+        >
+        {#if visible}
+          <label for="sign-corner">{t.signCorner}</label>
+          <select id="sign-corner" bind:value={corner}>
+            {#each corners as c (c)}
+              <option value={c}>{t.signCorners[c]}</option>
+            {/each}
+          </select>
+          <span>{t.signImage}</span>
+          <span class="file">
+            <button type="button" onclick={chooseImage} disabled={busy}>{t.signChoose}</button>
+            <span class="name">{image ? fileName(image) : t.signNoImage}</span>
+          </span>
+        {/if}
       </div>
       {#if error}
         <p class="error" role="alert">{error}</p>
@@ -110,6 +144,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--muted);
+  }
+  .check {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
   }
   .error {
     color: var(--danger-text);

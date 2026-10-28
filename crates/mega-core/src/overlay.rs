@@ -4,7 +4,9 @@
 //!
 //! Filigrane et numéros sont des **flux de contenu ajoutés par `lopdf`** après le contenu
 //! existant : `q … Q` isole l'état graphique, un `ExtGState` porte l'opacité, une police
-//! Helvetica (Standard 14, encodage WinAnsi) est ajoutée aux ressources de chaque page.
+//! Helvetica (Standard 14, encodage WinAnsi) est ajoutée aux ressources de chaque page ; un
+//! texte hors WinAnsi (grec, cyrillique…) utilise la police Unicode incorporée
+//! (module `fonts::unicode`, Lot 10).
 //! Rien ne dépend de PDFium : le résultat est exact dans tous les lecteurs. PDFium sert
 //! seulement à **mesurer** la largeur du texte (pour centrer ou aligner à droite) et à
 //! recharger le document ensuite. Le recadrage est un `/CropBox` posé par PDFium.
@@ -21,23 +23,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::annotations::{Color, to_pdf_rect};
 use crate::content::win_ansi_byte;
+use crate::crypt::LopdfSession;
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
 use crate::fonts;
+use crate::fonts::unicode::{Type0Writer, UnicodeFont};
 use crate::geometry::{PageFrame, Rect, Rotation};
 
 /// Longueur maximale d'un texte de filigrane ou de numérotation (après substitution).
 pub const MAX_OVERLAY_TEXT_CHARS: usize = 200;
 /// Nom de ressource de la police Helvetica que nous ajoutons aux pages.
 const FONT_KEY: &str = "MegaF1";
+/// Préfixe du nom de ressource de la police Unicode (DejaVu Sans, `Type0`) que nous ajoutons
+/// aux pages quand un texte sort de l'alphabet WinAnsi (Lot 10). Chaque passe écrit **sa**
+/// police (ses propres CID) sous un nom libre (`MegaU1`, `MegaU2`…) : réutiliser un nom ferait
+/// relire les textes d'une passe précédente avec la table de la nouvelle police.
+const UNICODE_FONT_PREFIX: &str = "MegaU";
 /// Préfixe du nom de ressource des états graphiques (opacité) que nous ajoutons.
 const GS_PREFIX: &str = "MegaGS";
 
 /// Un filigrane : texte centré sur la page, incliné, translucide.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Watermark {
-    /// Le texte (WinAnsi, au plus [`MAX_OVERLAY_TEXT_CHARS`]).
+    /// Le texte (au plus [`MAX_OVERLAY_TEXT_CHARS`] ; Helvetica si WinAnsi, sinon la police
+    /// Unicode incorporée).
     pub text: String,
     /// Taille de police en points.
     pub size: f32,
@@ -110,7 +120,8 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 /// largeur de sa boîte, si bien que la recherche et la sélection tombent sur l'image du mot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvisibleWord {
-    /// Le texte reconnu ; les caractères hors WinAnsi deviennent `?` à l'écriture.
+    /// Le texte reconnu (Helvetica si WinAnsi, sinon la police Unicode incorporée ; un
+    /// caractère absent de celle-ci reste trouvable par la recherche).
     pub text: String,
     /// Boîte du mot, en points, espace affiché.
     pub rect: Rect,
@@ -119,13 +130,6 @@ pub struct InvisibleWord {
 /// Part de la hauteur de boîte sous la ligne de base (jambages descendants d'Helvetica).
 const DESCENT_RATIO: f32 = 0.2;
 
-/// Le texte en WinAnsi, caractère par caractère, `?` pour ce qui n'est pas encodable.
-fn win_ansi_lossy(text: &str) -> String {
-    text.chars()
-        .map(|c| if win_ansi_byte(c).is_some() { c } else { '?' })
-        .collect()
-}
-
 /// Un texte prêt à écrire : page, contenu, style, matrice texte en coordonnées affichées.
 struct Placement {
     page: u16,
@@ -133,13 +137,15 @@ struct Placement {
     size: f32,
     color: Color,
     opacity: f32,
+    /// Vrai si le texte sort de WinAnsi : il est écrit avec la police Unicode.
+    unicode: bool,
     /// Matrice `Tm` (rotation + position de la ligne de base), en espace affiché.
     tm: [f32; 6],
     frame: PageFrame,
 }
 
 /// Nombre au format des flux de contenu (pas de notation exponentielle).
-fn num(v: f32) -> String {
+pub(crate) fn num(v: f32) -> String {
     let s = format!("{v:.3}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s.is_empty() || s == "-0" {
@@ -150,7 +156,7 @@ fn num(v: f32) -> String {
 }
 
 /// Chaîne hexadécimale WinAnsi `<…>` pour `Tj` ; `None` si un caractère n'est pas encodable.
-fn hex_win_ansi(text: &str) -> Option<String> {
+pub(crate) fn hex_win_ansi(text: &str) -> Option<String> {
     let mut out = String::with_capacity(text.len() * 2 + 2);
     out.push('<');
     for c in text.chars() {
@@ -167,12 +173,7 @@ fn check_text(text: &str) -> CoreResult<()> {
     if text.chars().count() > MAX_OVERLAY_TEXT_CHARS {
         return Err(invalid("texte trop long (200 caractères au plus)"));
     }
-    if let Some(c) = text.chars().find(|c| win_ansi_byte(*c).is_none()) {
-        return Err(CoreError::InvalidOperation(format!(
-            "caractère non pris en charge : « {c} » (police standard, encodage WinAnsi)"
-        )));
-    }
-    Ok(())
+    fonts::check_drawable(text)
 }
 
 impl Document {
@@ -229,6 +230,7 @@ impl Document {
                 size: w.size,
                 color: w.color,
                 opacity: w.opacity,
+                unicode: fonts::needs_unicode(&w.text),
                 tm: [cos, sin, -sin, cos, tx, ty],
                 frame,
             });
@@ -285,6 +287,7 @@ impl Document {
             }
             placements.push(Placement {
                 page,
+                unicode: fonts::needs_unicode(&text),
                 text,
                 size: n.size,
                 color: Color { r: 0, g: 0, b: 0 },
@@ -384,15 +387,29 @@ impl Document {
         let frame = self.page_frame(page)?;
         // Largeur d'**avance** à 100 pt (table AFM, proportionnelle à la taille) : c'est elle
         // que `Tz` étire, et que les lecteurs utilisent pour placer la sélection.
+        let bytes = self.to_bytes()?;
+        // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
+        let mut session = LopdfSession::load(&bytes, self.password())?;
+        let page_id = *session
+            .doc
+            .get_pages()
+            .get(&(u32::from(page) + 1))
+            .ok_or_else(|| structure("page introuvable"))?;
+        let unicode_key = free_font_name(&session.doc, &[page_id]);
+        // Les mots hors WinAnsi passent par la police Unicode ; un caractère qu'elle n'a pas
+        // (CJK) est permis ici : le texte est invisible, seule compte sa valeur `/ToUnicode`.
+        let mut writer = Type0Writer::new();
         let mut ops = String::new();
         for w in words {
             // Une espace finale est écrite (elle sépare les mots d'une ligne pour l'extraction
             // et la recherche) mais n'entre pas dans la largeur à remplir.
-            let text = win_ansi_lossy(w.text.trim_start());
+            let text = w.text.trim_start();
             let word = text.trim_end();
             let r = w.rect;
-            if word.is_empty() || !(r.w > 0.0 && r.h > 0.0) || !(r.x.is_finite() && r.y.is_finite())
-            {
+            // Une boîte vide, négative ou infinie (OCR fautif) est ignorée : elle écrirait
+            // « inf » ou « NaN » dans le flux de contenu.
+            let finite = [r.x, r.y, r.w, r.h].iter().all(|v| v.is_finite());
+            if word.is_empty() || !finite || !(r.w > 0.0 && r.h > 0.0) {
                 continue;
             }
             let width_100 = text_width(word, 100.0);
@@ -402,9 +419,14 @@ impl Document {
             let size = r.h;
             let natural = width_100 * size / 100.0;
             let scale = 100.0 * r.w / natural;
-            let hex = hex_win_ansi(&text).ok_or_else(|| invalid("texte non encodable"))?;
+            let (key, hex) = if fonts::needs_unicode(text) {
+                (unicode_key.as_str(), writer.encode(text))
+            } else {
+                let hex = hex_win_ansi(text).ok_or_else(|| invalid("texte non encodable"))?;
+                (FONT_KEY, hex)
+            };
             ops.push_str(&format!(
-                "/{FONT_KEY} {} Tf\n{} Tz\n1 0 0 1 {} {} Tm\n{hex} Tj\n",
+                "/{key} {} Tf\n{} Tz\n1 0 0 1 {} {} Tm\n{hex} Tj\n",
                 num(size),
                 num(scale),
                 num(r.x),
@@ -414,25 +436,13 @@ impl Document {
         if ops.is_empty() {
             return Ok(());
         }
-        let bytes = self.to_bytes()?;
-        let mut doc = LoDocument::load_mem(&bytes).map_err(structure)?;
-        if doc.is_encrypted() || doc.was_encrypted() {
-            return Err(invalid(
-                "couche de texte d'un PDF chiffré : non modifiable dans cette version",
-            ));
+        let doc = &mut session.doc;
+        let font_id = helvetica_font(doc);
+        let mut entries = vec![("Font", FONT_KEY, font_id)];
+        if !writer.is_empty() {
+            entries.push(("Font", unicode_key.as_str(), writer.write(doc)?));
         }
-        let page_id = *doc
-            .get_pages()
-            .get(&(u32::from(page) + 1))
-            .ok_or_else(|| structure("page introuvable"))?;
-        let font_id = doc.add_object(Object::Dictionary(Dictionary::from_iter(vec![
-            ("Type", Object::Name(b"Font".to_vec())),
-            ("Subtype", Object::Name(b"Type1".to_vec())),
-            ("BaseFont", Object::Name(b"Helvetica".to_vec())),
-            ("Encoding", Object::Name(b"WinAnsiEncoding".to_vec())),
-        ])));
-        add_widths(&mut doc, font_id);
-        ensure_resources(&mut doc, page_id, &[("Font", FONT_KEY, font_id)])?;
+        ensure_resources(doc, page_id, &entries)?;
         let m = frame.matrix_to_user_space();
         let cm = if frame.is_identity() {
             String::new()
@@ -449,33 +459,53 @@ impl Document {
         };
         let content = format!("\nq\n{cm}BT\n3 Tr\n{ops}ET\nQ\n");
         let mut wrapped = BTreeSet::new();
-        append_content(&mut doc, page_id, &mut wrapped, content.into_bytes())?;
-        let mut out = Vec::new();
-        doc.save_to(&mut out)?;
+        append_content(doc, page_id, &mut wrapped, content.into_bytes())?;
+        let out = session.finish()?;
         self.reload_from_bytes(out)
     }
 
     /// Écrit les textes dans le fichier (phase `lopdf`), puis recharge le document.
     fn apply_placements(&mut self, placements: Vec<Placement>) -> CoreResult<()> {
         let bytes = self.to_bytes()?;
-        let mut doc = LoDocument::load_mem(&bytes).map_err(structure)?;
-        // Voir `cleanup::before_save` : `was_encrypted()` couvre le mot de passe propriétaire seul.
-        if doc.is_encrypted() || doc.was_encrypted() {
-            return Err(invalid(
-                "filigrane et numérotation d'un PDF chiffré : non modifiables dans cette version",
-            ));
-        }
+        // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
+        let mut session = LopdfSession::load(&bytes, self.password())?;
+        let doc = &mut session.doc;
         let page_ids: BTreeMap<u32, ObjectId> = doc.get_pages();
-        let font_id = doc.add_object(Object::Dictionary(Dictionary::from_iter(vec![
-            ("Type", Object::Name(b"Font".to_vec())),
-            ("Subtype", Object::Name(b"Type1".to_vec())),
-            ("BaseFont", Object::Name(b"Helvetica".to_vec())),
-            ("Encoding", Object::Name(b"WinAnsiEncoding".to_vec())),
-        ])));
-        add_widths(&mut doc, font_id);
+        // Une police de chaque sorte au plus, partagée par toutes les pages : Helvetica pour
+        // les textes WinAnsi, la police Unicode (sous-ensemble des caractères de **tous** les
+        // textes) pour les autres. Les chaînes sont donc encodées avant d'écrire la police.
+        let helvetica = placements
+            .iter()
+            .any(|p| !p.unicode)
+            .then(|| helvetica_font(doc));
+        let mut writer = Type0Writer::new();
+        let mut encoded = Vec::with_capacity(placements.len());
+        for p in &placements {
+            encoded.push(if p.unicode {
+                writer.encode(&p.text)
+            } else {
+                hex_win_ansi(&p.text).ok_or_else(|| invalid("texte non encodable"))?
+            });
+        }
+        let unicode = if writer.is_empty() {
+            None
+        } else {
+            Some(writer.write(doc)?)
+        };
+        let targets: Vec<ObjectId> = placements
+            .iter()
+            .filter_map(|p| page_ids.get(&(u32::from(p.page) + 1)).copied())
+            .collect();
+        let unicode_key = free_font_name(doc, &targets);
         let mut states: BTreeMap<u32, (String, ObjectId)> = BTreeMap::new();
         let mut wrapped: BTreeSet<ObjectId> = BTreeSet::new();
-        for p in placements {
+        for (p, hex) in placements.into_iter().zip(encoded) {
+            let (font_key, font_id) = if p.unicode {
+                (unicode_key.as_str(), unicode)
+            } else {
+                (FONT_KEY, helvetica)
+            };
+            let font_id = font_id.ok_or_else(|| structure("police manquante"))?;
             let page_id = *page_ids
                 .get(&(u32::from(p.page) + 1))
                 .ok_or_else(|| structure("page introuvable"))?;
@@ -493,11 +523,10 @@ impl Document {
                 })
                 .clone();
             ensure_resources(
-                &mut doc,
+                doc,
                 page_id,
-                &[("Font", FONT_KEY, font_id), ("ExtGState", &gs_name, gs_id)],
+                &[("Font", font_key, font_id), ("ExtGState", &gs_name, gs_id)],
             )?;
-            let hex = hex_win_ansi(&p.text).ok_or_else(|| invalid("texte non encodable"))?;
             let m = p.frame.matrix_to_user_space();
             let cm = if p.frame.is_identity() {
                 String::new()
@@ -513,7 +542,7 @@ impl Document {
                 )
             };
             let content = format!(
-                "\nq\n{cm}/{gs_name} gs\n{} {} {} rg\nBT\n/{FONT_KEY} {} Tf\n{} {} {} {} {} {} Tm\n{hex} Tj\nET\nQ\n",
+                "\nq\n{cm}/{gs_name} gs\n{} {} {} rg\nBT\n/{font_key} {} Tf\n{} {} {} {} {} {} Tm\n{hex} Tj\nET\nQ\n",
                 num(f32::from(p.color.r) / 255.0),
                 num(f32::from(p.color.g) / 255.0),
                 num(f32::from(p.color.b) / 255.0),
@@ -525,17 +554,20 @@ impl Document {
                 num(p.tm[4]),
                 num(p.tm[5]),
             );
-            append_content(&mut doc, page_id, &mut wrapped, content.into_bytes())?;
+            append_content(doc, page_id, &mut wrapped, content.into_bytes())?;
         }
-        let mut out = Vec::new();
-        doc.save_to(&mut out)?;
+        let out = session.finish()?;
         self.reload_from_bytes(out)
     }
 }
 
-/// Largeur d'avance d'un texte en Helvetica WinAnsi à `size` points (table AFM : la même
-/// pour tous les lecteurs, sans passer par PDFium). Un caractère hors WinAnsi compte comme `?`.
-fn text_width(text: &str, size: f32) -> f32 {
+/// Largeur d'avance d'un texte à `size` points, dans la police qui l'écrira : Helvetica
+/// (table AFM : la même pour tous les lecteurs, sans passer par PDFium) ou, hors WinAnsi, la
+/// police Unicode incorporée (ses largeurs sont aussi celles écrites dans `/W`).
+pub(crate) fn text_width(text: &str, size: f32) -> f32 {
+    if fonts::needs_unicode(text) {
+        return UnicodeFont::embedded().text_width(text, size);
+    }
     let bytes: Vec<u8> = text
         .chars()
         .map(|c| win_ansi_byte(c).unwrap_or(b'?'))
@@ -543,13 +575,51 @@ fn text_width(text: &str, size: f32) -> f32 {
     fonts::text_width(&bytes, size)
 }
 
-/// Ajoute `/FirstChar`, `/LastChar` et `/Widths` à la police `font_id` (B24, Lot 9).
-fn add_widths(doc: &mut LoDocument, font_id: ObjectId) {
-    if let Ok(font) = doc.get_dictionary_mut(font_id) {
-        for (key, value) in fonts::widths_entries() {
-            font.set(key, value);
-        }
+/// Un nom de police `MegaU<n>` absent des ressources `/Font` (propres ou héritées) de toutes
+/// les pages `pages`.
+fn free_font_name(doc: &LoDocument, pages: &[ObjectId]) -> String {
+    let taken: BTreeSet<Vec<u8>> = pages
+        .iter()
+        .filter_map(|id| doc.get_dictionary(*id).ok())
+        .flat_map(|page| {
+            let resources = match page.get(b"Resources") {
+                Ok(obj) => doc
+                    .dereference(obj)
+                    .ok()
+                    .and_then(|(_, o)| o.as_dict().ok().cloned())
+                    .unwrap_or_default(),
+                Err(_) => inherited_resources(doc, page),
+            };
+            resources
+                .get(b"Font")
+                .ok()
+                .and_then(|f| doc.dereference(f).ok())
+                .and_then(|(_, f)| f.as_dict().ok().cloned())
+                .unwrap_or_default()
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    (1..)
+        .map(|n| format!("{UNICODE_FONT_PREFIX}{n}"))
+        .find(|name| !taken.contains(name.as_bytes()))
+        .unwrap_or_else(|| format!("{UNICODE_FONT_PREFIX}0"))
+}
+
+/// Ajoute à `doc` une police Helvetica (Standard 14, encodage WinAnsi) avec ses largeurs
+/// (`/FirstChar`, `/LastChar`, `/Widths` : B24, Lot 9) et rend sa référence.
+pub(crate) fn helvetica_font(doc: &mut LoDocument) -> ObjectId {
+    let mut font = Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Font".to_vec())),
+        ("Subtype", Object::Name(b"Type1".to_vec())),
+        ("BaseFont", Object::Name(b"Helvetica".to_vec())),
+        ("Encoding", Object::Name(b"WinAnsiEncoding".to_vec())),
+    ]);
+    for (key, value) in fonts::widths_entries() {
+        font.set(key, value);
     }
+    doc.add_object(Object::Dictionary(font))
 }
 
 /// `/MediaBox` de la page `page_id`, héritée d'un ancêtre `/Pages` si besoin (§7.7.3.4).
@@ -577,7 +647,7 @@ fn inherited_media_box(doc: &LoDocument, page_id: ObjectId) -> Option<Rect> {
 }
 
 /// Ressources héritées d'un ancêtre `/Pages` (copie), ou un dictionnaire vide.
-fn inherited_resources(doc: &LoDocument, page: &Dictionary) -> Dictionary {
+pub(crate) fn inherited_resources(doc: &LoDocument, page: &Dictionary) -> Dictionary {
     let mut node = page.clone();
     for _ in 0..32 {
         if let Ok(res) = node.get(b"Resources")

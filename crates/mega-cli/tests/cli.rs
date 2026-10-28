@@ -463,6 +463,28 @@ fn watermark_number_and_crop_commands() {
         .stderr(predicate::str::contains("quatre"));
 }
 
+/// Lot 10 : le compte rendu distingue images retirées, images noircies et tracés gardés.
+#[test]
+fn redact_reports_blacked_images_and_kept_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("mosaique.pdf");
+    mega()
+        .args([
+            "redact",
+            &fixture("image-mosaic.pdf"),
+            "--page",
+            "1",
+            "--rect",
+            "100,200,100,100",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 image(s) noircie(s)"))
+        .stdout(predicate::str::contains("0 tracé(s) gardé(s)"));
+}
+
 #[test]
 fn redact_removes_text_from_output() {
     let dir = tempfile::tempdir().unwrap();
@@ -761,6 +783,45 @@ fn sign_then_signatures_reports_intact() {
         .stdout(predicate::str::contains("MegaUltraPDF Test Signer"))
         .stdout(predicate::str::contains("intègre"))
         .stdout(predicate::str::contains("Approuvé"));
+}
+
+/// Lot 10 : `--rect` (avec `--page`) rend la signature visible ; un tampon hors page est refusé.
+#[test]
+fn sign_visible_draws_a_stamp_and_verifies() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("visible.pdf");
+    let sign = |rect: &str| {
+        let mut cmd = mega();
+        cmd.args([
+            "sign",
+            &fixture("simple.pdf"),
+            "--p12",
+            &fixture("test-signer.p12"),
+            "--page",
+            "2",
+            "--rect",
+            rect,
+            "-o",
+        ])
+        .arg(&out)
+        .env("MEGA_P12_PASSWORD", "test");
+        cmd
+    };
+    sign("500,100,300,60")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("page"));
+    assert!(!out.exists());
+    sign("100,100,220,70")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("visible"));
+    mega()
+        .arg("signatures")
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("intègre"));
 }
 
 #[test]

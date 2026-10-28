@@ -120,5 +120,9 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let attachments = dir.join("attachments.pdf");
     std::fs::write(&attachments, mega_core::testing::attachments_pdf())?;
     println!("écrit : {}", attachments.display());
+    // Caviardage d'une partie d'image (Lot 10).
+    let mosaic = dir.join("image-mosaic.pdf");
+    std::fs::write(&mosaic, mega_core::testing::image_mosaic_pdf())?;
+    println!("écrit : {}", mosaic.display());
     Ok(())
 }

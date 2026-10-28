@@ -95,6 +95,7 @@
         <p>{t.aboutTagline}</p>
         <p>{t.aboutLicense}</p>
         <p>{t.aboutPdfium}</p>
+        <p>{t.aboutFont}</p>
         <p>{t.aboutNotices}</p>
         <details>
           <summary>{t.aboutThirdParty(crateCount, licenses.length - crateCount)}</summary>

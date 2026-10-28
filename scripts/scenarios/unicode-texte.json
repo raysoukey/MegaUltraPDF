@@ -1,0 +1,62 @@
+[
+  { "wait": 1800 },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[aria-label=\"Outils de contenu\"] button')].find(b => b.textContent.trim().startsWith('Contenu')).click(); return true; })()",
+    "label": "menu Contenu (bouton de menu partagé)"
+  },
+  { "wait": 200 },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=menuitem]')].find(b => b.textContent.trim().startsWith('Filigrane')).click(); return true; })()",
+    "label": "Filigrane…"
+  },
+  { "wait": 400 },
+  {
+    "eval": "(() => { const i = document.querySelector('.dialog input[type=text]'); i.value = 'Привет мир'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()",
+    "label": "texte cyrillique « Привет мир »"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('.dialog button')].find(b => b.textContent.trim() === 'Appliquer').click(); return true; })()",
+    "label": "clic « Appliquer »"
+  },
+  { "wait": 3000 },
+  {
+    "assert": "(document.querySelector('main .error') === null && document.querySelector('button[title^=\"Annuler : Filigraner 3 pages\"]') !== null) || 'ERREUR ' + (document.querySelector('main .error') || {}).textContent",
+    "label": "filigrane cyrillique posé sans erreur"
+  },
+  { "shot": "01-filigrane-cyrillique.png" },
+  { "key": "f", "ctrl": true },
+  { "wait": 400 },
+  {
+    "eval": "(() => { const i = document.querySelector('.searchbar input[type=text]'); i.value = 'Привет'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()",
+    "label": "rechercher « Привет »"
+  },
+  { "wait": 1800 },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.includes('/ 3') || 'ERREUR ' + document.querySelector('.searchbar .count').textContent",
+    "label": "le filigrane est trouvé sur les 3 pages"
+  },
+  { "shot": "02-recherche.png" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  { "click": "button[aria-label='Texte dans la page']" },
+  { "drag": ".page[data-page='0'] .object-layer", "from": [100, 150], "to": [100, 150] },
+  { "wait": 500 },
+  {
+    "assert": "[...document.querySelectorAll('.dialog select option')].some(o => o.value === 'unicode')",
+    "label": "option « DejaVu Sans » dans le choix de police"
+  },
+  {
+    "eval": "(() => { const a = document.querySelector('.dialog textarea'); a.value = 'Ελλάδα Łódź'; a.dispatchEvent(new Event('input', { bubbles: true })); return true; })()",
+    "label": "saisir « Ελλάδα Łódź » (police Helvetica : bascule automatique)"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('.dialog button')].find(b => b.textContent.trim() === 'Insérer').click(); return true; })()",
+    "label": "clic « Insérer »"
+  },
+  { "wait": 2000 },
+  {
+    "assert": "(document.querySelector('main .error') === null && document.querySelector('button[title^=\"Annuler : Insérer du texte\"]') !== null) || 'ERREUR ' + (document.querySelector('main .error') || {}).textContent",
+    "label": "texte grec et polonais inséré"
+  },
+  { "shot": "03-texte-unicode.png" }
+]

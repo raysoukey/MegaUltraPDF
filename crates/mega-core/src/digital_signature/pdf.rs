@@ -25,9 +25,8 @@ use lopdf::{
     Dictionary, Document as LoDocument, IncrementalDocument, Object, ObjectId, StringFormat,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-use super::{SigIssue, SignatureStatus, SigningIdentity, cms, sha256};
+use super::{SigIssue, SignatureStatus, SigningIdentity, appearance, cms, sha256};
 use crate::document::Document;
 use crate::edit::write_atomically;
 use crate::error::{CoreError, CoreResult};
@@ -50,7 +49,7 @@ const MAX_FIELD_NODES: usize = 10_000;
 const MAX_SIGNATURES: usize = 64;
 
 /// Informations facultatives écrites dans le dictionnaire de signature.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SignOptions {
     /// Motif (`/Reason`).
     pub reason: Option<String>,
@@ -58,6 +57,22 @@ pub struct SignOptions {
     pub location: Option<String>,
     /// Moyen de contacter le signataire (`/ContactInfo`).
     pub contact: Option<String>,
+    /// Signature **visible** (Lot 10) : où dessiner son tampon ; `None` = invisible.
+    #[serde(default)]
+    pub appearance: Option<SignAppearance>,
+}
+
+/// Où dessiner le tampon d'une signature visible, et avec quelle image : c'est ce que
+/// l'utilisateur voit sur la page, la preuve restant la signature cryptographique.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SignAppearance {
+    /// Page (index à partir de 0).
+    pub page: u16,
+    /// Rectangle du tampon, en points, espace **affiché**.
+    pub rect: crate::geometry::Rect,
+    /// Image facultative (PNG ou JPEG, au plus 20 Mo) dessinée à gauche du texte.
+    #[serde(default)]
+    pub image_path: Option<String>,
 }
 
 /// Une signature trouvée dans un document, vérifiée.
@@ -278,9 +293,9 @@ fn contents_bytes(bytes: &[u8], a: usize, b: usize) -> Result<Vec<u8>, &'static 
         .collect())
 }
 
-/// Empreintes déjà calculées, par plage `(a, b, c)` : deux champs qui désignent la même
-/// plage ne font pas hacher deux fois le fichier.
-type DigestCache = HashMap<(usize, usize, usize), [u8; 32]>;
+/// Empreintes déjà calculées, par plage `(a, b, c)` et algorithme : deux champs qui
+/// désignent la même plage ne font pas hacher deux fois le fichier.
+type DigestCache = HashMap<(usize, usize, usize, cms::DigestAlgorithm), Vec<u8>>;
 
 /// Vérifie une signature (dictionnaire `/V`) contre les octets du fichier.
 fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> SignatureInfo {
@@ -329,13 +344,16 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
         info.location = None;
     }
     // Empreinte des deux plages, sans recopier le fichier.
-    let digest = *digests.entry((a, b, c)).or_insert_with(|| {
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes[..a]);
-        hasher.update(&bytes[b..b + c]);
-        hasher.finalize().into()
+    // Empreinte des deux plages dans l'algorithme qu'annonce la signature (gardée : plusieurs
+    // champs peuvent désigner les mêmes plages).
+    let check = cms::verify_with(&der, |algorithm| {
+        Some(
+            digests
+                .entry((a, b, c, algorithm))
+                .or_insert_with(|| algorithm.digest(&[&bytes[..a], &bytes[b..b + c]]))
+                .clone(),
+        )
     });
-    let check = cms::verify(&der, &digest);
     if check.signer.is_some() {
         info.signer = check.signer;
     }
@@ -527,10 +545,14 @@ fn push_to_array(
 
 /// Version déclarée par l'en-tête `%PDF-M.m` (`None` si l'en-tête est illisible).
 fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
-    match bytes.get(..5)? {
-        b"%PDF-" => parse_version(bytes.get(5..8)?),
-        _ => None,
+    // L'en-tête peut suivre des octets parasites : les lecteurs le cherchent dans les
+    // 1024 premiers octets (§7.5.2, note).
+    let head = &bytes[..bytes.len().min(1024 + 8)];
+    let at = head.windows(5).position(|w| w == b"%PDF-")?;
+    if at > 1024 {
+        return None;
     }
+    parse_version(head.get(at + 5..at + 8)?)
 }
 
 /// `M.m` → `(M, m)` (chiffres uniques, comme le sont toutes les versions PDF).
@@ -569,6 +591,7 @@ pub(crate) fn sign_bytes(
     identity: &SigningIdentity,
     options: &SignOptions,
     now: i64,
+    visible: Option<&appearance::Placement>,
 ) -> CoreResult<Vec<u8>> {
     let prev = LoDocument::load_mem(base).map_err(structure)?;
     refuse_unsignable(&prev)?;
@@ -577,10 +600,12 @@ pub(crate) fn sign_bytes(
         .get(b"Root")
         .and_then(Object::as_reference)
         .map_err(structure)?;
-    let first_page = *prev
+    // Page du widget : celle du tampon visible, sinon la première.
+    let page_number = visible.map_or(1, |v| u32::from(v.page_index) + 1);
+    let widget_page = *prev
         .get_pages()
-        .get(&1)
-        .ok_or_else(|| structure("document sans page"))?;
+        .get(&page_number)
+        .ok_or_else(|| structure("page de la signature introuvable"))?;
     let names = top_level_names(&prev);
     // Version effective : la plus haute de l'en-tête et du `/Version` du catalogue (§7.7.2).
     let catalog_version = prev
@@ -633,19 +658,36 @@ pub(crate) fn sign_bytes(
         }
     }
     let sig_id = inc.new_document.add_object(Object::Dictionary(sig));
-    // Apparence vide (cadre nul) : la norme veut une `/AP` sur tout widget, PDF/A aussi.
-    let empty_ap = inc
-        .new_document
-        .add_object(Object::Stream(lopdf::Stream::new(
-            Dictionary::from_iter(vec![
-                ("Type", Object::Name(b"XObject".to_vec())),
-                ("Subtype", Object::Name(b"Form".to_vec())),
-                ("BBox", Object::Array(vec![Object::Integer(0); 4])),
-            ]),
-            Vec::new(),
-        )));
+    // Apparence : le tampon d'une signature visible, sinon une apparence vide (cadre nul) :
+    // la norme veut une `/AP` sur tout widget, PDF/A aussi.
+    let (rect, ap) = match visible {
+        Some(v) => {
+            let lines = appearance::lines(&identity.signer_name(), now, options);
+            let ap = appearance::write(&mut inc.new_document, v, &lines)?;
+            let r = v.user_rect;
+            (
+                [r.x, r.y, r.x + r.w, r.y + r.h]
+                    .iter()
+                    .map(|n| Object::Real(*n))
+                    .collect(),
+                ap,
+            )
+        }
+        None => (
+            vec![Object::Integer(0); 4],
+            inc.new_document
+                .add_object(Object::Stream(lopdf::Stream::new(
+                    Dictionary::from_iter(vec![
+                        ("Type", Object::Name(b"XObject".to_vec())),
+                        ("Subtype", Object::Name(b"Form".to_vec())),
+                        ("BBox", Object::Array(vec![Object::Integer(0); 4])),
+                    ]),
+                    Vec::new(),
+                ))),
+        ),
+    };
 
-    // Champ de signature invisible, fusionné avec son widget, sur la première page.
+    // Champ de signature, fusionné avec son widget.
     let widget_id = inc
         .new_document
         .add_object(Object::Dictionary(Dictionary::from_iter(vec![
@@ -656,19 +698,16 @@ pub(crate) fn sign_bytes(
             ("V", Object::Reference(sig_id)),
             // Imprimable (4) + verrouillée (128), jamais cachée.
             ("F", Object::Integer(132)),
-            ("Rect", Object::Array(vec![Object::Integer(0); 4])),
-            ("P", Object::Reference(first_page)),
+            ("Rect", Object::Array(rect)),
+            ("P", Object::Reference(widget_page)),
             (
                 "AP",
-                Object::Dictionary(Dictionary::from_iter(vec![(
-                    "N",
-                    Object::Reference(empty_ap),
-                )])),
+                Object::Dictionary(Dictionary::from_iter(vec![("N", Object::Reference(ap))])),
             ),
         ])));
     push_to_array(
         &mut inc,
-        first_page,
+        widget_page,
         b"Annots",
         Object::Reference(widget_id),
     )?;
@@ -794,6 +833,42 @@ pub(crate) fn sign_bytes(
 }
 
 impl Document {
+    /// Résout le tampon d'une signature visible : page existante, rectangle dans la page,
+    /// passage en espace utilisateur et rotation (PDFium, avant la phase `lopdf`), image
+    /// décodée.
+    fn signature_placement(&self, a: &SignAppearance) -> CoreResult<appearance::Placement> {
+        let count = self.page_count();
+        if a.page >= count {
+            return Err(CoreError::PageOutOfRange {
+                index: a.page,
+                count,
+            });
+        }
+        let r = a.rect;
+        if !(r.w >= 10.0 && r.h >= 10.0 && r.x.is_finite() && r.y.is_finite())
+            || !(r.w.is_finite() && r.h.is_finite())
+        {
+            return Err(refused(
+                "le tampon de signature doit mesurer au moins 10 × 10 points",
+            ));
+        }
+        let frame = self.page_frame(a.page)?;
+        crate::content::rect_in_page(&frame, &r)?;
+        let m = frame.matrix_to_user_space();
+        let image = match &a.image_path {
+            Some(path) => Some(crate::content::image::load_bounded(path)?),
+            None => None,
+        };
+        Ok(appearance::Placement {
+            page_index: a.page,
+            user_rect: frame.to_user_space(r),
+            width: r.w,
+            height: r.h,
+            rotation: (!frame.is_identity()).then_some([m[0], m[1], m[2], m[3]]),
+            image,
+        })
+    }
+
     /// Les signatures du **fichier** (tel que chargé ou enregistré), vérifiées : une
     /// modification en cours n'y change rien tant qu'elle n'est pas enregistrée.
     pub fn signatures(&self) -> CoreResult<Vec<SignatureInfo>> {
@@ -836,8 +911,29 @@ impl Document {
             }
             base = self.rewritten_bytes()?;
         }
+        let visible = match &options.appearance {
+            Some(a) => {
+                // Le tampon dessine le nom, le motif et le lieu : un caractère que la police ne
+                // sait pas dessiner (CJK, écriture de droite à gauche) est refusé **avant**
+                // d'écrire, un fichier signé ne se corrigeant plus. Le nom vient du certificat.
+                let signer = identity.signer_name();
+                for text in [
+                    Some(signer.as_str()),
+                    options.reason.as_deref(),
+                    options.location.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    crate::fonts::check_drawable(text)
+                        .map_err(|e| refused(&format!("signature visible impossible : {e}")))?;
+                }
+                Some(self.signature_placement(a)?)
+            }
+            None => None,
+        };
         let now = chrono::Utc::now().timestamp();
-        let signed = sign_bytes(&base, identity, options, now)?;
+        let signed = sign_bytes(&base, identity, options, now, visible.as_ref())?;
         // Contrôle avant écriture : la signature ajoutée est intègre et couvre tout.
         let ok = signatures(&signed)?
             .iter()
@@ -855,6 +951,20 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mineur du Lot 9 : l'en-tête `%PDF-M.m` peut suivre des octets parasites (jusqu'à 1024,
+    /// §7.5.2, toléré par les lecteurs).
+    #[test]
+    fn header_version_is_found_after_leading_junk() {
+        assert_eq!(header_version(b"%PDF-1.4\n"), Some((1, 4)));
+        assert_eq!(
+            header_version(b"\xEF\xBB\xBFjunk\n%PDF-1.3\n"),
+            Some((1, 3))
+        );
+        let mut far = vec![b'x'; 1100];
+        far.extend_from_slice(b"%PDF-1.4");
+        assert_eq!(header_version(&far), None, "au-delà de 1024 octets");
+    }
 
     /// C36 (relecture du Lot 9) : des octets que lopdf ne relit pas mais qui contiennent
     /// `/ByteRange` portent peut-être des signatures : la réécriture est refusée.

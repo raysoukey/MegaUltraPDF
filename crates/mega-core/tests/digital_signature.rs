@@ -904,3 +904,30 @@ fn visible_signature_rect_outside_page_is_refused() {
         .unwrap_err();
     assert!(matches!(err, CoreError::InvalidOperation(_)), "{err:?}");
 }
+
+/// Relecture du Lot 10 (signature visible) : un texte du tampon que la police ne sait pas
+/// dessiner (CJK) est refusé avant d'écrire quoi que ce soit — un fichier signé ne se
+/// corrige plus.
+#[test]
+fn visible_stamp_with_undrawable_text_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("refus.pdf");
+    let mut doc = Document::from_bytes(fixture("simple.pdf"), None).unwrap();
+    let options = SignOptions {
+        reason: Some("Accord 你好".to_string()),
+        appearance: Some(visible(0, 100.0, 100.0, 220.0, 70.0)),
+        ..SignOptions::default()
+    };
+    let err = doc.sign_to(&path, &rsa(), &options).unwrap_err();
+    assert!(
+        matches!(&err, CoreError::InvalidOperation(m) if m.contains("你")),
+        "{err:?}"
+    );
+    assert!(!path.exists());
+    // Invisible, le même motif est accepté (il n'est pas dessiné).
+    let invisible = SignOptions {
+        reason: Some("Accord 你好".to_string()),
+        ..SignOptions::default()
+    };
+    doc.sign_to(&path, &rsa(), &invisible).unwrap();
+}

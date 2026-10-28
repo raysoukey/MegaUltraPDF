@@ -912,7 +912,24 @@ impl Document {
             base = self.rewritten_bytes()?;
         }
         let visible = match &options.appearance {
-            Some(a) => Some(self.signature_placement(a)?),
+            Some(a) => {
+                // Le tampon dessine le nom, le motif et le lieu : un caractère que la police ne
+                // sait pas dessiner (CJK, écriture de droite à gauche) est refusé **avant**
+                // d'écrire, un fichier signé ne se corrigeant plus. Le nom vient du certificat.
+                let signer = identity.signer_name();
+                for text in [
+                    Some(signer.as_str()),
+                    options.reason.as_deref(),
+                    options.location.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    crate::fonts::check_drawable(text)
+                        .map_err(|e| refused(&format!("signature visible impossible : {e}")))?;
+                }
+                Some(self.signature_placement(a)?)
+            }
             None => None,
         };
         let now = chrono::Utc::now().timestamp();

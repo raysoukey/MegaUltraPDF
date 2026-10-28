@@ -11,8 +11,11 @@ export function redactNotice(report: RedactReport | null): { message: string; wa
   if (!report) return { message: t.redacted, warn: false };
   const images = report.images_removed + report.images_redacted;
   const done = t.redactDone(report.texts, images, report.paths_removed, report.annotations);
-  if (report.paths_kept > 0) {
-    return { message: `${done} ${t.redactPathsKept(report.paths_kept)}`, warn: true };
-  }
+  // Une image retirée entière (format qu'on ne sait pas réécrire : JPEG 2000, fax, 1 bit…)
+  // peut faire disparaître toute une page numérisée : l'utilisateur doit le savoir.
+  const warnings: string[] = [];
+  if (report.images_removed > 0) warnings.push(t.redactImagesRemoved(report.images_removed));
+  if (report.paths_kept > 0) warnings.push(t.redactPathsKept(report.paths_kept));
+  if (warnings.length > 0) return { message: [done, ...warnings].join(' '), warn: true };
   return { message: done, warn: false };
 }

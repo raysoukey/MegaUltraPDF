@@ -25,7 +25,6 @@ use lopdf::{
     Dictionary, Document as LoDocument, IncrementalDocument, Object, ObjectId, StringFormat,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{SigIssue, SignatureStatus, SigningIdentity, appearance, cms, sha256};
 use crate::document::Document;
@@ -294,9 +293,9 @@ fn contents_bytes(bytes: &[u8], a: usize, b: usize) -> Result<Vec<u8>, &'static 
         .collect())
 }
 
-/// Empreintes déjà calculées, par plage `(a, b, c)` : deux champs qui désignent la même
-/// plage ne font pas hacher deux fois le fichier.
-type DigestCache = HashMap<(usize, usize, usize), [u8; 32]>;
+/// Empreintes déjà calculées, par plage `(a, b, c)` et algorithme : deux champs qui
+/// désignent la même plage ne font pas hacher deux fois le fichier.
+type DigestCache = HashMap<(usize, usize, usize, cms::DigestAlgorithm), Vec<u8>>;
 
 /// Vérifie une signature (dictionnaire `/V`) contre les octets du fichier.
 fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> SignatureInfo {
@@ -345,13 +344,16 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
         info.location = None;
     }
     // Empreinte des deux plages, sans recopier le fichier.
-    let digest = *digests.entry((a, b, c)).or_insert_with(|| {
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes[..a]);
-        hasher.update(&bytes[b..b + c]);
-        hasher.finalize().into()
+    // Empreinte des deux plages dans l'algorithme qu'annonce la signature (gardée : plusieurs
+    // champs peuvent désigner les mêmes plages).
+    let check = cms::verify_with(&der, |algorithm| {
+        Some(
+            digests
+                .entry((a, b, c, algorithm))
+                .or_insert_with(|| algorithm.digest(&[&bytes[..a], &bytes[b..b + c]]))
+                .clone(),
+        )
     });
-    let check = cms::verify(&der, &digest);
     if check.signer.is_some() {
         info.signer = check.signer;
     }

@@ -238,7 +238,10 @@ pub(crate) fn draw_text<'a>(
             let size = s.font_size;
             let top = rect.y + rect.h;
             // Lignes coupées à la largeur du cadre (marge de 2 pt de chaque côté).
-            for (i, line) in wrap_lines(&new.contents, (rect.w - 4.0).max(1.0), size)
+            // Une seule police pour tout le texte (celle du jeton `font`) : chaque ligne
+            // est coupée avec ses largeurs, même une ligne latine d'un texte en partie grec.
+            let unicode = crate::fonts::needs_unicode(&new.contents);
+            for (i, line) in wrap_lines(&new.contents, (rect.w - 4.0).max(1.0), size, unicode)
                 .iter()
                 .enumerate()
             {
@@ -263,10 +266,11 @@ pub(crate) fn draw_text<'a>(
     Ok(())
 }
 
-/// Largeur d'avance d'un texte à `size` points dans la police qui le dessinera : Helvetica
-/// (table AFM) ou, hors WinAnsi, la police Unicode incorporée.
-fn advance(text: &str, size: f32) -> f32 {
-    if crate::fonts::needs_unicode(text) {
+/// Largeur d'avance d'un texte à `size` points dans la police qui le dessinera : la police
+/// Unicode incorporée si `unicode` (choisie pour **tout** le texte de l'annotation), sinon
+/// Helvetica (table AFM).
+fn advance(text: &str, size: f32, unicode: bool) -> f32 {
+    if unicode {
         return crate::fonts::unicode::UnicodeFont::embedded().text_width(text, size);
     }
     let bytes: Vec<u8> = text
@@ -279,7 +283,7 @@ fn advance(text: &str, size: f32) -> f32 {
 /// Découpe `text` en lignes d'au plus `width` points à `size` points : coupure aux espaces,
 /// un mot plus long que la ligne reste seul sur la sienne ; les retours à la ligne du texte
 /// sont conservés (une ligne vide reste vide).
-pub(crate) fn wrap_lines(text: &str, width: f32, size: f32) -> Vec<String> {
+pub(crate) fn wrap_lines(text: &str, width: f32, size: f32, unicode: bool) -> Vec<String> {
     let mut out = Vec::new();
     for paragraph in text.lines() {
         let mut line = String::new();
@@ -289,7 +293,7 @@ pub(crate) fn wrap_lines(text: &str, width: f32, size: f32) -> Vec<String> {
             } else {
                 format!("{line} {word}")
             };
-            if !line.is_empty() && advance(&candidate, size) > width {
+            if !line.is_empty() && advance(&candidate, size, unicode) > width {
                 out.push(std::mem::take(&mut line));
                 line = word.to_string();
             } else {
@@ -304,7 +308,7 @@ pub(crate) fn wrap_lines(text: &str, width: f32, size: f32) -> Vec<String> {
 /// Taille du libellé d'un tampon : celle demandée, réduite pour tenir dans le cadre
 /// (60 % de sa hauteur, sa largeur moins 8 pt), jamais sous 4 pt.
 pub(crate) fn stamp_font_size(text: &str, rect: &Rect, requested: f32) -> f32 {
-    let per_point = advance(text, 1.0);
+    let per_point = advance(text, 1.0, crate::fonts::needs_unicode(text));
     let by_width = if per_point > 0.0 {
         (rect.w - 8.0).max(1.0) / per_point
     } else {
@@ -563,11 +567,19 @@ mod tests {
 
     #[test]
     fn wrapped_lines_fit_the_width() {
-        let lines = wrap_lines("un deux trois quatre cinq six sept huit\nneuf", 60.0, 12.0);
+        let lines = wrap_lines(
+            "un deux trois quatre cinq six sept huit\nneuf",
+            60.0,
+            12.0,
+            false,
+        );
         assert!(lines.len() > 2, "{lines:?}");
         assert_eq!(lines.last().map(String::as_str), Some("neuf"));
         for line in &lines {
-            assert!(advance(line, 12.0) <= 60.0 || !line.contains(' '), "{line}");
+            assert!(
+                advance(line, 12.0, false) <= 60.0 || !line.contains(' '),
+                "{line}"
+            );
         }
     }
 
@@ -580,8 +592,23 @@ mod tests {
             h: 60.0,
         };
         let size = stamp_font_size("APPROUVÉ", &rect, 30.0);
-        assert!(advance("APPROUVÉ", size) <= 72.0 + 0.01, "{size}");
+        assert!(advance("APPROUVÉ", size, false) <= 72.0 + 0.01, "{size}");
         assert!(size >= 4.0);
+    }
+
+    /// Relecture du Lot 10 (I2) : un texte libre en partie cyrillique est dessiné entièrement en
+    /// police Unicode ; ses lignes latines sont donc coupées avec ses largeurs.
+    #[test]
+    fn wrapping_measures_latin_lines_with_the_unicode_font() {
+        let width = crate::fonts::text_width(b"Hello world", 10.0) + 0.5;
+        let lines = wrap_lines("Hello world Привет", width, 10.0, true);
+        let font = crate::fonts::unicode::UnicodeFont::embedded();
+        for line in &lines {
+            assert!(
+                font.text_width(line, 10.0) <= width + 0.01,
+                "{line:?} : {lines:?}"
+            );
+        }
     }
 
     /// Lot 10 : un libellé cyrillique est mesuré avec la police Unicode qui le dessine.

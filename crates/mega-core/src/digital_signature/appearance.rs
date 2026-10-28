@@ -70,6 +70,29 @@ pub(crate) fn lines(signer: &str, now: i64, options: &SignOptions) -> Vec<String
     out
 }
 
+/// Largeur de `line` à `size` points dans la police du tampon (Unicode si `unicode`).
+fn line_width(line: &str, unicode: bool, size: f32) -> f32 {
+    if unicode {
+        crate::fonts::unicode::UnicodeFont::embedded().text_width(line, size)
+    } else {
+        text_width(line, size)
+    }
+}
+
+/// La plus grande taille (entre 4 et 14 pt) à laquelle toutes les `lines` tiennent dans
+/// `text_w` × `text_h`, mesurées dans la police qui les dessinera.
+fn font_size(lines: &[String], unicode: bool, text_w: f32, text_h: f32) -> f32 {
+    let count = lines.len().max(1) as f32;
+    let by_height = text_h / (count * LINE_HEIGHT);
+    let by_width = lines
+        .iter()
+        .map(|l| line_width(l, unicode, 1.0))
+        .filter(|per_point| *per_point > 0.0)
+        .map(|per_point| text_w / per_point)
+        .fold(f32::MAX, f32::min);
+    by_height.min(by_width).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+}
+
 /// Flux image (RVB 8 bits, comprimé) et, si l'image a de la transparence, son `/SMask`.
 fn image_xobject(doc: &mut LoDocument, image: &DynamicImage) -> ObjectId {
     let image_dict = |w: u32, h: u32, space: &str| {
@@ -141,16 +164,9 @@ pub(crate) fn write(
     }
     // Texte : une taille commune, la plus grande qui tienne en largeur et en hauteur.
     let (text_w, text_h) = ((w - text_x - pad).max(1.0), (h - 2.0 * pad).max(1.0));
-    let count = lines.len().max(1) as f32;
-    let by_height = text_h / (count * LINE_HEIGHT);
-    let by_width = lines
-        .iter()
-        .map(|l| text_width(l, 1.0))
-        .filter(|per_point| *per_point > 0.0)
-        .map(|per_point| text_w / per_point)
-        .fold(f32::MAX, f32::min);
-    let size = by_height.min(by_width).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+    // Une seule police pour toutes les lignes : la police Unicode dès qu'une ligne l'exige.
     let unicode = lines.iter().any(|l| fonts::needs_unicode(l));
+    let size = font_size(lines, unicode, text_w, text_h);
     let mut writer = Type0Writer::new();
     let mut encoded = Vec::with_capacity(lines.len());
     for line in lines {
@@ -225,6 +241,25 @@ pub(crate) fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Relecture du Lot 10 (I2) : dès qu'une ligne demande la police Unicode, **toutes** les
+    /// lignes sont dessinées avec elle ; la taille doit donc être calculée avec ses largeurs.
+    #[test]
+    fn stamp_size_measures_every_line_in_the_drawing_font() {
+        let lines = vec![
+            "Signé numériquement par".to_string(),
+            "Łukasz Kowalski".to_string(),
+            "Date : 28/10/2026 13:22 UTC".to_string(),
+        ];
+        let size = font_size(&lines, true, 142.0, 60.0);
+        let font = crate::fonts::unicode::UnicodeFont::embedded();
+        for line in &lines {
+            assert!(
+                font.text_width(line, size) <= 142.0 + 0.01,
+                "{line} à {size} pt"
+            );
+        }
+    }
 
     #[test]
     fn lines_show_signer_date_reason_and_place() {

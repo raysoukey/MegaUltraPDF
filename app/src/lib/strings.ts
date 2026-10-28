@@ -142,6 +142,10 @@ export const fr = {
       title: 'Protéger',
       body: 'Fichier ▸ Protéger chiffre le document (AES-256) avec un mot de passe d’ouverture et des permissions. Un document protégé s’ouvre avec son mot de passe et peut être déprotégé.',
     },
+    {
+      title: 'Lecteur par défaut',
+      body: 'Préférences ▸ Lecteur PDF par défaut indique quel programme ouvre les PDF et aide à choisir MegaUltraPDF. Un PDF ouvert depuis l’Explorateur pendant que MegaUltraPDF tourne arrive dans un nouvel onglet.',
+    },
   ],
   aboutVersion: (v: string) => (v ? `Version ${v}` : ''),
   aboutTagline: 'Lecteur et éditeur PDF libre, sans publicité ni télémétrie.',
@@ -740,6 +744,10 @@ export const en: Strings = {
     {
       title: 'Protect',
       body: 'File ▸ Protect encrypts the document (AES-256) with an open password and permissions. A protected document opens with its password and can be unprotected.',
+    },
+    {
+      title: 'Default reader',
+      body: 'Preferences ▸ Default PDF reader shows which program opens PDF files and helps you choose MegaUltraPDF. A PDF opened from the file manager while MegaUltraPDF runs arrives in a new tab.',
     },
   ],
   aboutVersion: (v: string) => (v ? `Version ${v}` : ''),

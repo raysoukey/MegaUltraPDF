@@ -8,7 +8,7 @@ Il incorpore aussi la police **DejaVu Sans** 2.37 (licence Bitstream Vera, modif
 
 Les tableaux ci-dessous couvrent toutes les plateformes pour les crates, et les outils de construction : ils sont un sur-ensemble de ce qui est réellement embarqué. Les textes complets des licences suivent les tableaux.
 
-## Crates Rust (644)
+## Crates Rust (645)
 
 | Nom | Version | Licence |
 |---|---|---|
@@ -486,6 +486,7 @@ Les tableaux ci-dessous couvrent toutes les plateformes pour les crates, et les 
 | tauri-plugin-dialog | 2.8.3 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-plugin-opener | 2.7.2 | Apache-2.0 OR MIT |
+| tauri-plugin-single-instance | 2.5.5 | Apache-2.0 OR MIT |
 | tauri-plugin-store | 2.5.0 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.12.2 | Apache-2.0 OR MIT |
 | tauri-runtime-wry | 2.12.3 | Apache-2.0 OR MIT |
@@ -860,7 +861,7 @@ $Id$
 
 ## Textes des licences
 
-### @tauri-apps/api 2.12.4, fdeflate 0.3.7, field-offset 0.3.6, image 0.25.9, miniz_oxide 0.8.9, miniz_oxide 0.9.1, pin-project-lite 0.2.17, raw-window-handle 0.6.2, rpassword 7.5.4, rtoolbox 0.0.6, simdutf8 0.1.5, sync_wrapper 1.0.2, tauri 2.12.5, tauri-build 2.7.4, tauri-codegen 2.7.4, tauri-macros 2.7.4, tauri-plugin-dialog 2.8.3, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2, tauri-plugin-store 2.5.0, tauri-runtime 2.12.2, tauri-runtime-wry 2.12.3, tauri-utils 2.10.2, time 0.3.45, time-core 0.1.7, time-macros 0.2.25
+### @tauri-apps/api 2.12.4, fdeflate 0.3.7, field-offset 0.3.6, image 0.25.9, miniz_oxide 0.8.9, miniz_oxide 0.9.1, pin-project-lite 0.2.17, raw-window-handle 0.6.2, rpassword 7.5.4, rtoolbox 0.0.6, simdutf8 0.1.5, sync_wrapper 1.0.2, tauri 2.12.5, tauri-build 2.7.4, tauri-codegen 2.7.4, tauri-macros 2.7.4, tauri-plugin-dialog 2.8.3, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2, tauri-plugin-single-instance 2.5.5, tauri-plugin-store 2.5.0, tauri-runtime 2.12.2, tauri-runtime-wry 2.12.3, tauri-utils 2.10.2, time 0.3.45, time-core 0.1.7, time-macros 0.2.25
 
 ```text
 Apache License
@@ -1092,7 +1093,7 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tauri.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-### @tauri-apps/plugin-dialog 2.8.3, @tauri-apps/plugin-opener 2.7.2, @tauri-apps/plugin-store 2.5.0, tauri-plugin-dialog 2.8.3, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2, tauri-plugin-store 2.5.0
+### @tauri-apps/plugin-dialog 2.8.3, @tauri-apps/plugin-opener 2.7.2, @tauri-apps/plugin-store 2.5.0, tauri-plugin-dialog 2.8.3, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2, tauri-plugin-single-instance 2.5.5, tauri-plugin-store 2.5.0
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -17936,6 +17937,32 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+### tauri-plugin-single-instance 2.5.5
+
+```text
+MIT License
+
+Copyright (c) 2017 - Present The Tauri Programme in the Commons Conservancy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ### tauri-winres 0.3.7

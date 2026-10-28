@@ -850,3 +850,100 @@ fn redacted_image_drops_piece_info() {
     doc.save_as(&path).unwrap();
     assert!(!in_file(&std::fs::read(&path).unwrap(), b"SECRET-PIECE"));
 }
+
+/// Revue de sécurité : une `/Matrix` de formulaire illisible ne vaut pas l'identité (qui
+/// pourrait placer le formulaire loin de la zone) : le formulaire compte comme touchant la
+/// zone, et son image fait refuser.
+#[test]
+fn unreadable_form_matrix_fails_closed() {
+    let bytes = page_pdf("q 1 0 0 1 0 0 cm /Fx Do Q", |doc| {
+        let image = doc.add_object(rgb_image([1, 2, 3], vec![]));
+        let form = doc.add_object(LStream::new(
+            LDict::from_iter(vec![
+                ("Type", LObj::Name(b"XObject".to_vec())),
+                ("Subtype", LObj::Name(b"Form".to_vec())),
+                (
+                    "BBox",
+                    LObj::Array(vec![0.into(), 0.into(), 10.into(), 10.into()]),
+                ),
+                // Matrice qui emmène le formulaire sur la zone, mais mal formée (5 nombres).
+                (
+                    "Matrix",
+                    LObj::Array(vec![20.into(), 0.into(), 0.into(), 20.into(), 100.into()]),
+                ),
+                (
+                    "Resources",
+                    LObj::Dictionary(LDict::from_iter(vec![(
+                        "XObject",
+                        LObj::Dictionary(LDict::from_iter(vec![("I", image.into())])),
+                    )])),
+                ),
+            ]),
+            b"q 10 0 0 10 0 0 cm /I Do Q".to_vec(),
+        ));
+        (LDict::from_iter(vec![("Fx", form.into())]), LDict::new())
+    });
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(matches!(
+        doc.redact(0, rect(150.0, 150.0, 40.0, 40.0)),
+        Err(CoreError::InvalidOperation(_))
+    ));
+}
+
+/// Revue de sécurité : un formulaire **sans** `/Resources` hérite de celles de la page ; une
+/// image qu'il dessinerait par elles ne doit pas rester dans le fichier : soit le caviardage
+/// est refusé, soit ses pixels ont disparu du fichier enregistré.
+#[test]
+fn form_without_resources_inherits_the_page_ones() {
+    let bytes = page_pdf("q 1 0 0 1 100 100 cm /Fx Do Q", |doc| {
+        let image = doc.add_object(rgb_image([4, 5, 6], vec![]));
+        let form = doc.add_object(LStream::new(
+            LDict::from_iter(vec![
+                ("Type", LObj::Name(b"XObject".to_vec())),
+                ("Subtype", LObj::Name(b"Form".to_vec())),
+                (
+                    "BBox",
+                    LObj::Array(vec![0.into(), 0.into(), 200.into(), 200.into()]),
+                ),
+            ]),
+            b"q 200 0 0 200 0 0 cm /Im Do Q".to_vec(),
+        ));
+        (
+            LDict::from_iter(vec![("Fx", form.into()), ("Im", image.into())]),
+            LDict::new(),
+        )
+    });
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    match doc.redact(0, rect(150.0, 150.0, 40.0, 40.0)) {
+        Err(CoreError::InvalidOperation(_)) => {}
+        Ok(_) => {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("herite.pdf");
+            doc.save_as(&path).unwrap();
+            let pixels = [4u8, 5, 6].repeat(8);
+            assert!(
+                !in_file(&std::fs::read(&path).unwrap(), &pixels),
+                "image restée"
+            );
+        }
+        Err(other) => panic!("{other:?}"),
+    }
+}
+
+/// Revue de sécurité : une image dont le `/Subtype` est une référence indirecte est bien
+/// reconnue et noircie (elle n'échappe pas au caviardage).
+#[test]
+fn image_with_indirect_subtype_is_redacted() {
+    let bytes = page_pdf("q 200 0 0 200 100 100 cm /Im Do Q", |doc| {
+        let subtype = doc.add_object(LObj::Name(b"Image".to_vec()));
+        let image = doc.add_object(rgb_image([7, 8, 9], vec![("Subtype", subtype.into())]));
+        (LDict::from_iter(vec![("Im", image.into())]), LDict::new())
+    });
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    let report = doc.redact(0, rect(100.0, 200.0, 100.0, 100.0)).unwrap();
+    assert_eq!(
+        report.images_redacted + report.images_removed,
+        1,
+        "{report:?}"
+    );
+}

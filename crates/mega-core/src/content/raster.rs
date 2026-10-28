@@ -365,13 +365,19 @@ fn form_bounds(doc: &LoDocument, id: ObjectId, ctm: &Matrix) -> Option<Rect> {
             .as_array()
             .ok()?
             .clone();
-        array.iter().map(|o| o.as_float().ok()).collect()
+        array
+            .iter()
+            .map(|o| doc.dereference(o).ok().and_then(|(_, v)| v.as_float().ok()))
+            .collect()
     };
     let bbox = numbers(b"BBox")?;
     let [x0, y0, x1, y1] = <[f32; 4]>::try_from(bbox.as_slice()).ok()?;
-    let form_matrix = numbers(b"Matrix")
-        .and_then(|m| <[f32; 6]>::try_from(m.as_slice()).ok())
-        .unwrap_or(IDENTITY);
+    // L'identité seulement si `/Matrix` est absente : présente mais illisible, la boîte est
+    // inconnue (`None`), et l'appelant considère que le formulaire touche la zone.
+    let form_matrix = match dict.get(b"Matrix") {
+        Err(_) => IDENTITY,
+        Ok(_) => <[f32; 6]>::try_from(numbers(b"Matrix")?.as_slice()).ok()?,
+    };
     let full = multiply(&form_matrix, ctm);
     let corners = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].map(|(x, y)| apply(&full, x, y));
     let (mut lx, mut ly, mut hx, mut hy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
@@ -432,7 +438,7 @@ fn hidden_images_in(
                 .and_then(|(_, t)| t.as_name().ok().map(<[u8]>::to_vec));
             match subtype.as_deref() {
                 Some(b"Form") => {
-                    if stream_paints_images(doc, id, seen) {
+                    if stream_paints_images(doc, id, Some(resources), seen) {
                         return true;
                     }
                 }
@@ -447,7 +453,7 @@ fn hidden_images_in(
         // est un dictionnaire sans image.
         match doc.dereference(&value) {
             Ok((Some(id), Object::Stream(_))) => {
-                if stream_paints_images(doc, id, seen) {
+                if stream_paints_images(doc, id, Some(resources), seen) {
                     return true;
                 }
             }
@@ -468,7 +474,7 @@ fn hidden_images_in(
                 let Ok(group) = mask.get(b"G").and_then(Object::as_reference) else {
                     return true;
                 };
-                if stream_paints_images(doc, group, seen) {
+                if stream_paints_images(doc, group, Some(resources), seen) {
                     return true;
                 }
             }
@@ -479,8 +485,15 @@ fn hidden_images_in(
 }
 
 /// Vrai si le flux `id` (formulaire XObject, motif, groupe de masque) peint une image, lui ou
-/// ce qu'il appelle (voir [`hidden_images_in`]).
-fn stream_paints_images(doc: &LoDocument, id: ObjectId, seen: &mut BTreeSet<ObjectId>) -> bool {
+/// ce qu'il appelle (voir [`hidden_images_in`]). Sans `/Resources` propres, un flux utilise
+/// celles de son parent (`parent`, héritage permis par la norme) ; s'il n'y en a pas, on
+/// refuse par prudence.
+fn stream_paints_images(
+    doc: &LoDocument,
+    id: ObjectId,
+    parent: Option<&Dictionary>,
+    seen: &mut BTreeSet<ObjectId>,
+) -> bool {
     if !seen.insert(id) {
         return false;
     }
@@ -488,8 +501,10 @@ fn stream_paints_images(doc: &LoDocument, id: ObjectId, seen: &mut BTreeSet<Obje
         return true;
     };
     let resources = match stream.dict.get(b"Resources") {
-        // Sans ressources propres, il ne peut appeler aucune image.
-        Err(_) => return false,
+        Err(_) => match parent {
+            Some(parent) => parent.clone(),
+            None => return true,
+        },
         Ok(value) => match doc.dereference(value) {
             Ok((_, Object::Dictionary(d))) => d.clone(),
             _ => return true,
@@ -575,12 +590,13 @@ pub(crate) fn redact_images(
                     .and_then(|n| n.as_name().ok())
                     .and_then(|n| xobjects.get(n).ok())
                     .and_then(|r| r.as_reference().ok());
+                // `/Subtype` peut être une référence : on la suit (revue de sécurité).
                 let subtype = target
                     .and_then(|id| doc.get_object(id).ok())
                     .and_then(|o| o.as_stream().ok())
                     .and_then(|s| s.dict.get(b"Subtype").ok())
-                    .and_then(|s| s.as_name().ok())
-                    .map(<[u8]>::to_vec);
+                    .and_then(|t| doc.dereference(t).ok())
+                    .and_then(|(_, t)| t.as_name().ok().map(<[u8]>::to_vec));
                 match (target, subtype.as_deref()) {
                     (Some(id), Some(b"Image")) => {
                         let bounds = bounds_of(&ctm);
@@ -624,7 +640,7 @@ pub(crate) fn redact_images(
                         let mut seen = BTreeSet::new();
                         let touches = form_bounds(doc, id, &ctm)
                             .is_none_or(|bounds| intersects(&bounds, zone));
-                        if touches && stream_paints_images(doc, id, &mut seen) {
+                        if touches && stream_paints_images(doc, id, Some(&resources), &mut seen) {
                             return Err(CoreError::InvalidOperation(
                                 "une image de la page est dessinée à travers un groupe \
                                  XObject : le caviardage d'images ne peut pas l'atteindre"
@@ -632,7 +648,15 @@ pub(crate) fn redact_images(
                             ));
                         }
                     }
-                    _ => {}
+                    (Some(_), Some(b"PS")) => {}
+                    // Cible introuvable ou de nature inconnue : on ne sait pas ce qu'elle
+                    // dessine, on refuse plutôt que de laisser passer.
+                    _ => {
+                        return Err(CoreError::InvalidOperation(
+                            "un objet XObject de la page est illisible : caviardage refusé"
+                                .to_string(),
+                        ));
+                    }
                 }
             }
             _ => {}

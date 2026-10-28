@@ -136,7 +136,8 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   toujours fermé (`logic/group.ts`). Dans Git Bash, un argument qui commence par `/` est
   réécrit (`MSYS_NO_PATHCONV=1`) et une apostrophe dans une chaîne `'…'` la coupe.
 - Lot 11 (ADR-0015) : une seule instance (`tauri-plugin-single-instance`, enregistré **en
-  premier**, Windows et Linux seulement : dépendance et appel sous `cfg`) ; les fichiers d'une seconde instance passent par `PendingPaths` + `open-paths`
+  premier**, Windows et Linux seulement : dépendance et appel sous `cfg`) ; les fichiers d'une
+  seconde instance passent par `PendingPaths` + `open-paths`
   (chemins via `commands::pdf_paths_from_args`, relatifs au dossier de la seconde instance).
   Lecteur par défaut : `default_app.rs` (Windows : on ne peut qu'ouvrir les Paramètres ;
   Linux : `xdg-mime` ; macOS : marche à suivre). « Installé » = la commande d'ouverture du

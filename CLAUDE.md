@@ -144,7 +144,9 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   ProgId désigne `current_exe` (NSIS et MSI), jamais la présence d'`uninstall.exe` ; lire
   `UserChoiceLatest` avant `UserChoice` ; tout programme externe passe par `run` (délai 3 s)
   et les commandes Tauri qui l'appellent sont `async` + `spawn_blocking`. Le greffon NSIS `windows/hooks.nsh` enregistre
-  `Capabilities` / `RegisteredApplications`. Scénarios CDP : étape `launch` (seconde instance
+  `Capabilities` / `RegisteredApplications`. Linux : modèle `.desktop` propre
+  (`linux/MegaUltraPDF.desktop`, `bundle.linux.deb.desktopTemplate`) car celui de Tauri n'a pas
+  `%F` (fichier perdu au double-clic) ; vérifier un `.deb` produit, pas seulement la config. Scénarios CDP : étape `launch` (seconde instance
   de `MEGA_APP_EXE`) ; compter les onglets de document par `[role=tablist][aria-label=MegaUltraPDF]`.
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
   produirait un paquet sans PDFium). Les ressources sont dans la surcouche

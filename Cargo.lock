@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "mega-app"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "mega-core",
  "percent-encoding",
@@ -2780,7 +2780,7 @@ dependencies = [
 
 [[package]]
 name = "mega-cli"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2795,7 +2795,7 @@ dependencies = [
 
 [[package]]
 name = "mega-core"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "cms 0.2.3",
@@ -6601,7 +6601,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "flate2",

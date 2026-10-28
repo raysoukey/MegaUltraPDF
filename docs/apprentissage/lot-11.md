@@ -68,6 +68,11 @@
 - **Relecture** : deux ouvertures simultanées du même fichier pouvaient créer deux onglets ;
   elles passent maintenant l'une après l'autre (`openQueue`, `documents.svelte.ts`).
 
+- **Après la fusion** : en ouvrant le `.deb` de la release, la ligne `Exec=mega-app` n'avait
+  pas `%F`. Le gestionnaire de fichiers lançait donc l'application **sans** le PDF
+  double-cliqué. Le modèle `app/src-tauri/linux/MegaUltraPDF.desktop` l'ajoute ; le test
+  `desktop_template_passes_the_files` le garde (version 0.11.1).
+
 ## Exercices de lecture
 
 1. `app/src-tauri/src/lib.rs`, `second_instance_paths` : pourquoi saute-t-on le premier

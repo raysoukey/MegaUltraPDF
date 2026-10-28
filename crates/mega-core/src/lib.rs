@@ -76,6 +76,7 @@ pub use content::{FontFamily, ObjectKind, PageObject, TextStyle};
 pub use document::{Document, PageSize};
 pub use edit::{Command, EditCommand, EditState, HistoryLimits};
 pub use error::{CoreError, CoreResult};
+pub use fonts::missing_glyphs;
 pub use forms::{
     FieldKind, FieldOption, FieldValue, FormField, FormInfo, FormType, SignatureSource,
 };

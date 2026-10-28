@@ -13,6 +13,23 @@
 
 use lopdf::Object;
 
+pub(crate) mod unicode;
+
+/// Caractères **visibles** de `text` absents de la police Unicode incorporée (DejaVu Sans),
+/// sans doublon, dans l'ordre d'apparition. Sert à refuser clairement un texte qu'aucune de
+/// nos polices ne sait dessiner (CJK, par exemple) au lieu d'écrire des carrés vides.
+pub fn missing_glyphs(text: &str) -> Vec<char> {
+    unicode::UnicodeFont::embedded().missing(text)
+}
+
+/// Vrai si `text` contient un caractère que l'encodage WinAnsi d'Helvetica ne connaît pas :
+/// il faut alors la police Unicode (Lot 10). Les retours à la ligne ne comptent pas.
+#[allow(dead_code)] // branchée sur les filigranes et le texte inséré (tâches 3 et 4)
+pub(crate) fn needs_unicode(text: &str) -> bool {
+    text.chars()
+        .any(|c| !matches!(c, '\n' | '\r') && crate::content::win_ansi_byte(c).is_none())
+}
+
 /// Premier code de la table (l'espace).
 pub(crate) const FIRST_CHAR: u8 = 32;
 

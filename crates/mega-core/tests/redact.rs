@@ -750,3 +750,103 @@ fn image_tiling_pattern_is_refused() {
         other => panic!("{other:?}"),
     }
 }
+
+/// Un motif d'image (tiling pattern) avec `/PatternType 1` donné en **référence**.
+fn image_pattern(doc: &mut lopdf::Document, indirect_type: bool) -> lopdf::ObjectId {
+    let image = doc.add_object(rgb_image([10, 20, 30], vec![]));
+    let pattern_type = if indirect_type {
+        LObj::Reference(doc.add_object(LObj::Integer(1)))
+    } else {
+        LObj::Integer(1)
+    };
+    doc.add_object(LStream::new(
+        LDict::from_iter(vec![
+            ("Type", LObj::Name(b"Pattern".to_vec())),
+            ("PatternType", pattern_type),
+            ("PaintType", LObj::Integer(1)),
+            ("TilingType", LObj::Integer(1)),
+            (
+                "BBox",
+                LObj::Array(vec![0.into(), 0.into(), 20.into(), 20.into()]),
+            ),
+            ("XStep", LObj::Integer(20)),
+            ("YStep", LObj::Integer(20)),
+            (
+                "Resources",
+                LObj::Dictionary(LDict::from_iter(vec![(
+                    "XObject",
+                    LObj::Dictionary(LDict::from_iter(vec![("I", image.into())])),
+                )])),
+            ),
+        ]),
+        b"q 20 0 0 20 0 0 cm /I Do Q".to_vec(),
+    ))
+}
+
+/// Revue de sécurité : un motif d'image rangé dans les ressources d'un **formulaire** qui
+/// touche la zone est aussi refusé (la détection descend dans les formulaires).
+#[test]
+fn image_pattern_inside_a_form_is_refused() {
+    let bytes = page_pdf("q 1 0 0 1 100 100 cm /Fx Do Q", |doc| {
+        let pattern = image_pattern(doc, false);
+        let form = doc.add_object(LStream::new(
+            LDict::from_iter(vec![
+                ("Type", LObj::Name(b"XObject".to_vec())),
+                ("Subtype", LObj::Name(b"Form".to_vec())),
+                (
+                    "BBox",
+                    LObj::Array(vec![0.into(), 0.into(), 200.into(), 200.into()]),
+                ),
+                (
+                    "Resources",
+                    LObj::Dictionary(LDict::from_iter(vec![(
+                        "Pattern",
+                        LObj::Dictionary(LDict::from_iter(vec![("P1", pattern.into())])),
+                    )])),
+                ),
+            ]),
+            b"/Pattern cs /P1 scn 0 0 200 200 re f".to_vec(),
+        ));
+        (LDict::from_iter(vec![("Fx", form.into())]), LDict::new())
+    });
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(matches!(
+        doc.redact(0, rect(150.0, 150.0, 50.0, 50.0)),
+        Err(CoreError::InvalidOperation(_))
+    ));
+}
+
+/// Revue de sécurité : `/PatternType` en objet indirect ne fait pas passer le motif.
+#[test]
+fn indirect_pattern_type_is_still_detected() {
+    let bytes = page_pdf("/Pattern cs /P1 scn 100 100 200 200 re f", |doc| {
+        let pattern = image_pattern(doc, true);
+        (LDict::new(), LDict::from_iter(vec![("P1", pattern.into())]))
+    });
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(matches!(
+        doc.redact(0, rect(150.0, 150.0, 50.0, 50.0)),
+        Err(CoreError::InvalidOperation(_))
+    ));
+}
+
+/// Revue de sécurité : `/PieceInfo` (données privées d'un éditeur) ne passe pas non plus
+/// dans la copie noircie.
+#[test]
+fn redacted_image_drops_piece_info() {
+    let bytes = page_pdf("q 200 0 0 200 100 100 cm /Im Do Q", |doc| {
+        let private = doc.add_object(LStream::new(LDict::new(), b"SECRET-PIECE".to_vec()));
+        let piece = LObj::Dictionary(LDict::from_iter(vec![(
+            "Editeur",
+            LObj::Dictionary(LDict::from_iter(vec![("Private", private.into())])),
+        )]));
+        let image = doc.add_object(rgb_image([0, 200, 0], vec![("PieceInfo", piece)]));
+        (LDict::from_iter(vec![("Im", image.into())]), LDict::new())
+    });
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    doc.redact(0, rect(100.0, 200.0, 100.0, 100.0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("piece.pdf");
+    doc.save_as(&path).unwrap();
+    assert!(!in_file(&std::fs::read(&path).unwrap(), b"SECRET-PIECE"));
+}

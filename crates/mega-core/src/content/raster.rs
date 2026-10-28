@@ -282,6 +282,8 @@ fn rewritten(original: &Dictionary, samples: Vec<u8>) -> Stream {
         b"OPI",
         b"AF",
         b"DL",
+        b"PieceInfo",
+        b"Ref",
     ] {
         dict.remove(key);
     }
@@ -387,81 +389,113 @@ fn form_bounds(doc: &LoDocument, id: ObjectId, ctm: &Matrix) -> Option<Rect> {
     })
 }
 
-/// Vrai si la page peint une image par un **motif** (tiling pattern, `/PatternType 1`) ou par
-/// un masque doux d'état graphique (`/ExtGState … /SMask /G`) : ces images ne passent pas par
-/// `Do` dans le flux de la page, le caviardage ne sait pas les atteindre (relecture du Lot 10).
-fn page_paints_hidden_images(doc: &LoDocument, resources: &Dictionary) -> bool {
-    let entries = |key: &[u8]| -> Vec<Object> {
-        resources
-            .get(key)
-            .ok()
-            .and_then(|o| doc.dereference(o).ok())
-            .and_then(|(_, o)| o.as_dict().ok().cloned())
-            .map(|d| d.iter().map(|(_, v)| v.clone()).collect())
-            .unwrap_or_default()
+/// Vrai si les ressources `resources` peignent une image **hors** d'un `Do` direct du flux
+/// examiné : par un motif (tiling pattern), par le masque doux d'un état graphique
+/// (`/ExtGState … /SMask /G`) et, si `xobjects`, par une image ou un formulaire XObject. La
+/// recherche descend dans les formulaires, les motifs et les groupes de masques (ensemble
+/// `seen` contre les cycles) ; une entrée qu'on ne sait pas résoudre compte comme une image :
+/// en matière de caviardage, on refuse plutôt que de laisser passer (relecture du Lot 10).
+fn hidden_images_in(
+    doc: &LoDocument,
+    resources: &Dictionary,
+    seen: &mut BTreeSet<ObjectId>,
+    xobjects: bool,
+) -> bool {
+    let entries = |key: &[u8]| -> Option<Vec<Object>> {
+        match resources.get(key) {
+            Err(_) => Some(Vec::new()),
+            Ok(value) => doc
+                .dereference(value)
+                .ok()
+                .and_then(|(_, o)| o.as_dict().ok().cloned())
+                .map(|d| d.iter().map(|(_, v)| v.clone()).collect()),
+        }
     };
-    let mut seen = BTreeSet::new();
-    let patterns = entries(b"Pattern").into_iter().any(|value| {
-        let Ok(id) = value.as_reference() else {
-            return false;
+    let (Some(xobject_list), Some(patterns), Some(states)) = (
+        entries(b"XObject"),
+        entries(b"Pattern"),
+        entries(b"ExtGState"),
+    ) else {
+        return true;
+    };
+    if xobjects {
+        for value in xobject_list {
+            let Ok(id) = value.as_reference() else {
+                return true;
+            };
+            let subtype = doc
+                .get_object(id)
+                .ok()
+                .and_then(|o| o.as_stream().ok())
+                .and_then(|s| s.dict.get(b"Subtype").ok())
+                .and_then(|t| doc.dereference(t).ok())
+                .and_then(|(_, t)| t.as_name().ok().map(<[u8]>::to_vec));
+            match subtype.as_deref() {
+                Some(b"Form") => {
+                    if stream_paints_images(doc, id, seen) {
+                        return true;
+                    }
+                }
+                Some(b"PS") => {}
+                // Une image, ou un XObject illisible : refus.
+                _ => return true,
+            }
+        }
+    }
+    for value in patterns {
+        // Un motif de type 1 (pavage) est un flux qui dessine ; un motif de type 2 (dégradé)
+        // est un dictionnaire sans image.
+        match doc.dereference(&value) {
+            Ok((Some(id), Object::Stream(_))) => {
+                if stream_paints_images(doc, id, seen) {
+                    return true;
+                }
+            }
+            Ok((_, Object::Dictionary(_))) => {}
+            _ => return true,
+        }
+    }
+    for value in states {
+        let Ok((_, Object::Dictionary(state))) = doc.dereference(&value) else {
+            return true;
         };
-        let tiling = doc
-            .get_object(id)
-            .ok()
-            .and_then(|o| o.as_stream().ok())
-            .and_then(|s| s.dict.get(b"PatternType").ok())
-            .and_then(|t| t.as_i64().ok())
-            == Some(1);
-        tiling && form_has_images(doc, id, &mut seen)
-    });
-    let masks = entries(b"ExtGState").into_iter().any(|value| {
-        let group = doc
-            .dereference(&value)
-            .ok()
-            .and_then(|(_, gs)| gs.as_dict().ok().cloned())
-            .and_then(|gs| gs.get(b"SMask").ok().cloned())
-            .and_then(|mask| doc.dereference(&mask).ok().map(|(_, m)| m.clone()))
-            .and_then(|mask| mask.as_dict().ok().cloned())
-            .and_then(|mask| mask.get(b"G").and_then(Object::as_reference).ok());
-        group.is_some_and(|id| form_has_images(doc, id, &mut seen))
-    });
-    patterns || masks
+        let Ok(mask) = state.get(b"SMask") else {
+            continue;
+        };
+        match doc.dereference(mask) {
+            Ok((_, Object::Name(_))) => {}
+            Ok((_, Object::Dictionary(mask))) => {
+                let Ok(group) = mask.get(b"G").and_then(Object::as_reference) else {
+                    return true;
+                };
+                if stream_paints_images(doc, group, seen) {
+                    return true;
+                }
+            }
+            _ => return true,
+        }
+    }
+    false
 }
 
-/// Vrai si le formulaire XObject `id` dessine (lui ou un formulaire qu'il appelle) une image.
-fn form_has_images(doc: &LoDocument, id: ObjectId, seen: &mut BTreeSet<ObjectId>) -> bool {
+/// Vrai si le flux `id` (formulaire XObject, motif, groupe de masque) peint une image, lui ou
+/// ce qu'il appelle (voir [`hidden_images_in`]).
+fn stream_paints_images(doc: &LoDocument, id: ObjectId, seen: &mut BTreeSet<ObjectId>) -> bool {
     if !seen.insert(id) {
         return false;
     }
-    let Some(xobjects) = doc
-        .get_object(id)
-        .ok()
-        .and_then(|o| o.as_stream().ok())
-        .and_then(|s| s.dict.get(b"Resources").ok())
-        .and_then(|r| doc.dereference(r).ok())
-        .and_then(|(_, r)| r.as_dict().ok())
-        .and_then(|r| r.get(b"XObject").ok())
-        .and_then(|x| doc.dereference(x).ok())
-        .and_then(|(_, x)| x.as_dict().ok().cloned())
-    else {
-        return false;
+    let Some(stream) = doc.get_object(id).ok().and_then(|o| o.as_stream().ok()) else {
+        return true;
     };
-    xobjects.iter().any(|(_, value)| {
-        let Ok(child) = value.as_reference() else {
-            return false;
-        };
-        match doc
-            .get_object(child)
-            .ok()
-            .and_then(|o| o.as_stream().ok())
-            .and_then(|s| s.dict.get(b"Subtype").ok())
-            .and_then(|s| s.as_name().ok())
-        {
-            Some(b"Image") => true,
-            Some(b"Form") => form_has_images(doc, child, seen),
-            _ => false,
-        }
-    })
+    let resources = match stream.dict.get(b"Resources") {
+        // Sans ressources propres, il ne peut appeler aucune image.
+        Err(_) => return false,
+        Ok(value) => match doc.dereference(value) {
+            Ok((_, Object::Dictionary(d))) => d.clone(),
+            _ => return true,
+        },
+    };
+    hidden_images_in(doc, &resources, seen, true)
 }
 
 /// Les six nombres d'un opérateur `cm`.
@@ -499,7 +533,9 @@ pub(crate) fn redact_images(
         .and_then(|x| doc.dereference(x).ok())
         .and_then(|(_, x)| x.as_dict().ok().cloned())
         .unwrap_or_default();
-    if page_paints_hidden_images(doc, &resources) {
+    // Les images directes de la page passent par `Do` (traitées plus bas) : on cherche ici
+    // celles des motifs et des masques.
+    if hidden_images_in(doc, &resources, &mut BTreeSet::new(), false) {
         return Err(CoreError::InvalidOperation(
             "la page peint une image par un motif ou un masque : le caviardage d'images ne \
              peut pas l'atteindre"
@@ -588,7 +624,7 @@ pub(crate) fn redact_images(
                         let mut seen = BTreeSet::new();
                         let touches = form_bounds(doc, id, &ctm)
                             .is_none_or(|bounds| intersects(&bounds, zone));
-                        if touches && form_has_images(doc, id, &mut seen) {
+                        if touches && stream_paints_images(doc, id, &mut seen) {
                             return Err(CoreError::InvalidOperation(
                                 "une image de la page est dessinée à travers un groupe \
                                  XObject : le caviardage d'images ne peut pas l'atteindre"

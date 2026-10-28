@@ -100,8 +100,12 @@ fn watermark_is_validated() {
     let mut doc = Document::from_bytes(sample_pdf(1, "v"), None).unwrap();
     let mut w = watermark("", None);
     assert!(doc.add_watermark(&w).is_err(), "texte vide");
-    w.text = "Σ".to_string();
-    assert!(doc.add_watermark(&w).is_err(), "hors WinAnsi");
+    w.text = "你好".to_string();
+    let err = doc.add_watermark(&w).unwrap_err().to_string();
+    assert!(
+        err.contains("你") && err.contains("好"),
+        "caractères absents listés : {err}"
+    );
     w = watermark("ok", None);
     w.opacity = 0.0;
     assert!(doc.add_watermark(&w).is_err(), "opacité nulle");
@@ -321,7 +325,7 @@ fn invisible_words_follow_a_rotated_page() {
 }
 
 #[test]
-fn non_win_ansi_letters_become_question_marks() {
+fn non_win_ansi_letters_are_kept() {
     let mut doc = Document::from_bytes(blank_pdf(300.0, 200.0), None).unwrap();
     doc.add_invisible_words(
         0,
@@ -332,7 +336,7 @@ fn non_win_ansi_letters_become_question_marks() {
     )
     .unwrap();
     let text = doc.page_text(0).unwrap();
-    assert!(text.contains("?mega") && text.contains("été"), "{text:?}");
+    assert!(text.contains("Ωmega") && text.contains("été"), "{text:?}");
 }
 
 // --- Lot 9 : largeurs Helvetica (B24, C46) et MediaBox héritée (B29) --------------------
@@ -417,4 +421,115 @@ fn numbering_accepts_title_placeholder() {
     doc.add_page_numbers(&numbering("{n} {title}", Corner::BottomCenter, 1))
         .unwrap();
     assert_eq!(page_text(&doc, 0), "Page11Report");
+}
+
+// --- Lot 10 : police Unicode incorporée -------------------------------------------------
+
+/// Les polices d'un fichier, par sous-type (`Type1`, `Type0`…).
+fn font_subtypes(doc: &Document) -> Vec<String> {
+    let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter(|d| d.get(b"Type").ok() == Some(&lopdf::Object::Name(b"Font".to_vec())))
+        .filter_map(|d| d.get(b"Subtype").ok()?.as_name().ok())
+        .map(|n| String::from_utf8_lossy(n).into_owned())
+        .collect()
+}
+
+#[test]
+fn watermark_with_greek_is_searchable() {
+    let mut doc = Document::from_bytes(blank_pdf(595.0, 842.0), None).unwrap();
+    doc.add_watermark(&watermark("Ελλάδα", None)).unwrap();
+    let hits = doc
+        .search_page(0, "Ελλάδα", &SearchOptions::default())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(font_subtypes(&doc).contains(&"Type0".to_string()));
+}
+
+#[test]
+fn ascii_watermark_still_uses_helvetica() {
+    let mut doc = Document::from_bytes(blank_pdf(595.0, 842.0), None).unwrap();
+    doc.add_watermark(&watermark("BROUILLON été", None))
+        .unwrap();
+    let fonts = font_subtypes(&doc);
+    assert!(!fonts.iter().any(|f| f == "Type0"), "{fonts:?}");
+}
+
+/// Texte mixte (WinAnsi + cyrillique) : une seule passe en police Unicode, centrée.
+#[test]
+fn mixed_text_is_one_unicode_run() {
+    let mut doc = Document::from_bytes(blank_pdf(600.0, 800.0), None).unwrap();
+    let mut w = watermark("Prix : 10 € — Цена", None);
+    w.angle_deg = 0.0;
+    w.size = 30.0;
+    doc.add_watermark(&w).unwrap();
+    let hits = doc
+        .search_page(0, "10 € — Цена", &SearchOptions::default())
+        .unwrap();
+    assert_eq!(hits.len(), 1, "texte mixte retrouvé d'un bloc");
+    let boxes: Vec<_> = doc
+        .text_boxes(0)
+        .unwrap()
+        .into_iter()
+        .filter(|b| !b.ch.is_whitespace())
+        .collect();
+    let left = boxes.iter().map(|b| b.rect.x).fold(f32::MAX, f32::min);
+    let right = boxes
+        .iter()
+        .map(|b| b.rect.x + b.rect.w)
+        .fold(f32::MIN, f32::max);
+    assert!(
+        close((left + right) / 2.0, 300.0, 3.0),
+        "centré : {left} … {right}"
+    );
+}
+
+#[test]
+fn page_numbers_in_cyrillic() {
+    let mut doc = Document::from_bytes(sample_pdf(2, "n"), None).unwrap();
+    doc.add_page_numbers(&numbering("Страница {n}", Corner::BottomCenter, 1))
+        .unwrap();
+    assert!(
+        page_text(&doc, 1).contains("Страница2"),
+        "{}",
+        page_text(&doc, 1)
+    );
+}
+
+#[test]
+fn unicode_watermark_is_drawn() {
+    let mut doc = Document::from_bytes(blank_pdf(300.0, 300.0), None).unwrap();
+    let before = doc.render_page(0, 1.0).unwrap().rgba;
+    let mut w = watermark("Привет", None);
+    w.opacity = 1.0;
+    w.color = Color { r: 0, g: 0, b: 0 };
+    doc.add_watermark(&w).unwrap();
+    let after = doc.render_page(0, 1.0).unwrap().rgba;
+    let dark = after.chunks(4).filter(|p| p[0] < 100).count();
+    assert!(
+        after != before && dark > 200,
+        "glyphes dessinés : {dark} pixels sombres"
+    );
+}
+
+#[test]
+fn ocr_layer_keeps_cyrillic() {
+    let mut doc = Document::from_bytes(blank_pdf(300.0, 200.0), None).unwrap();
+    doc.add_invisible_words(0, &[word("Привет", 20.0, 100.0, 100.0, 20.0)])
+        .unwrap();
+    assert!(doc.page_text(0).unwrap().contains("Привет"));
+}
+
+#[test]
+fn ocr_layer_keeps_unmapped_glyphs_searchable() {
+    let mut doc = Document::from_bytes(blank_pdf(300.0, 200.0), None).unwrap();
+    doc.add_invisible_words(0, &[word("你好", 20.0, 100.0, 60.0, 20.0)])
+        .unwrap();
+    let hits = doc
+        .search_page(0, "你好", &SearchOptions::default())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
 }

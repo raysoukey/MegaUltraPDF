@@ -15,10 +15,6 @@
 //! ce qui permet de garder une analyse (`Face<'static>`) qui l'emprunte dans un `OnceLock`
 //! (voir `docs/apprentissage/concepts/oncelock.md`).
 
-// Branché sur les écritures au fil du Lot 10 (écrivain Type0, filigranes, signature) ; cet
-// attribut temporaire disparaît quand tout est utilisé.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -174,11 +170,6 @@ impl Type0Writer {
         }
         out.push('>');
         out
-    }
-
-    /// Largeur d'avance de `text` à `size` points (mêmes largeurs que celles écrites dans `/W`).
-    pub(crate) fn width(&self, text: &str, size: f32) -> f32 {
-        UnicodeFont::embedded().text_width(text, size)
     }
 
     /// Vrai si aucun texte n'a été encodé (pas de police à écrire).

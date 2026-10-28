@@ -24,7 +24,6 @@ pub fn missing_glyphs(text: &str) -> Vec<char> {
 
 /// Vrai si `text` contient un caractère que l'encodage WinAnsi d'Helvetica ne connaît pas :
 /// il faut alors la police Unicode (Lot 10). Les retours à la ligne ne comptent pas.
-#[allow(dead_code)] // branchée sur les filigranes et le texte inséré (tâches 3 et 4)
 pub(crate) fn needs_unicode(text: &str) -> bool {
     text.chars()
         .any(|c| !matches!(c, '\n' | '\r') && crate::content::win_ansi_byte(c).is_none())

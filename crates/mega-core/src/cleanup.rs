@@ -24,7 +24,7 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 
 /// Octets prêts à écrire : notes sans apparence imposée, `/InkList` sur les formes, objets
 /// orphelins élagués et renumérotés. Un document chiffré (ouvert avec `password`) est nettoyé
-/// en clair puis **rechiffré à l'identique** ([`crate::crypt::LopdfSession`], Lot 10).
+/// en clair puis **rechiffré à l'identique** (`crypt::LopdfSession`, Lot 10).
 pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> {
     let mut session = match crate::crypt::LopdfSession::load(bytes, password) {
         Ok(session) => session,

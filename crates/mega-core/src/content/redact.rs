@@ -120,7 +120,7 @@ impl Document {
     }
 
     /// Phase `lopdf` : les images qui touchent la zone sont noircies dessous ou retirées
-    /// (module [`super::raster`]), puis le document est rechargé.
+    /// (module `content::raster`), puis le document est rechargé.
     fn redact_images(
         &mut self,
         page: u16,

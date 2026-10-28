@@ -6,7 +6,7 @@
 //! existant : `q … Q` isole l'état graphique, un `ExtGState` porte l'opacité, une police
 //! Helvetica (Standard 14, encodage WinAnsi) est ajoutée aux ressources de chaque page ; un
 //! texte hors WinAnsi (grec, cyrillique…) utilise la police Unicode incorporée
-//! ([`crate::fonts::unicode`], Lot 10).
+//! (module `fonts::unicode`, Lot 10).
 //! Rien ne dépend de PDFium : le résultat est exact dans tous les lecteurs. PDFium sert
 //! seulement à **mesurer** la largeur du texte (pour centrer ou aligner à droite) et à
 //! recharger le document ensuite. Le recadrage est un `/CropBox` posé par PDFium.

@@ -16,6 +16,7 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [Lot 8 — OCR et signature numérique](lot-8.md)
 - [Lot 9 — Consolidation](lot-9.md)
 - [Lot 10 — Fonctionnalités restantes](lot-10.md)
+- [Lot 11 — Lecteur PDF par défaut](lot-11.md)
 
 ## Fiches concept (`/concept <nom>` pour en ajouter une)
 

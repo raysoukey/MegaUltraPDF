@@ -95,6 +95,18 @@ export const fr = {
   prefZoomCustom: 'Dernier zoom utilisé',
   prefView: 'Affichage',
   prefAuthor: 'Nom d’auteur des annotations',
+  defaultApp: 'Lecteur PDF par défaut',
+  defaultAppIsDefault: 'MegaUltraPDF ouvre les fichiers PDF de ce système.',
+  defaultAppOther: 'Un autre programme ouvre les fichiers PDF.',
+  defaultAppUnknown: 'Programme qui ouvre les PDF : inconnu.',
+  defaultAppPortable: 'Version portable : installez MegaUltraPDF pour l’associer aux fichiers PDF.',
+  defaultAppMake: 'Définir comme lecteur par défaut',
+  defaultAppOpenedSettings:
+    'Dans la fenêtre des Paramètres qui s’ouvre, choisissez MegaUltraPDF pour les fichiers .pdf.',
+  defaultAppSet: 'C’est fait : MegaUltraPDF ouvre désormais les fichiers PDF.',
+  defaultAppInstructions:
+    'Dans le Finder : sélectionnez un PDF, Fichier → Lire les informations, « Ouvrir avec » : MegaUltraPDF, puis « Tout modifier… ».',
+  defaultAppUnsupported: 'Impossible de le régler d’ici : utilisez les réglages de votre système.',
   prefTesseract: 'Tesseract (OCR)',
   prefTesseractAuto: 'Recherche automatique',
   browse: 'Parcourir…',
@@ -129,6 +141,10 @@ export const fr = {
     {
       title: 'Protéger',
       body: 'Fichier ▸ Protéger chiffre le document (AES-256) avec un mot de passe d’ouverture et des permissions. Un document protégé s’ouvre avec son mot de passe et peut être déprotégé.',
+    },
+    {
+      title: 'Lecteur par défaut',
+      body: 'Préférences ▸ Lecteur PDF par défaut indique quel programme ouvre les PDF et aide à choisir MegaUltraPDF. Un PDF ouvert depuis l’Explorateur pendant que MegaUltraPDF tourne arrive dans un nouvel onglet.',
     },
   ],
   aboutVersion: (v: string) => (v ? `Version ${v}` : ''),
@@ -682,6 +698,18 @@ export const en: Strings = {
   prefZoomCustom: 'Last zoom used',
   prefView: 'Display',
   prefAuthor: 'Author name for annotations',
+  defaultApp: 'Default PDF reader',
+  defaultAppIsDefault: 'MegaUltraPDF opens PDF files on this system.',
+  defaultAppOther: 'Another program opens PDF files.',
+  defaultAppUnknown: 'Program that opens PDF files: unknown.',
+  defaultAppPortable: 'Portable version: install MegaUltraPDF to associate it with PDF files.',
+  defaultAppMake: 'Set as default reader',
+  defaultAppOpenedSettings:
+    'In the Settings window that opens, choose MegaUltraPDF for .pdf files.',
+  defaultAppSet: 'Done: MegaUltraPDF now opens PDF files.',
+  defaultAppInstructions:
+    'In the Finder: select a PDF, File → Get Info, “Open with”: MegaUltraPDF, then “Change All…”.',
+  defaultAppUnsupported: 'Cannot be set from here: use your system settings.',
   prefTesseract: 'Tesseract (OCR)',
   prefTesseractAuto: 'Automatic search',
   browse: 'Browse…',
@@ -716,6 +744,10 @@ export const en: Strings = {
     {
       title: 'Protect',
       body: 'File ▸ Protect encrypts the document (AES-256) with an open password and permissions. A protected document opens with its password and can be unprotected.',
+    },
+    {
+      title: 'Default reader',
+      body: 'Preferences ▸ Default PDF reader shows which program opens PDF files and helps you choose MegaUltraPDF. A PDF opened from the file manager while MegaUltraPDF runs arrives in a new tab.',
     },
   ],
   aboutVersion: (v: string) => (v ? `Version ${v}` : ''),

@@ -95,6 +95,8 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 - [x] Aucun appel réseau, aucune télémétrie (vérifié par test : sources, CSP) [0 → 7]
 - [x] OCR par Tesseract en couche de texte invisible, page par page, annulable (option `ocr`) [8]
 - [x] OCR de plusieurs pages annulable en un seul pas ; couche invisible en Unicode (grec, cyrillique, CJK recherchables) [10]
+- [x] Une seule instance : un PDF ouvert depuis le système arrive en onglet dans la fenêtre existante ; tous les PDF passés en arguments sont ouverts [11]
+- [x] Lecteur PDF par défaut : état et bouton dans les préférences (Paramètres Windows, `xdg-mime` sous Linux, marche à suivre macOS) ; enregistrement Windows `Capabilities` [11]
 - [x] Texte Unicode (grec, cyrillique, latin étendu) partout où l'application écrit : filigrane, numéros, texte inséré, retouche, texte libre, tampon (police DejaVu Sans incorporée) [10]
 - [x] Documents chiffrés : nettoyage, filigrane, caviardage, formulaires, métadonnées, en gardant la même protection [10]
 

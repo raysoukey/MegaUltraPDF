@@ -3,7 +3,16 @@
   // Préférences (Fichier ▸ Préférences…, Ctrl+,) : chaque réglage s'applique et s'enregistre
   // immédiatement ; il n'y a donc qu'un bouton « Fermer ».
   import { trapFocus } from '$lib/actions/trapFocus';
-  import { pickExecutable, setTesseractPath } from '$lib/api';
+  import { onMount } from 'svelte';
+  import {
+    defaultAppStatus,
+    makeDefaultApp,
+    pickExecutable,
+    setTesseractPath,
+    type DefaultAppAction,
+    type DefaultAppStatus,
+  } from '$lib/api';
+  import { defaultAppView } from '$lib/logic/defaultapp';
   import type { LanguagePreference } from '$lib/logic/i18n';
   import {
     clearRecent,
@@ -17,6 +26,22 @@
   import { t } from '$lib/strings';
 
   let { onclose }: { onclose: () => void } = $props();
+
+  // Lecteur PDF par défaut (Lot 11) : état lu au moment d'ouvrir les préférences.
+  let defaultStatus = $state<DefaultAppStatus | null>(null);
+  let defaultAction = $state<DefaultAppAction | null>(null);
+  const defaultView = $derived(defaultStatus ? defaultAppView(defaultStatus, defaultAction) : null);
+
+  async function refreshDefault() {
+    defaultStatus = await defaultAppStatus().catch(() => null);
+  }
+
+  async function makeDefault() {
+    defaultAction = await makeDefaultApp().catch(() => 'unsupported' as const);
+    await refreshDefault();
+  }
+
+  onMount(() => void refreshDefault());
 
   type Simple = 'theme' | 'defaultZoomMode' | 'viewMode' | 'author' | 'restorePositions';
 
@@ -111,6 +136,18 @@
       </span>
     </div>
 
+    {#if defaultView}
+      <section class="default-app" aria-labelledby="pref-default-title">
+        <h3 id="pref-default-title">{t.defaultApp}</h3>
+        <p role="status">{defaultView.status}</p>
+        {#if defaultView.canAct}
+          <button type="button" onclick={makeDefault}>{t.defaultAppMake}</button>
+        {/if}
+        {#if defaultView.message}
+          <p class="hint">{defaultView.message}</p>
+        {/if}
+      </section>
+    {/if}
     <label class="check">
       <input
         type="checkbox"
@@ -134,6 +171,24 @@
 </div>
 
 <style>
+  .default-app {
+    margin: 0.6rem 0;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+  }
+  .default-app h3 {
+    margin: 0 0 0.3rem;
+    font-size: 0.95rem;
+  }
+  .default-app p {
+    margin: 0.2rem 0 0.4rem;
+  }
+  .default-app .hint {
+    color: var(--muted);
+    font-size: 0.85rem;
+    max-width: 30rem;
+  }
   .path {
     display: flex;
     gap: 0.4rem;

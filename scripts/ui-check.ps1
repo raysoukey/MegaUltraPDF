@@ -18,6 +18,8 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
 New-Item -ItemType Directory -Force $Out | Out-Null
 $log = Join-Path $Out 'tauri-dev.log'
+# Exécutable visé par l'étape « launch » des scénarios (seconde instance, Lot 11).
+$env:MEGA_APP_EXE = if ($Exe) { $Exe } else { Join-Path $root "target\debug\mega-app.exe" }
 if ($Exe) {
   $name = [System.IO.Path]::GetFileNameWithoutExtension($Exe)
   if ($Pdf) {

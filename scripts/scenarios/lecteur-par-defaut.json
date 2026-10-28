@@ -1,0 +1,21 @@
+[
+  { "wait": 1800 },
+  { "key": ",", "ctrl": true },
+  { "wait": 1200 },
+  {
+    "assert": "document.querySelector('#pref-default-title') && document.querySelector('#pref-default-title').textContent === 'Lecteur PDF par défaut'",
+    "label": "section « Lecteur PDF par défaut » dans les préférences"
+  },
+  {
+    "assert": "(() => { const p = document.querySelector('.default-app [role=status]'); return (p && p.textContent.trim().length > 10) || 'ERREUR ' + (p && p.textContent); })()",
+    "label": "un état est affiché (en développement : version portable, sans désinstalleur)"
+  },
+  {
+    "eval": "document.querySelector('.default-app').textContent",
+    "label": "texte de la section"
+  },
+  { "shot": "01-preferences.png" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  { "assert": "document.querySelectorAll('[role=dialog]').length === 0", "label": "Échap ferme les préférences" }
+]

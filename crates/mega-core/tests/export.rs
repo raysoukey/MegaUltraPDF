@@ -171,3 +171,47 @@ fn export_refuses_prefix_with_forbidden_characters() {
     }
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+// --- Lot 9 (C18) : résolution inscrite dans les images exportées --------------------------
+
+#[test]
+fn exported_png_and_jpeg_carry_the_dpi() {
+    let doc = Document::from_bytes(blank_pdf(72.0, 72.0), None).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let png = doc
+        .export_images(
+            &spec(ImageFormat::Png, 300),
+            &dir.path().join("png"),
+            "p",
+            false,
+        )
+        .unwrap();
+    let bytes = std::fs::read(&png[0]).unwrap();
+    let at = bytes
+        .windows(4)
+        .position(|w| w == b"pHYs")
+        .expect("bloc pHYs");
+    let ppm = |i: usize| u32::from_be_bytes(bytes[i..i + 4].try_into().unwrap());
+    assert_eq!(
+        (ppm(at + 4), ppm(at + 8), bytes[at + 12]),
+        (11811, 11811, 1)
+    );
+    let jpeg = doc
+        .export_images(
+            &spec(ImageFormat::Jpeg { quality: 80 }, 300),
+            &dir.path().join("jpg"),
+            "p",
+            false,
+        )
+        .unwrap();
+    let bytes = std::fs::read(&jpeg[0]).unwrap();
+    let at = bytes
+        .windows(5)
+        .position(|w| w == b"JFIF\0")
+        .expect("en-tête JFIF");
+    let density = |i: usize| u16::from_be_bytes([bytes[i], bytes[i + 1]]);
+    assert_eq!(
+        (bytes[at + 7], density(at + 8), density(at + 10)),
+        (1, 300, 300)
+    );
+}

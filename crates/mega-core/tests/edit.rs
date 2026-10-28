@@ -534,3 +534,18 @@ fn direct_mutation_then_save_writes_the_change() {
     let size = reopened.page_size(0).unwrap();
     assert!(size.width_pt > size.height_pt, "page 1 tournée en paysage");
 }
+
+/// A25 : par défaut, 20 étapes d'annulation.
+#[test]
+fn default_history_keeps_20_steps() {
+    let mut doc = Document::from_bytes(sample_pdf(25, "vingt"), None).unwrap();
+    for _ in 0..21 {
+        doc.apply(&delete(0)).unwrap();
+    }
+    let mut undone = 0;
+    while doc.can_undo() {
+        doc.undo().unwrap();
+        undone += 1;
+    }
+    assert_eq!(undone, 20);
+}

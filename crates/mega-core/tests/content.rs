@@ -438,3 +438,87 @@ fn insert_image_refuses_more_than_sixteen_megapixels() {
         other => panic!("{other:?}"),
     }
 }
+
+// --- Lot 9 : police sous-ensemble (B22), redimensionnement (B31) -------------------------
+
+#[test]
+fn editing_text_with_a_new_glyph_in_a_subset_font_is_refused() {
+    let mut doc = Document::from_bytes(mega_core::testing::subset_font_pdf(), None).unwrap();
+    let refused = doc.apply(&EditCommand::SetObjectText {
+        page: 0,
+        index: 0,
+        text: "Sexy".to_string(),
+    });
+    assert!(
+        matches!(refused, Err(CoreError::InvalidOperation(ref m)) if m.contains("x")),
+        "{refused:?}"
+    );
+    // Les caractères déjà présents restent permis.
+    doc.apply(&EditCommand::SetObjectText {
+        page: 0,
+        index: 0,
+        text: "terce".to_string(),
+    })
+    .unwrap();
+}
+
+/// Une image insérée dans 100 × 100, puis redimensionnée dans `target`.
+fn resized_image(rotate_first: bool, target: Rect) -> Rect {
+    let mut doc = one_page();
+    if rotate_first {
+        doc.apply(&EditCommand::RotatePages {
+            pages: vec![0],
+            quarter_turns: 1,
+        })
+        .unwrap();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("carre.png");
+    image::RgbaImage::from_pixel(100, 100, image::Rgba([0, 128, 0, 255]))
+        .save(&path)
+        .unwrap();
+    doc.apply(&EditCommand::InsertImage {
+        page: 0,
+        rect: Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 100.0,
+            h: 100.0,
+        },
+        path: path.to_string_lossy().into_owned(),
+    })
+    .unwrap();
+    let index = doc.page_objects(0).unwrap().len() as u16 - 1;
+    doc.apply(&EditCommand::ResizeObject {
+        page: 0,
+        index,
+        rect: target,
+    })
+    .unwrap();
+    assert_eq!(doc.undo_label().as_deref(), Some("Redimensionner : Image"));
+    let bounds = doc.page_objects(0).unwrap()[usize::from(index)].bounds;
+    doc.undo().unwrap();
+    let back = doc.page_objects(0).unwrap()[usize::from(index)].bounds;
+    assert!(close(back.w, 100.0, 0.5), "annulé : {back:?}");
+    bounds
+}
+
+#[test]
+fn resize_object_scales_an_image_and_is_undoable() {
+    let target = Rect {
+        x: 150.0,
+        y: 200.0,
+        w: 200.0,
+        h: 50.0,
+    };
+    for rotate_first in [false, true] {
+        let got = resized_image(rotate_first, target);
+        assert!(
+            close(got.x, target.x, 0.5)
+                && close(got.y, target.y, 0.5)
+                && close(got.w, target.w, 0.5)
+                && close(got.h, target.h, 0.5),
+            "page tournée = {rotate_first} : {got:?}"
+        );
+    }
+}

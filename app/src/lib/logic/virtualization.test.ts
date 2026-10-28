@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { pageAtScroll, pageLayout, visiblePages } from './virtualization';
+import { pageAtScroll, pageLayout, pageSlots, visiblePages, wheelPageStep } from './virtualization';
 
 const pages = [
   { width_pt: 595, height_pt: 842 },
@@ -61,5 +61,28 @@ describe('pageAtScroll at the end of the document', () => {
     const total = 900;
     expect(pageAtScroll(short, total - 600, 600)).toBe(2);
     expect(pageAtScroll(short, 0, 600)).toBe(0);
+  });
+});
+
+describe('pageSlots (A15)', () => {
+  it('has one entry per page, visible first and interactive, prefetch after', () => {
+    expect(pageSlots([2, 3], [1, 2, 3, 4])).toEqual([
+      { index: 2, priority: 'visible', interactive: true },
+      { index: 3, priority: 'visible', interactive: true },
+      { index: 1, priority: 'prefetch', interactive: false },
+      { index: 4, priority: 'prefetch', interactive: false },
+    ]);
+  });
+});
+
+describe('wheelPageStep (A16)', () => {
+  it('turns the page only at the edges of a single page', () => {
+    expect(wheelPageStep(100, 400, 1000, 600)).toBe(1); // en bas
+    expect(wheelPageStep(-100, 0, 1000, 600)).toBe(-1); // en haut
+    expect(wheelPageStep(100, 100, 1000, 600)).toBe(0); // au milieu : on défile
+  });
+  it('a page that fits turns at once', () => {
+    expect(wheelPageStep(50, 0, 500, 600)).toBe(1);
+    expect(wheelPageStep(-50, 0, 500, 600)).toBe(-1);
   });
 });

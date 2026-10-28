@@ -100,3 +100,24 @@ fn compare_refuses_an_oversized_union() {
         other => panic!("{:?}", other.map(|d| d.total_pixels)),
     }
 }
+
+// --- Lot 9 (C23) : pages CMYK -------------------------------------------------------------
+
+#[test]
+fn cmyk_pages_compare() {
+    let black = Document::from_bytes(mega_core::testing::cmyk_pdf("0 0 0 1"), None).unwrap();
+    let same = Document::from_bytes(mega_core::testing::cmyk_pdf("0 0 0 1"), None).unwrap();
+    let red = Document::from_bytes(mega_core::testing::cmyk_pdf("0 1 1 0"), None).unwrap();
+    assert_eq!(
+        compare_pages(&black, 0, &same, 0, 1.0)
+            .unwrap()
+            .differing_pixels,
+        0
+    );
+    let diff = compare_pages(&black, 0, &red, 0, 1.0).unwrap();
+    assert!(
+        diff.differing_pixels >= 200 * 200 * 9 / 10,
+        "{}",
+        diff.differing_pixels
+    );
+}

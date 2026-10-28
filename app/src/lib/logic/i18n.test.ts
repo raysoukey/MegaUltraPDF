@@ -52,3 +52,28 @@ describe('setLanguage', () => {
     expect(shortcutHelp()[0].label).toBe(fr.actions[shortcutHelp()[0].action]);
   });
 });
+
+describe('localised sizes (C26)', () => {
+  it('uses the decimal separator of each language', async () => {
+    const { fr, en } = await import('$lib/strings');
+    expect(fr.bytes(1536)).toBe('1,5 Ko');
+    expect(en.bytes(1536)).toBe('1.5 KB');
+    expect(fr.bytes(2 * 1024 * 1024)).toBe('2,0 Mo');
+  });
+});
+
+describe('strings in use (C29)', () => {
+  it('every top-level key of the dictionaries is used somewhere in the interface', async () => {
+    // @ts-expect-error type error without @types/node package (comme vite.config.js)
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { fr } = await import('$lib/strings');
+    const root = new URL('../../', import.meta.url);
+    const sources = (readdirSync(root, { recursive: true, encoding: 'utf8' }) as string[])
+      .filter((f) => (f.endsWith('.ts') || f.endsWith('.svelte')) && !f.endsWith('.test.ts'))
+      .filter((f) => !f.replaceAll('\\', '/').endsWith('lib/strings.ts'))
+      .map((f) => readFileSync(new URL(f, root), 'utf8') as string)
+      .join('\n');
+    const unused = Object.keys(fr).filter((key) => !new RegExp(`\\.${key}\\b`).test(sources));
+    expect(unused).toEqual([]);
+  });
+});

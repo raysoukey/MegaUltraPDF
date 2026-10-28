@@ -27,12 +27,12 @@ use lopdf::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{SignatureStatus, SigningIdentity, cms, sha256};
+use super::{SigIssue, SignatureStatus, SigningIdentity, cms, sha256};
 use crate::document::Document;
 use crate::edit::write_atomically;
 use crate::error::{CoreError, CoreResult};
 use crate::forms::write::pdf_text;
-use crate::properties::decode_text_string;
+use crate::properties::{decode_text_string, parse_pdf_date};
 
 /// Marge ajoutée à la taille mesurée de la signature CMS pour réserver `/Contents` (une
 /// signature ECDSA varie de quelques octets d'un essai à l'autre).
@@ -95,27 +95,6 @@ fn pdf_date(unix_seconds: i64) -> String {
     chrono::DateTime::from_timestamp(unix_seconds, 0)
         .map(|d| d.format("D:%Y%m%d%H%M%S+00'00'").to_string())
         .unwrap_or_else(|| "D:19700101000000+00'00'".to_string())
-}
-
-/// Instant Unix d'une date PDF `D:AAAAMMJJHHmmSS` (le décalage horaire est appliqué s'il est
-/// écrit, ignoré s'il est mal formé).
-fn parse_pdf_date(text: &str) -> Option<i64> {
-    let digits = text.strip_prefix("D:").unwrap_or(text);
-    let base = digits.get(..14)?;
-    let naive = chrono::NaiveDateTime::parse_from_str(base, "%Y%m%d%H%M%S").ok()?;
-    let mut secs = naive.and_utc().timestamp();
-    let rest = &digits[14..];
-    let sign = match rest.chars().next() {
-        Some('+') => -1,
-        Some('-') => 1,
-        _ => 0,
-    };
-    if sign != 0 {
-        let hh: i64 = rest.get(1..3).and_then(|s| s.parse().ok()).unwrap_or(0);
-        let mm: i64 = rest.get(4..6).and_then(|s| s.parse().ok()).unwrap_or(0);
-        secs += sign * (hh * 3600 + mm * 60);
-    }
-    Some(secs)
 }
 
 /// Texte d'un objet chaîne PDF (PDFDocEncoding ou UTF-16BE avec BOM).
@@ -252,7 +231,12 @@ fn checked_byte_range(
         .get(b"ByteRange")
         .and_then(Object::as_array)
         .map_err(|_| "/ByteRange absent")?;
-    let numbers: Vec<i64> = range.iter().filter_map(|o| o.as_i64().ok()).collect();
+    // Exactement quatre entiers : un élément d'un autre type n'est pas ignoré (C34).
+    let numbers: Vec<i64> = range
+        .iter()
+        .map(Object::as_i64)
+        .collect::<Result<_, _>>()
+        .map_err(|_| "/ByteRange mal formé")?;
     let [r0, a, b, c] = numbers[..] else {
         return Err("/ByteRange mal formé");
     };
@@ -314,26 +298,24 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
         reason: text_of(value.get(b"Reason").ok()),
         location: text_of(value.get(b"Location").ok()),
         sub_filter: sub_filter.clone(),
-        status: SignatureStatus::Unsupported(String::new()),
+        status: SignatureStatus::Unsupported(SigIssue::CmsUnreadable),
         covers_whole_document: false,
     };
     if sub_filter != "adbe.pkcs7.detached" && sub_filter != "ETSI.CAdES.detached" {
-        info.status = SignatureStatus::Unsupported(format!(
-            "format de signature non pris en charge : {sub_filter}"
-        ));
+        info.status = SignatureStatus::Unsupported(SigIssue::UnsupportedFormat);
         return info;
     }
     let (a, b, c) = match checked_byte_range(value, bytes.len()) {
         Ok(r) => r,
-        Err(why) => {
-            info.status = SignatureStatus::Invalid(why.to_string());
+        Err(_) => {
+            info.status = SignatureStatus::Invalid(SigIssue::ByteRangeInvalid);
             return info;
         }
     };
     let der = match contents_bytes(bytes, a, b) {
         Ok(der) => der,
-        Err(why) => {
-            info.status = SignatureStatus::Invalid(why.to_string());
+        Err(_) => {
+            info.status = SignatureStatus::Invalid(SigIssue::ContentsInvalid);
             return info;
         }
     };
@@ -385,10 +367,52 @@ fn signatures_with(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<Signa
     }
     .map_err(structure)?;
     let mut digests = DigestCache::new();
-    Ok(signature_fields(&doc)
+    let mut list: Vec<SignatureInfo> = signature_fields(&doc)
         .iter()
         .map(|field| check_one(bytes, field, &mut digests))
-        .collect())
+        .collect();
+    list.extend(usage_rights(&doc));
+    Ok(list)
+}
+
+/// Signature de **droits d'utilisation** (`/Perms /UR3`, « Reader Extensions » d'Adobe) :
+/// hors de l'arbre des champs, et non vérifiée par cette version — signalée comme telle
+/// plutôt que passée sous silence (C35).
+fn usage_rights(doc: &LoDocument) -> Option<SignatureInfo> {
+    let ur3 = doc
+        .catalog()
+        .ok()?
+        .get(b"Perms")
+        .ok()
+        .and_then(|p| dict(doc, p))?
+        .get(b"UR3")
+        .ok()
+        .and_then(|s| dict(doc, s))?;
+    Some(SignatureInfo {
+        field: "UR3".to_string(),
+        signer: None,
+        signed_at: None,
+        reason: None,
+        location: None,
+        sub_filter: ur3
+            .get(b"SubFilter")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .map(|n| String::from_utf8_lossy(n).into_owned())
+            .unwrap_or_default(),
+        status: SignatureStatus::Unsupported(SigIssue::UsageRights),
+        covers_whole_document: false,
+    })
+}
+
+/// Vrai si réécrire `bytes` par PDFium risque d'effacer des signatures : celles que lopdf
+/// y lit, ou, si lopdf ne relit pas le fichier, la seule présence de `/ByteRange` (C36,
+/// relecture du Lot 9). Dans le doute, on refuse plutôt que de détruire une signature.
+fn rewrite_would_lose_signatures(bytes: &[u8]) -> bool {
+    match signatures(bytes) {
+        Ok(list) => !list.is_empty(),
+        Err(_) => bytes.windows(10).any(|w| w == b"/ByteRange"),
+    }
 }
 
 /// Noms (`/T`) des champs de premier niveau, pour choisir un nom libre.
@@ -501,6 +525,24 @@ fn push_to_array(
     Ok(())
 }
 
+/// Version déclarée par l'en-tête `%PDF-M.m` (`None` si l'en-tête est illisible).
+fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
+    match bytes.get(..5)? {
+        b"%PDF-" => parse_version(bytes.get(5..8)?),
+        _ => None,
+    }
+}
+
+/// `M.m` → `(M, m)` (chiffres uniques, comme le sont toutes les versions PDF).
+fn parse_version(text: &[u8]) -> Option<(u8, u8)> {
+    match text {
+        [major, b'.', minor, ..] if major.is_ascii_digit() && minor.is_ascii_digit() => {
+            Some((major - b'0', minor - b'0'))
+        }
+        _ => None,
+    }
+}
+
 /// Position unique de `needle` dans `haystack` à partir de `from` ; `None` si absente ou
 /// présente plusieurs fois (un espace réservé ambigu ne doit jamais être réécrit).
 fn find_unique(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -540,6 +582,14 @@ pub(crate) fn sign_bytes(
         .get(&1)
         .ok_or_else(|| structure("document sans page"))?;
     let names = top_level_names(&prev);
+    // Version effective : la plus haute de l'en-tête et du `/Version` du catalogue (§7.7.2).
+    let catalog_version = prev
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"Version").ok())
+        .and_then(|v| v.as_name().ok())
+        .and_then(parse_version);
+    let effective_version = header_version(base).max(catalog_version);
     let field_name = (1..)
         .map(|n| format!("Signature{n}"))
         .find(|n| !names.contains(n))
@@ -583,6 +633,17 @@ pub(crate) fn sign_bytes(
         }
     }
     let sig_id = inc.new_document.add_object(Object::Dictionary(sig));
+    // Apparence vide (cadre nul) : la norme veut une `/AP` sur tout widget, PDF/A aussi.
+    let empty_ap = inc
+        .new_document
+        .add_object(Object::Stream(lopdf::Stream::new(
+            Dictionary::from_iter(vec![
+                ("Type", Object::Name(b"XObject".to_vec())),
+                ("Subtype", Object::Name(b"Form".to_vec())),
+                ("BBox", Object::Array(vec![Object::Integer(0); 4])),
+            ]),
+            Vec::new(),
+        )));
 
     // Champ de signature invisible, fusionné avec son widget, sur la première page.
     let widget_id = inc
@@ -597,6 +658,13 @@ pub(crate) fn sign_bytes(
             ("F", Object::Integer(132)),
             ("Rect", Object::Array(vec![Object::Integer(0); 4])),
             ("P", Object::Reference(first_page)),
+            (
+                "AP",
+                Object::Dictionary(Dictionary::from_iter(vec![(
+                    "N",
+                    Object::Reference(empty_ap),
+                )])),
+            ),
         ])));
     push_to_array(
         &mut inc,
@@ -638,10 +706,43 @@ pub(crate) fn sign_bytes(
         b"Fields",
         Object::Reference(widget_id),
     )?;
-    inc.new_document
+    let form = inc
+        .new_document
         .get_dictionary_mut(form_owner)
-        .map_err(structure)?
-        .set("SigFlags", Object::Integer(3));
+        .map_err(structure)?;
+    form.set("SigFlags", Object::Integer(3));
+    // `/NeedAppearances` n'est pas touché : une apparence présente peut être périmée (champ
+    // rempli sur une page jamais ouverte) et les autres lecteurs la régénèrent ainsi.
+
+    // Révision PDF 1.6 au moins (SHA-256 avec `adbe.pkcs7.detached`, §12.8.3.3) ; jamais
+    // une version déclarée plus récente ramenée à 1.6.
+    if effective_version.is_some_and(|v| v < (1, 6)) {
+        inc.opt_clone_object_to_new_document(root_id)
+            .map_err(structure)?;
+        inc.new_document
+            .get_dictionary_mut(root_id)
+            .map_err(structure)?
+            .set("Version", Object::Name(b"1.6".to_vec()));
+    }
+    // §14.4 : le second identifiant change à chaque révision ; le premier reste.
+    let first_id = inc
+        .new_document
+        .trailer
+        .get(b"ID")
+        .and_then(Object::as_array)
+        .ok()
+        .and_then(|ids| ids.first().cloned());
+    let fresh = sha256(format!("{now}-{}", base.len()).as_bytes());
+    let fresh = Object::String(fresh[..16].to_vec(), StringFormat::Hexadecimal);
+    let trailer = &mut inc.new_document.trailer;
+    trailer.set(
+        "ID",
+        Object::Array(vec![first_id.unwrap_or_else(|| fresh.clone()), fresh]),
+    );
+    // Clés propres à l'ancien flux de références, recopiées par lopdf : la nouvelle section
+    // n'a ni filtre ni prédicteur (C38).
+    trailer.remove(b"DecodeParms");
+    trailer.remove(b"Filter");
 
     let mut out = Vec::new();
     inc.save_to(&mut out).map_err(structure)?;
@@ -728,7 +829,7 @@ impl Document {
             Err(_) => true,
         };
         if needs_rewrite {
-            if signatures(&base).is_ok_and(|s| !s.is_empty()) {
+            if rewrite_would_lose_signatures(&base) {
                 return Err(refused(
                     "structure du fichier abîmée et déjà signée : l'ajout d'une signature invaliderait les précédentes",
                 ));
@@ -748,5 +849,22 @@ impl Document {
         self.reload_from_bytes(signed.clone())?;
         self.mark_saved(path, signed);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C36 (relecture du Lot 9) : des octets que lopdf ne relit pas mais qui contiennent
+    /// `/ByteRange` portent peut-être des signatures : la réécriture est refusée.
+    #[test]
+    fn rewrite_refusal_when_signatures_cannot_be_read() {
+        assert!(rewrite_would_lose_signatures(
+            b"%PDF-1.7 abime /ByteRange [0 1 2 3] fin"
+        ));
+        assert!(!rewrite_would_lose_signatures(
+            b"%PDF-1.7 abime sans signature"
+        ));
     }
 }

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { tabNav } from '$lib/actions/tabNav';
   import { trapFocus } from '$lib/actions/trapFocus';
   import { pickDirectory, pickSaveFile } from '$lib/api';
   import { scopePages, type PageScope } from '$lib/logic/content';
@@ -23,7 +24,6 @@
   let force = $state(false);
   let separators = $state(true);
   let busy = $state(false);
-  let error = $state<string | null>(null);
   let firstTab: HTMLButtonElement | undefined = $state();
 
   $effect(() => {
@@ -42,7 +42,6 @@
 
   async function run() {
     busy = true;
-    error = null;
     const pages = scopePages(scope, doc.page, doc.selectedPages);
     try {
       if (mode === 'images') {
@@ -86,7 +85,7 @@
       }}
     >
       <h2 id="export-title">{t.exportTitle}</h2>
-      <div class="tabs" role="tablist">
+      <div class="tabs" role="tablist" use:tabNav>
         <button
           type="button"
           role="tab"
@@ -149,9 +148,7 @@
         </label>
         <p class="muted">{t.exportTextHint}</p>
       {/if}
-      {#if error}
-        <p class="error" role="alert">{error}</p>
-      {/if}
+
       <div class="actions">
         <button type="button" onclick={onclose}>{t.cancel}</button>
         <button type="submit" class="primary" disabled={!canExport || busy}>{t.exportAction}</button
@@ -197,8 +194,5 @@
   .muted {
     color: var(--muted);
     font-size: 0.85rem;
-  }
-  .error {
-    color: var(--danger-text);
   }
 </style>

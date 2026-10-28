@@ -57,8 +57,8 @@
     <label>
       {t.printResolution}
       <select bind:value={dpi}>
-        <option value={150}>150 dpi</option>
-        <option value={300}>300 dpi</option>
+        <option value={150}>{t.dpiValue(150)}</option>
+        <option value={300}>{t.dpiValue(300)}</option>
       </select>
     </label>
     <span class="muted" role="status">

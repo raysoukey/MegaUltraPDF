@@ -25,7 +25,7 @@
     <p class="muted">{t.signaturesEmpty}</p>
   {:else}
     <ul>
-      {#each doc.signatures as sig (sig.field)}
+      {#each doc.signatures as sig, i (i)}
         {@const verdict = signatureVerdict(sig)}
         <li class={verdict.tone}>
           <p class="verdict">{verdict.text}</p>

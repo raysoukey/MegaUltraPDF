@@ -130,7 +130,9 @@ impl Document {
         }
     }
 
-    /// Emprise du dernier objet image de la page, en espace affiché (tests et diagnostics).
+    /// Emprise du dernier objet image de la page, en espace affiché. Réservée aux tests
+    /// (feature `testing`) : ce n'est pas une API de l'application (B15, Lot 9).
+    #[cfg(feature = "testing")]
     pub fn last_image_bounds(&self, page: u16) -> CoreResult<Option<Rect>> {
         let _guard = engine::guard();
         let pdf_page = self

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { tabNav } from '$lib/actions/tabNav';
   import { trapFocus } from '$lib/actions/trapFocus';
   import { pickImageFile, type Rect } from '$lib/api';
   import { canvasStrokesToPdf } from '$lib/logic/forms';
@@ -88,7 +89,7 @@
 <div class="dialog-backdrop" role="presentation">
   <div class="dialog" role="dialog" aria-modal="true" use:trapFocus aria-labelledby="sig-title">
     <h2 id="sig-title">{t.signatureTitle}</h2>
-    <div class="tabs" role="tablist">
+    <div class="tabs" role="tablist" use:tabNav>
       <button
         type="button"
         role="tab"

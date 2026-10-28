@@ -796,3 +796,165 @@ fn invalid_update_keeps_the_annotation() {
     ));
     assert_eq!(doc.annotations(0).unwrap().len(), 1);
 }
+
+// --- Lot 9 : dates, validation (B1, B5, B9) ----------------------------------------------
+
+/// Modifier une annotation la recrée : sa date de création d'origine doit survivre.
+#[test]
+fn modifying_keeps_the_creation_date() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "dates"), None).unwrap();
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Rect,
+            Geometry::Rect {
+                rect: rect(100.0, 100.0, 100.0, 50.0),
+            },
+            style((229, 57, 53)),
+            "",
+        ),
+    )
+    .unwrap();
+    // Une date ancienne, comme si l'annotation avait été créée en 2020 : réécrite en place,
+    // à la même largeur (l'annotation fraîche est écrite directement dans `/Annots`).
+    let mut bytes = doc.to_bytes().unwrap();
+    let key = b"/CreationDate";
+    let at = bytes.windows(key.len()).position(|w| w == key).unwrap();
+    let start = at + bytes[at..].windows(2).position(|w| w == b"D:").unwrap() + 2;
+    bytes[start..start + 14].copy_from_slice(b"20200101120000");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    let index = doc.annotations(0).unwrap()[0].index;
+    doc.update_annotation(
+        0,
+        index,
+        &mega_core::AnnotationPatch {
+            color: Some(Color { r: 0, g: 0, b: 255 }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let a = &doc.annotations(0).unwrap()[0];
+    assert!(
+        a.created
+            .as_deref()
+            .is_some_and(|d| d.starts_with("D:2020")),
+        "{:?}",
+        a.created
+    );
+    assert!(a.modified.is_some(), "/M posé");
+}
+
+#[test]
+fn non_win_ansi_text_is_refused_where_helvetica_draws_it() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "ansi"), None).unwrap();
+    for kind in [AnnotationKind::Text, AnnotationKind::Stamp] {
+        let refused = doc.add_annotation(
+            0,
+            &new(
+                kind,
+                Geometry::Rect {
+                    rect: rect(72.0, 600.0, 200.0, 40.0),
+                },
+                style((0, 0, 0)),
+                "Ωmega",
+            ),
+        );
+        assert!(
+            matches!(refused, Err(CoreError::InvalidOperation(_))),
+            "{kind:?} : {refused:?}"
+        );
+    }
+    // Une note garde son commentaire Unicode (il n'est pas dessiné en Helvetica).
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Note,
+            Geometry::Rect {
+                rect: rect(72.0, 600.0, 20.0, 20.0),
+            },
+            style((255, 204, 0)),
+            "Ωmega",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn nan_and_infinite_values_are_refused() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "nan"), None).unwrap();
+    let mut thick = style((0, 0, 0));
+    thick.stroke_width = f32::NAN;
+    let mut huge_font = style((0, 0, 0));
+    huge_font.font_size = f32::INFINITY;
+    let cases = [
+        new(
+            AnnotationKind::Rect,
+            Geometry::Rect {
+                rect: rect(10.0, 10.0, 50.0, 50.0),
+            },
+            thick,
+            "",
+        ),
+        new(
+            AnnotationKind::Text,
+            Geometry::Rect {
+                rect: rect(10.0, 10.0, 50.0, 50.0),
+            },
+            huge_font,
+            "texte",
+        ),
+        new(
+            AnnotationKind::Rect,
+            Geometry::Rect {
+                rect: rect(f32::NAN, 10.0, 50.0, 50.0),
+            },
+            style((0, 0, 0)),
+            "",
+        ),
+        new(
+            AnnotationKind::Line,
+            Geometry::Line {
+                from: [0.0, 0.0],
+                to: [f32::INFINITY, 5.0],
+            },
+            style((0, 0, 0)),
+            "",
+        ),
+    ];
+    for case in cases {
+        assert!(
+            matches!(
+                doc.add_annotation(0, &case),
+                Err(CoreError::InvalidOperation(_))
+            ),
+            "{case:?}"
+        );
+    }
+}
+
+/// B11 : les annotations de **tout** le document en un appel (une entrée par page).
+#[test]
+fn all_annotations_lists_every_page() {
+    let mut doc = Document::from_bytes(sample_pdf(3, "toutes"), None).unwrap();
+    for page in [0, 2] {
+        doc.add_annotation(
+            page,
+            &new(
+                AnnotationKind::Note,
+                Geometry::Rect {
+                    rect: rect(50.0, 700.0, 20.0, 20.0),
+                },
+                style((255, 204, 0)),
+                "note",
+            ),
+        )
+        .unwrap();
+    }
+    let all = doc.all_annotations().unwrap();
+    assert_eq!(all.len(), 3);
+    assert_eq!((all[0].len(), all[1].len(), all[2].len()), (1, 0, 1));
+    let form = Document::from_bytes(mega_core::testing::form_pdf(), None).unwrap();
+    let fields = form.all_form_fields().unwrap();
+    assert_eq!(fields.len(), usize::from(form.page_count()));
+    assert_eq!(fields[0], form.form_fields(0).unwrap());
+}

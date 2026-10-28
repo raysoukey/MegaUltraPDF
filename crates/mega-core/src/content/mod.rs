@@ -13,6 +13,8 @@
 pub mod image;
 pub mod redact;
 
+use std::collections::BTreeSet;
+
 use pdfium_render::prelude::{
     PdfPageContentRegenerationStrategy, PdfPageObject, PdfPageObjectCommon, PdfPageObjectType,
     PdfPageObjectsCommon, PdfPageTextObject, PdfPoints,
@@ -322,9 +324,51 @@ impl Document {
         Ok(())
     }
 
+    /// Redimensionne l'objet `index` pour qu'il occupe `rect` (points, espace **affiché**) :
+    /// mise à l'échelle puis translation de sa matrice, en espace utilisateur (pages tournées
+    /// comprises). Refuse un rectangle vide ou non fini, et un objet sans étendue.
+    pub fn resize_object(&mut self, page: u16, index: u16, rect: Rect) -> CoreResult<()> {
+        self.mark_changed();
+        let finite = [rect.x, rect.y, rect.w, rect.h]
+            .iter()
+            .all(|v| v.is_finite());
+        if !(finite && rect.w >= 1.0 && rect.h >= 1.0) {
+            return Err(invalid("taille invalide (au moins 1 point de côté)"));
+        }
+        self.check_page_editable(page)?;
+        let _guard = engine::guard();
+        let mut pdf_page = self
+            .inner()
+            .pages()
+            .get(self.checked_index_unlocked(page)?)?;
+        check_index(&pdf_page, index)?;
+        let target = frame_of(&pdf_page).to_user_space(rect);
+        {
+            let mut obj = pdf_page.objects().get(usize::from(index))?;
+            let q = obj.bounds()?;
+            let (bx, by, bw, bh) = (
+                q.left().value,
+                q.bottom().value,
+                q.width().value,
+                q.height().value,
+            );
+            if !(bw > 0.0 && bh > 0.0) {
+                return Err(invalid("cet objet n'a pas d'étendue"));
+            }
+            // x' = sx·x + (cible.x − sx·bx) : le coin bas-gauche de l'emprise va sur celui de
+            // la cible, et la largeur devient celle de la cible (idem en hauteur).
+            let (sx, sy) = (target.w / bw, target.h / bh);
+            obj.transform(sx, 0.0, 0.0, sy, target.x - sx * bx, target.y - sy * by)?;
+        }
+        pdf_page.regenerate_content()?;
+        Ok(())
+    }
+
     /// Remplace le texte de l'objet texte `index` (même police, même position : une retouche
     /// « au mieux », pas une recomposition). Refuse un texte vide ou trop long, et un objet
-    /// qui n'est pas du texte.
+    /// qui n'est pas du texte. Dans une police **incorporée** (souvent un sous-ensemble
+    /// `ABCDEF+Nom` qui ne contient que les glyphes utilisés), refuse aussi un caractère qui
+    /// ne figure pas déjà dans le texte de l'objet : il s'afficherait mal (B22, Lot 9).
     pub fn set_object_text(&mut self, page: u16, index: u16, text: &str) -> CoreResult<()> {
         self.mark_changed();
         if text.trim().is_empty() {
@@ -345,6 +389,26 @@ impl Document {
             let t = obj
                 .as_text_object_mut()
                 .ok_or_else(|| invalid("cet objet n'est pas un texte"))?;
+            // [Apprentissage] `font` emprunte `t` : le bloc rend l'emprunt avant `set_text`,
+            // qui demande `t` en écriture (un emprunt partagé et un exclusif ne coexistent pas).
+            let restricted = {
+                let font = t.font();
+                let name = font.name();
+                let bytes = name.as_bytes();
+                let subset =
+                    bytes.get(6) == Some(&b'+') && bytes.iter().take(6).all(u8::is_ascii_uppercase);
+                (subset || font.is_embedded().unwrap_or(false)).then_some(name)
+            };
+            if let Some(name) = restricted {
+                let known: BTreeSet<char> = t.text().chars().collect();
+                // L'espace est admise : un sous-ensemble la contient presque toujours.
+                if let Some(c) = text.chars().find(|c| *c != ' ' && !known.contains(c)) {
+                    return Err(invalid(&format!(
+                        "la police « {name} » n'est incorporée qu'en partie : le caractère « {c} » \
+                         n'y figure peut-être pas (seuls les caractères déjà présents sont permis)"
+                    )));
+                }
+            }
             t.set_text(text)?;
         }
         pdf_page.regenerate_content()?;

@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use anyhow::Context;
-use mega_core::{Document, PageSpec, edit::write_atomically};
+use mega_core::{Document, PageSpec};
 
 /// Pivote les pages `spec` de `degrees` (90, 180 ou 270, sens horaire) et écrit dans `out`.
 pub fn run(
@@ -21,7 +21,8 @@ pub fn run(
     let mut doc = Document::open(file, password)?;
     let pages = PageSpec::parse(spec, doc.page_count())?;
     doc.rotate_pages(&pages, i32::from(degrees / 90))?;
-    write_atomically(out, &doc.to_bytes()?)
+    // `save_as` : écriture atomique **et** passe de nettoyage, comme dans l'application.
+    doc.save_as(out)
         .with_context(|| format!("écriture de {}", out.display()))?;
     println!(
         "{} page(s) pivotée(s) de {degrees}° : {}",

@@ -106,10 +106,19 @@ export function actionFor(event: KeyLike): Action | null {
 
 function label(b: Binding): string {
   const parts: string[] = [];
-  if (b.ctrl) parts.push('Ctrl');
+  if (b.ctrl) parts.push(t.keyCtrl);
   if (b.shift) parts.push(t.keyShift);
   parts.push(b.key.length === 1 ? b.key.toUpperCase() : (t.keyNames[b.key] ?? b.key));
   return parts.join('+');
+}
+
+/**
+ * Libellé du premier raccourci d'une action (« Ctrl+O »), dans la langue courante : les
+ * infobulles et les menus le lisent ici plutôt que de recopier la touche (A13, B10).
+ */
+export function shortcutKeyFor(action: Action): string | null {
+  const binding = BINDINGS.find((b) => b.action === action);
+  return binding ? label(binding) : null;
 }
 
 /**

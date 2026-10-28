@@ -1,13 +1,20 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import type { PageObject, Rect } from '$lib/api';
-  import { hitTestObjects, isContentTool, rectFromCorners } from '$lib/logic/content';
+  import {
+    hitTestObjects,
+    isContentTool,
+    nearCorner,
+    oppositeCorner,
+    rectFromCorners,
+  } from '$lib/logic/content';
   import { cssPointToPdf, pdfRectToCss, type CssRect } from '$lib/logic/geometry';
   import type { Pt } from '$lib/logic/tools';
   import {
     ensureObjects,
     insertImageAt,
     moveObject,
+    resizeObject,
     requestRedact,
     requestTextInsert,
     selectObject,
@@ -53,6 +60,8 @@
   let hover = $state<number | null>(null);
   let drag = $state<{ start: Pt; index: number; bounds: Rect } | null>(null);
   let dragDelta = $state<Pt>({ x: 0, y: 0 });
+  /** Redimensionnement d'une image : coin fixe et position du pointeur (points PDF). */
+  let resize = $state<{ index: number; anchor: Pt; to: Pt } | null>(null);
   /** Rectangle en cours de tracé (outils Image et Caviarder). */
   let draft = $state<{ from: Pt; to: Pt } | null>(null);
   /** Saisie du nouveau texte d'un objet texte. */
@@ -78,6 +87,16 @@
     const p = toPdf(e);
     switch (toolState.tool) {
       case 'objects': {
+        // La poignée (coin bas-droit à l'écran) d'une image sélectionnée la redimensionne.
+        if (selected?.kind === 'image') {
+          const r = root!.getBoundingClientRect();
+          if (nearCorner(e.clientX - r.left, e.clientY - r.top, css(selected.bounds))) {
+            resize = { index: selected.index, anchor: oppositeCorner(selected.bounds, p), to: p };
+            root?.setPointerCapture(e.pointerId);
+            e.preventDefault();
+            return;
+          }
+        }
         const hit = hitTestObjects(objects, p);
         selectObject(doc, hit === null ? null : { page: index, index: hit });
         const o = hit === null ? null : objects.find((x) => x.index === hit);
@@ -104,7 +123,9 @@
 
   function onPointerMove(e: PointerEvent) {
     const p = toPdf(e);
-    if (drag) {
+    if (resize) {
+      resize = { ...resize, to: p };
+    } else if (drag) {
       dragDelta = { x: p.x - drag.start.x, y: p.y - drag.start.y };
     } else if (draft) {
       draft = { from: draft.from, to: p };
@@ -115,6 +136,13 @@
 
   function onPointerUp(e: PointerEvent) {
     root?.releasePointerCapture(e.pointerId);
+    if (resize) {
+      const { index: target, anchor, to } = resize;
+      resize = null;
+      const r = rectFromCorners(anchor, to);
+      if (r.w >= 4 && r.h >= 4) void resizeObject(doc, index, target, r);
+      return;
+    }
     if (drag) {
       const { index: target } = drag;
       const { x: dx, y: dy } = dragDelta;
@@ -184,7 +212,13 @@
     <svg width="100%" height="100%" aria-hidden="true">
       {#if toolState.tool === 'objects'}
         {#each objects as o (o.index)}
-          {@const c = css(o.index === drag?.index ? shifted(o.bounds) : o.bounds)}
+          {@const c = css(
+            o.index === resize?.index
+              ? rectFromCorners(resize.anchor, resize.to)
+              : o.index === drag?.index
+                ? shifted(o.bounds)
+                : o.bounds,
+          )}
           <rect
             class="object"
             class:hover={hover === o.index}
@@ -197,6 +231,16 @@
             height={Math.max(c.height, 1)}
           />
         {/each}
+      {/if}
+      {#if toolState.tool === 'objects' && selected?.kind === 'image' && !resize && !drag}
+        {@const c = css(selected.bounds)}
+        <rect
+          class="handle"
+          x={c.left + c.width - 4}
+          y={c.top + c.height - 4}
+          width="8"
+          height="8"
+        />
       {/if}
       {#if draft}
         {@const c = css(rectFromCorners(draft.from, draft.to))}
@@ -258,6 +302,12 @@
     stroke: var(--accent);
     stroke-width: 1.5;
     stroke-dasharray: 4 3;
+  }
+  .handle {
+    fill: var(--accent);
+    stroke: var(--panel);
+    stroke-width: 1;
+    pointer-events: none;
   }
   .draft {
     fill: rgba(30, 136, 229, 0.1);

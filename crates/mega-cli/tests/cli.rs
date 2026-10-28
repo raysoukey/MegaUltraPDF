@@ -228,6 +228,8 @@ fn rotate_pages_and_report_in_info() {
             "-o",
             out.to_str().unwrap(),
         ])
+        // Écrasement permis : seule l'erreur de validation doit arrêter la commande.
+        .arg("--force")
         .assert()
         .code(1)
         .stderr(predicate::str::contains("90"));
@@ -258,6 +260,8 @@ fn extract_pages_and_reject_bad_spec() {
             "-o",
             out.to_str().unwrap(),
         ])
+        // Écrasement permis : seule l'erreur de validation doit arrêter la commande.
+        .arg("--force")
         .assert()
         .code(1)
         .stderr(predicate::str::contains("Plage de pages invalide"));
@@ -452,6 +456,8 @@ fn watermark_number_and_crop_commands() {
             "-o",
             cropped.to_str().unwrap(),
         ])
+        // Écrasement permis : seule l'erreur de validation doit arrêter la commande.
+        .arg("--force")
         .assert()
         .code(1)
         .stderr(predicate::str::contains("quatre"));
@@ -803,4 +809,173 @@ fn ocr_without_tesseract_fails_cleanly() {
         .failure()
         .stderr(predicate::str::contains("Tesseract"));
     assert!(!out.exists());
+}
+
+// --- Lot 9 : écrasement, nettoyage, avertissements (B16, B30, B23, B32, C10) -------------
+
+fn copy_fixture(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::copy(fixture(name), &path).unwrap();
+    path
+}
+
+#[test]
+fn existing_out_is_refused_without_force() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sortie.pdf");
+    std::fs::write(&out, b"ancien").unwrap();
+    mega()
+        .args([
+            "rotate",
+            &fixture("simple.pdf"),
+            "--pages",
+            "1",
+            "--degrees",
+            "90",
+        ])
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("--force"));
+    assert_eq!(std::fs::read(&out).unwrap(), b"ancien");
+}
+
+#[test]
+fn out_equal_to_input_is_refused_without_force() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = copy_fixture(dir.path(), "simple.pdf");
+    let before = std::fs::read(&file).unwrap();
+    mega()
+        .arg("flatten")
+        .arg(&file)
+        .arg("-o")
+        .arg(&file)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("--force"));
+    assert!(std::fs::read(&file).unwrap() == before, "entrée intacte");
+}
+
+#[test]
+fn force_allows_overwrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sortie.pdf");
+    std::fs::write(&out, b"ancien").unwrap();
+    mega()
+        .args([
+            "--force",
+            "rotate",
+            &fixture("simple.pdf"),
+            "--pages",
+            "1",
+            "--degrees",
+            "90",
+        ])
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .success();
+    assert!(std::fs::read(&out).unwrap().starts_with(b"%PDF"));
+}
+
+#[test]
+fn rotate_flatten_and_extract_outputs_are_cleaned() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, args) in [
+        (
+            "rotate.pdf",
+            vec!["rotate", "--pages", "1", "--degrees", "90"],
+        ),
+        ("flatten.pdf", vec!["flatten"]),
+        ("extract.pdf", vec!["extract", "--pages", "1"]),
+    ] {
+        let out = dir.path().join(name);
+        mega()
+            .args(&args[..1])
+            .arg(fixture("annotated.pdf"))
+            .args(&args[1..])
+            .arg("-o")
+            .arg(&out)
+            .assert()
+            .success();
+        let mut saved = lopdf::Document::load_mem(&std::fs::read(&out).unwrap()).unwrap();
+        assert_eq!(saved.prune_objects(), vec![], "{name} : objets orphelins");
+    }
+}
+
+#[test]
+fn rewriting_a_signed_file_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    mega()
+        .args([
+            "rotate",
+            &fixture("signed.pdf"),
+            "--pages",
+            "1",
+            "--degrees",
+            "90",
+        ])
+        .arg("-o")
+        .arg(dir.path().join("pivote.pdf"))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("signature"));
+}
+
+#[test]
+fn redact_accepts_a_page_range() {
+    let dir = tempfile::tempdir().unwrap();
+    mega()
+        .args([
+            "redact",
+            &fixture("simple.pdf"),
+            "--pages",
+            "1-2",
+            "--rect",
+            "60,740,200,40",
+        ])
+        .arg("-o")
+        .arg(dir.path().join("caviarde.pdf"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 page(s)"));
+}
+
+#[test]
+fn compare_accepts_two_passwords() {
+    let dir = tempfile::tempdir().unwrap();
+    mega()
+        .args(["compare", &fixture("simple.pdf"), &fixture("encrypted.pdf")])
+        .args(["--password-b", "secret"])
+        .arg("-o")
+        .arg(dir.path().join("diff.png"))
+        .assert()
+        .success();
+}
+
+/// B30 : `rotate` passe par l'enregistrement complet (nettoyage, `/ModDate`), comme l'app.
+#[test]
+fn rotate_output_has_a_modification_date() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("date.pdf");
+    mega()
+        .args([
+            "rotate",
+            &fixture("simple.pdf"),
+            "--pages",
+            "1",
+            "--degrees",
+            "90",
+        ])
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .success();
+    mega()
+        .arg("meta")
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Modifié le : —").not());
 }

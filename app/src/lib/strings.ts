@@ -4,6 +4,7 @@
 // même forme (le type `Strings` le vérifie à la compilation). Les composants lisent l'objet
 // partagé `t`, que `setLanguage` remplit avec l'un ou l'autre dictionnaire.
 
+import type { SigIssue } from './api';
 import { resolveLanguage, type Language, type LanguagePreference } from './logic/i18n';
 
 /** Le dictionnaire français : la référence dont tous les autres reprennent la forme. */
@@ -29,7 +30,6 @@ export const fr = {
   close: 'Fermer',
   closeTab: "Fermer l'onglet",
   recentFiles: 'Fichiers récents',
-  noRecentFiles: 'Aucun fichier récent',
   clearRecent: 'Vider la liste',
   zoomIn: 'Zoom avant',
   zoomOut: 'Zoom arrière',
@@ -49,7 +49,6 @@ export const fr = {
   search: 'Rechercher',
   searchPlaceholder: 'Rechercher dans le document…',
   searchMatchCase: 'Respecter la casse',
-  searchWholeWord: 'Mots entiers',
   searchCount: (current: number, total: number) =>
     total === 0 ? 'Aucun résultat' : `${current} / ${total}`,
   searchNext: 'Résultat suivant',
@@ -69,15 +68,16 @@ export const fr = {
   propSize: 'Taille',
   unknown: '—',
   bytes: (n: number) => {
+    const num = (v: number) =>
+      v.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     if (n < 1024) return `${n} o`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} Ko`;
-    return `${(n / (1024 * 1024)).toFixed(1)} Mo`;
+    if (n < 1024 * 1024) return `${num(n / 1024)} Ko`;
+    return `${num(n / (1024 * 1024))} Mo`;
   },
   theme: 'Thème',
   themeSystem: 'Système',
   themeLight: 'Clair',
   themeDark: 'Sombre',
-  shortcutsHelp: 'Raccourcis clavier',
   externalLinkConfirm: (uri: string) => `Ouvrir ce lien dans votre navigateur ?\n\n${uri}`,
   externalLinkBlocked: 'Ce type de lien est bloqué pour votre sécurité.',
   copy: 'Copier',
@@ -95,6 +95,9 @@ export const fr = {
   prefZoomCustom: 'Dernier zoom utilisé',
   prefView: 'Affichage',
   prefAuthor: 'Nom d’auteur des annotations',
+  prefTesseract: 'Tesseract (OCR)',
+  prefTesseractAuto: 'Recherche automatique',
+  browse: 'Parcourir…',
   prefRestore: 'Rouvrir chaque fichier à la page et au zoom où je l’ai laissé',
   prefRecent: (n: number) =>
     n === 0 ? 'Aucun fichier récent' : n === 1 ? '1 fichier récent' : `${n} fichiers récents`,
@@ -113,7 +116,7 @@ export const fr = {
     },
     {
       title: 'Remplir un formulaire',
-      body: 'Cliquez dans un champ pour le remplir. Le panneau Champs les liste tous ; une signature manuscrite se dessine dans un champ de signature. Enregistrez avec Ctrl+S.',
+      body: 'Cliquez dans un champ pour le remplir. Le panneau Formulaire les liste tous ; une signature manuscrite se dessine dans un champ de signature. Enregistrez avec Ctrl+S.',
     },
     {
       title: 'Éditer les pages et le contenu',
@@ -153,6 +156,9 @@ export const fr = {
   ocrRun: 'Reconnaître',
   ocrStop: 'Arrêter',
   ocrNothing: 'Aucune page à reconnaître : elles contiennent déjà du texte.',
+  ocrPagesUnknown: 'Impossible de savoir quelles pages contiennent déjà du texte.',
+  ocrEmpty: (n: number) =>
+    n === 1 ? '1 page sans texte reconnaissable' : `${n} pages sans texte reconnaissable`,
   ocrProgress: (done: number, total: number) => `Page ${done} sur ${total}…`,
   ocrDone: (n: number) => (n === 1 ? '1 page reconnue' : `${n} pages reconnues`),
   ocrNeedLanguage: 'Choisissez au moins une langue.',
@@ -178,6 +184,32 @@ export const fr = {
   sigModifiedAfter: 'Intègre, mais le document a été modifié après cette signature',
   sigInvalid: (detail: string) => `Invalide : ${detail}`,
   sigUnsupported: (detail: string) => `Non vérifiable : ${detail}`,
+  sigIssues: {
+    cms_unreadable: 'Structure CMS illisible',
+    not_signed_data: "Le contenu CMS n'est pas une signature (signedData)",
+    not_detached: 'Signature avec contenu encapsulé (non détachée)',
+    multiple_signers: 'Plusieurs signataires dans une même signature',
+    no_signer: 'Aucun signataire',
+    signer_certificate_missing: 'Certificat du signataire absent',
+    digest_algorithm: "Algorithme d'empreinte autre que SHA-256",
+    no_signed_attributes: 'Signature sans attributs signés',
+    message_digest_missing: 'Empreinte signée absente',
+    content_modified: 'Le contenu a été modifié depuis la signature',
+    content_type_invalid: 'Attribut content-type absent, en double ou inattendu',
+    signing_time_outside_validity: 'Date de signature hors de la période de validité du certificat',
+    signed_attributes_unreadable: 'Attributs signés introuvables dans la structure CMS',
+    signing_certificate_mismatch: "Le certificat joint n'est pas celui que la signature désigne",
+    public_key_unreadable: 'Clé publique illisible',
+    weak_key: 'Clé RSA trop courte (moins de 2048 bits)',
+    unsupported_curve: 'Clé ECDSA autre que P-256',
+    signature_value_unreadable: 'Valeur de signature illisible',
+    signature_mismatch: 'Signature mathématiquement fausse',
+    signature_algorithm: 'Algorithme de signature non pris en charge',
+    unsupported_format: 'Format de signature non pris en charge',
+    byte_range_invalid: '/ByteRange absent ou mal formé',
+    contents_invalid: 'Valeur /Contents illisible ou mal placée',
+    usage_rights: "Signature de droits d'utilisation (UR3), non vérifiée",
+  } satisfies Record<SigIssue, string>,
   sigSigner: 'Signataire',
   sigDate: 'Date',
   sigReason: 'Motif',
@@ -192,6 +224,9 @@ export const fr = {
     seen: 'VU',
   },
   keyShift: 'Maj',
+  keyCtrl: 'Ctrl',
+  working: 'Traitement en cours…',
+  dpiValue: (n: number) => `${n} ppp`,
   keyNames: {
     Delete: 'Suppr',
     Escape: 'Échap',
@@ -258,7 +293,6 @@ export const fr = {
   color: 'Couleur',
   customColor: 'Couleur personnalisée',
   fillColor: 'Remplissage',
-  noFill: 'Sans remplissage',
   opacity: 'Opacité',
   strokeWidth: 'Épaisseur',
   fontSize: 'Taille du texte',
@@ -429,7 +463,6 @@ export const fr = {
   optimizeTitle: 'Optimiser…',
   optimizeHint:
     'Objets inutilisés retirés, flux compressés, images recomprimées si cela réduit le fichier.',
-  optimizeCurrentSize: (size: string) => `taille actuelle : ${size}`,
   optimizeRecompress: 'Recomprimer les images en JPEG',
   optimizeQuality: 'Qualité JPEG',
   optimizeDownsample: 'Réduire les grandes images',
@@ -438,7 +471,7 @@ export const fr = {
   optimizeAction: 'Optimiser',
   optimizeAnalyze: 'Analyser',
   optimizeReport: (before: string, after: string, pct: number, images: number) =>
-    `${before} → ${after} (−${pct} %), ${images} image${images > 1 ? 's' : ''} recomprimée${images > 1 ? 's' : ''}`,
+    `${before} → environ ${after} (−${pct} %), ${images} image${images > 1 ? 's' : ''} recomprimée${images > 1 ? 's' : ''}`,
   optimizeNothing: 'Rien à gagner : le document est déjà optimisé.',
   optimizeDone: 'Optimisation appliquée (annulable avec Ctrl+Z).',
   optimizeSaveHint:
@@ -563,7 +596,6 @@ export const en: Strings = {
   close: 'Close',
   closeTab: 'Close tab',
   recentFiles: 'Recent files',
-  noRecentFiles: 'No recent files',
   clearRecent: 'Clear list',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
@@ -583,7 +615,6 @@ export const en: Strings = {
   search: 'Search',
   searchPlaceholder: 'Search the document…',
   searchMatchCase: 'Match case',
-  searchWholeWord: 'Whole words',
   searchCount: (current: number, total: number) =>
     total === 0 ? 'No results' : `${current} of ${total}`,
   searchNext: 'Next result',
@@ -603,15 +634,16 @@ export const en: Strings = {
   propSize: 'Size',
   unknown: '—',
   bytes: (n: number) => {
+    const num = (v: number) =>
+      v.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    if (n < 1024 * 1024) return `${num(n / 1024)} KB`;
+    return `${num(n / (1024 * 1024))} MB`;
   },
   theme: 'Theme',
   themeSystem: 'System',
   themeLight: 'Light',
   themeDark: 'Dark',
-  shortcutsHelp: 'Keyboard shortcuts',
   externalLinkConfirm: (uri: string) => `Open this link in your browser?\n\n${uri}`,
   externalLinkBlocked: 'This kind of link is blocked for your safety.',
   copy: 'Copy',
@@ -629,6 +661,9 @@ export const en: Strings = {
   prefZoomCustom: 'Last zoom used',
   prefView: 'Display',
   prefAuthor: 'Author name for annotations',
+  prefTesseract: 'Tesseract (OCR)',
+  prefTesseractAuto: 'Automatic search',
+  browse: 'Browse…',
   prefRestore: 'Reopen each file at the page and zoom where I left it',
   prefRecent: (n: number) =>
     n === 0 ? 'No recent files' : n === 1 ? '1 recent file' : `${n} recent files`,
@@ -647,7 +682,7 @@ export const en: Strings = {
     },
     {
       title: 'Fill in a form',
-      body: 'Click a field to fill it in. The Fields panel lists them all; a handwritten signature is drawn in a signature field. Save with Ctrl+S.',
+      body: 'Click a field to fill it in. The Form panel lists them all; a handwritten signature is drawn in a signature field. Save with Ctrl+S.',
     },
     {
       title: 'Edit pages and content',
@@ -655,7 +690,7 @@ export const en: Strings = {
     },
     {
       title: 'Export and print',
-      body: 'The File menu exports pages as images or the text, prints (Ctrl+P), compares two documents and optimises the file size.',
+      body: 'The File menu exports pages as images or the text, prints (Ctrl+P), compares two documents and optimizes the file size.',
     },
     {
       title: 'Protect',
@@ -675,20 +710,23 @@ export const en: Strings = {
   licenseLicense: 'Licence',
   licenseSeeFile: 'see file',
   // OCR and digital signature (Lot 8)
-  ocrMenu: 'Recognise text (OCR)…',
-  ocrTitle: 'Recognise text (OCR)',
+  ocrMenu: 'Recognize text (OCR)…',
+  ocrTitle: 'Recognize text (OCR)',
   ocrIntro:
-    'The text of scanned pages is recognised by Tesseract and added as an invisible layer: the page looks the same, but search and copy work.',
+    'The text of scanned pages is recognized by Tesseract and added as an invisible layer: the page looks the same, but search and copy work.',
   ocrMissing:
     'Tesseract cannot be found. Install it with the languages you need (for example “eng” and “fra”), then reopen this dialog.',
   ocrLanguages: 'Languages',
   ocrScopeUntexted: 'All pages without text',
   ocrScopeCurrent: 'Current page only',
-  ocrRun: 'Recognise',
+  ocrRun: 'Recognize',
   ocrStop: 'Stop',
-  ocrNothing: 'No page to recognise: they already contain text.',
+  ocrNothing: 'No page to recognize: they already contain text.',
+  ocrPagesUnknown: 'Could not tell which pages already contain text.',
+  ocrEmpty: (n: number) =>
+    n === 1 ? '1 page with no recognizable text' : `${n} pages with no recognizable text`,
   ocrProgress: (done: number, total: number) => `Page ${done} of ${total}…`,
-  ocrDone: (n: number) => (n === 1 ? '1 page recognised' : `${n} pages recognised`),
+  ocrDone: (n: number) => (n === 1 ? '1 page recognized' : `${n} pages recognized`),
   ocrNeedLanguage: 'Choose at least one language.',
   signMenu: 'Sign digitally…',
   signTitle: 'Sign digitally',
@@ -712,6 +750,32 @@ export const en: Strings = {
   sigModifiedAfter: 'Intact, but the document was changed after this signature',
   sigInvalid: (detail: string) => `Invalid: ${detail}`,
   sigUnsupported: (detail: string) => `Cannot be verified: ${detail}`,
+  sigIssues: {
+    cms_unreadable: 'Unreadable CMS structure',
+    not_signed_data: 'The CMS content is not a signature (signedData)',
+    not_detached: 'Signature with encapsulated content (not detached)',
+    multiple_signers: 'Several signers in one signature',
+    no_signer: 'No signer',
+    signer_certificate_missing: 'Signer certificate missing',
+    digest_algorithm: 'Digest algorithm other than SHA-256',
+    no_signed_attributes: 'Signature without signed attributes',
+    message_digest_missing: 'Signed digest missing',
+    content_modified: 'The content was changed after signing',
+    content_type_invalid: 'Content-type attribute missing, duplicated or unexpected',
+    signing_time_outside_validity: 'Signing time outside the certificate validity period',
+    signed_attributes_unreadable: 'Signed attributes not found in the CMS structure',
+    signing_certificate_mismatch: 'The attached certificate is not the one the signature names',
+    public_key_unreadable: 'Unreadable public key',
+    weak_key: 'RSA key too short (under 2048 bits)',
+    unsupported_curve: 'ECDSA key other than P-256',
+    signature_value_unreadable: 'Unreadable signature value',
+    signature_mismatch: 'Mathematically wrong signature',
+    signature_algorithm: 'Unsupported signature algorithm',
+    unsupported_format: 'Unsupported signature format',
+    byte_range_invalid: '/ByteRange missing or malformed',
+    contents_invalid: '/Contents value unreadable or misplaced',
+    usage_rights: 'Usage-rights signature (UR3), not verified',
+  } satisfies Record<SigIssue, string>,
   sigSigner: 'Signer',
   sigDate: 'Date',
   sigReason: 'Reason',
@@ -726,6 +790,9 @@ export const en: Strings = {
     seen: 'REVIEWED',
   },
   keyShift: 'Shift',
+  keyCtrl: 'Ctrl',
+  working: 'Working…',
+  dpiValue: (n: number) => `${n} dpi`,
   keyNames: {
     Delete: 'Del',
     Escape: 'Esc',
@@ -789,10 +856,9 @@ export const en: Strings = {
     widget: 'Field',
     other: 'Annotation',
   } as Record<string, string>,
-  color: 'Colour',
-  customColor: 'Custom colour',
+  color: 'Color',
+  customColor: 'Custom color',
   fillColor: 'Fill',
-  noFill: 'No fill',
   opacity: 'Opacity',
   strokeWidth: 'Thickness',
   fontSize: 'Text size',
@@ -878,7 +944,7 @@ export const en: Strings = {
   apply: 'Apply',
   numberingTitle: 'Page numbering',
   numberingTemplate: 'Template',
-  numberingTemplateHint: '{n} page number, {total} page count, {titre} document title',
+  numberingTemplateHint: '{n} page number, {total} page count, {title} document title',
   numberingCorner: 'Position',
   corners: {
     top_left: 'Header, left',
@@ -962,7 +1028,6 @@ export const en: Strings = {
   optimizeTitle: 'Optimize…',
   optimizeHint:
     'Unused objects removed, streams compressed, images recompressed when it shrinks the file.',
-  optimizeCurrentSize: (size: string) => `current size: ${size}`,
   optimizeRecompress: 'Recompress images as JPEG',
   optimizeQuality: 'JPEG quality',
   optimizeDownsample: 'Shrink large images',
@@ -971,7 +1036,7 @@ export const en: Strings = {
   optimizeAction: 'Optimize',
   optimizeAnalyze: 'Analyze',
   optimizeReport: (before: string, after: string, pct: number, images: number) =>
-    `${before} → ${after} (−${pct}%), ${images} image${images > 1 ? 's' : ''} recompressed`,
+    `${before} → about ${after} (−${pct}%), ${images} image${images > 1 ? 's' : ''} recompressed`,
   optimizeNothing: 'Nothing to gain: the document is already optimized.',
   optimizeDone: 'Optimization applied (undo with Ctrl+Z).',
   optimizeSaveHint:
@@ -1086,6 +1151,9 @@ function initialLanguage(): Language {
 }
 
 let current: Language = initialLanguage();
+// Le lecteur d'écran lit la bonne langue dès le premier affichage, sans attendre les
+// préférences (C25).
+if (typeof document !== 'undefined') document.documentElement.lang = current;
 
 /**
  * Les chaînes de la langue courante. C'est **un seul objet partagé**, rempli par

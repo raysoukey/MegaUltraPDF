@@ -2,7 +2,7 @@
 <script lang="ts">
   import { pickPdfFiles, pickSavePath } from '$lib/api';
   import { rotatedSize } from '$lib/logic/geometry';
-  import { clickSelection, moveTarget, shiftAfterInsert } from '$lib/logic/pageselection';
+  import { clickSelection, moveTarget, shiftAfterInsert, slotAtY } from '$lib/logic/pageselection';
   import { pageUrl } from '$lib/pageUrl';
   import {
     applyEdit,
@@ -221,9 +221,16 @@
     ondragover={(e) => {
       if (!dragging) return;
       e.preventDefault();
-      // Sous la dernière vignette : à la fin.
-      if (e.target === list || e.target === list?.firstElementChild)
-        dropSlot = doc.summary.page_count;
+      // Entre deux vignettes (ou sous la dernière) : l'emplacement le plus proche (A22).
+      const spacer = list?.firstElementChild;
+      if (e.target === list || e.target === spacer) {
+        const top = spacer?.getBoundingClientRect().top ?? 0;
+        dropSlot = slotAtY(
+          e.clientY - top,
+          tops,
+          tops.map((_, i) => heightFor(i)),
+        );
+      }
     }}
     ondrop={onDrop}
   >

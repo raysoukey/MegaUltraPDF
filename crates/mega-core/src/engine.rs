@@ -77,27 +77,29 @@ pub fn library_search_paths() -> Vec<PathBuf> {
 }
 
 /// `vendor/pdfium/<triple>/` du workspace, en développement seulement.
+///
+/// \[Apprentissage\] `#[cfg(debug_assertions)]` retire la fonction **avant** la
+/// compilation en profil `release` : le chemin absolu de la machine de compilation
+/// (`CARGO_MANIFEST_DIR`) n'existe même pas dans un binaire distribué. `cfg!(…)`, lui,
+/// compilait les deux branches et comptait sur l'optimiseur pour retirer la morte (A10).
+#[cfg(debug_assertions)]
 fn dev_library_dir() -> Option<PathBuf> {
-    // En développement seulement : `vendor/pdfium/<triple>/` à la racine du workspace
-    // (`CARGO_MANIFEST_DIR` vaut `<racine>/crates/mega-core`, on remonte de deux niveaux).
-    // \[Apprentissage\] `cfg!(debug_assertions)` vaut `true` en profil `dev`, `false` en
-    // `release` : le chemin absolu de la machine de compilation n'est ainsi jamais utilisé par
-    // un binaire distribué (il apparaîtrait dans le message « bibliothèque introuvable »). Les
-    // deux branches sont compilées ; l'optimiseur retire la branche morte (`#[cfg]`, lui,
-    // retirerait le code avant même la compilation).
-    if cfg!(debug_assertions) {
-        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..");
-        Some(
-            workspace_root
-                .join("vendor")
-                .join("pdfium")
-                .join(env!("MEGA_TARGET_TRIPLE")),
-        )
-    } else {
-        None
-    }
+    // `CARGO_MANIFEST_DIR` vaut `<racine>/crates/mega-core` : on remonte de deux niveaux.
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
+    Some(
+        workspace_root
+            .join("vendor")
+            .join("pdfium")
+            .join(env!("MEGA_TARGET_TRIPLE")),
+    )
+}
+
+/// En `release`, aucun dossier de développement.
+#[cfg(not(debug_assertions))]
+fn dev_library_dir() -> Option<PathBuf> {
+    None
 }
 
 /// Retourne l'instance PDFium partagée, en la créant au premier appel.

@@ -248,3 +248,107 @@ fn redaction_refuses_form_fields() {
     assert_eq!(doc.form_fields(0).unwrap().len(), before);
     assert!(!doc.is_modified());
 }
+
+// --- Lot 9 (B20) : une note retirée ne survit ni par son popup, ni par une réponse, ni par
+// l'arbre de structure.
+
+/// Vrai si `needle` apparaît dans une chaîne ou un flux (décodé) de l'objet.
+fn object_contains(object: &lopdf::Object, needle: &[u8]) -> bool {
+    use lopdf::Object;
+    let has = |bytes: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    match object {
+        Object::String(bytes, _) => has(bytes),
+        Object::Array(items) => items.iter().any(|o| object_contains(o, needle)),
+        Object::Dictionary(dict) => dict.iter().any(|(_, o)| object_contains(o, needle)),
+        Object::Stream(stream) => {
+            stream.dict.iter().any(|(_, o)| object_contains(o, needle))
+                || has(&stream
+                    .decompressed_content()
+                    .unwrap_or_else(|_| stream.content.clone()))
+        }
+        _ => false,
+    }
+}
+
+fn saved_contains(doc: &mut Document, needle: &str) -> bool {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("enregistre.pdf");
+    doc.save_as(&path).unwrap();
+    let saved = lopdf::Document::load_mem(&std::fs::read(&path).unwrap()).unwrap();
+    saved
+        .objects
+        .values()
+        .any(|o| object_contains(o, needle.as_bytes()))
+}
+
+#[test]
+fn redacted_note_does_not_survive_through_its_popup() {
+    let mut doc = Document::from_bytes(
+        mega_core::testing::note_with_popup_pdf("NoteTresSecrete"),
+        None,
+    )
+    .unwrap();
+    assert!(saved_contains(&mut doc, "NoteTresSecrete"), "témoin");
+    let mut doc = Document::from_bytes(
+        mega_core::testing::note_with_popup_pdf("NoteTresSecrete"),
+        None,
+    )
+    .unwrap();
+    doc.redact(0, rect(40.0, 40.0, 40.0, 40.0)).unwrap();
+    assert!(!saved_contains(&mut doc, "NoteTresSecrete"));
+    // La réponse, hors zone, reste.
+    assert!(saved_contains(&mut doc, "Reponse"));
+    // Aucun marqueur `/OBJR` laissé sans sa cible `/Obj` (clé obligatoire, §14.7.4.3).
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("balise.pdf");
+    doc.save_as(&path).unwrap();
+    let saved = lopdf::Document::load_mem(&std::fs::read(&path).unwrap()).unwrap();
+    fn objr_without_obj(o: &lopdf::Object) -> bool {
+        match o {
+            lopdf::Object::Dictionary(d) => {
+                (d.get(b"Type").ok() == Some(&lopdf::Object::Name(b"OBJR".to_vec()))
+                    && !d.has(b"Obj"))
+                    || d.iter().any(|(_, v)| objr_without_obj(v))
+            }
+            lopdf::Object::Array(a) => a.iter().any(objr_without_obj),
+            _ => false,
+        }
+    }
+    assert!(
+        !saved.objects.values().any(objr_without_obj),
+        "marqueur /OBJR invalide"
+    );
+}
+
+#[test]
+fn deleting_a_note_also_drops_it_from_the_saved_file() {
+    let mut doc = Document::from_bytes(
+        mega_core::testing::note_with_popup_pdf("NoteTresSecrete"),
+        None,
+    )
+    .unwrap();
+    doc.apply(&EditCommand::DeleteAnnotation { page: 0, index: 0 })
+        .unwrap();
+    assert!(!saved_contains(&mut doc, "NoteTresSecrete"));
+}
+
+/// Relecture du Lot 9 : extraire (ou scinder) après un caviardage ne doit pas faire revenir la
+/// note par sa réponse (`/IRT`) : les pages extraites passent par le même nettoyage.
+#[test]
+fn extracted_pages_do_not_carry_a_redacted_note() {
+    let mut doc = Document::from_bytes(
+        mega_core::testing::note_with_popup_pdf("NoteTresSecrete"),
+        None,
+    )
+    .unwrap();
+    doc.redact(0, rect(40.0, 40.0, 40.0, 40.0)).unwrap();
+    let extracted = doc.extract_pages(&[0]).unwrap();
+    let saved = lopdf::Document::load_mem(&extracted).unwrap();
+    assert!(
+        !saved
+            .objects
+            .values()
+            .any(|o| object_contains(o, b"NoteTresSecrete")),
+        "la note caviardée revient dans l'extrait"
+    );
+}

@@ -3,6 +3,8 @@
 // document passe par le backend ; ici on ne garde que ce qu'il faut pour l'afficher.
 
 import {
+  allAnnotations as fetchAllAnnotations,
+  allFormFields as fetchAllFormFields,
   annotations as fetchAnnotations,
   attachments as fetchAttachments,
   signatures as fetchSignatures,
@@ -72,6 +74,7 @@ import { openErrorMessage } from '$lib/logic/errors';
 import { selectionRects } from '$lib/logic/selection';
 import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
+import { serialQueue } from '$lib/logic/queue';
 import { t } from '$lib/strings';
 import {
   forgetRecent,
@@ -135,6 +138,29 @@ export interface OpenDoc {
    * les change pas (elles portent sur le fichier) ; un enregistrement les fait relire.
    */
   signatures: SignatureInfo[] | null;
+  /**
+   * État de vue gardé avec le document (et non dans les composants) : il survit au
+   * remontage de l'interface lors d'un changement de langue (C32).
+   */
+  view: DocView;
+}
+
+/** Onglet de la barre latérale. */
+export type SidebarTab =
+  'thumbnails' | 'bookmarks' | 'annotations' | 'form' | 'attachments' | 'signatures';
+
+/** Ce que l'utilisateur a choisi dans la vue d'un document. */
+export interface DocView {
+  sidebarTab: SidebarTab;
+  /** Recherche sensible à la casse. */
+  matchCase: boolean;
+  /** Signets dépliés ou repliés, par clé de signet. */
+  outlineOpen: Record<string, boolean>;
+}
+
+/** Vue d'un document qui vient d'être ouvert. */
+function freshView(): DocView {
+  return { sidebarTab: 'thumbnails', matchCase: false, outlineOpen: {} };
 }
 
 export interface PasswordPrompt {
@@ -227,6 +253,7 @@ export async function openPath(path: string, password?: string): Promise<boolean
       security: null,
       attachments: null,
       signatures: null,
+      view: freshView(),
     });
     docsState.activeId = summary.id;
     docsState.passwordPrompt = null;
@@ -503,19 +530,34 @@ export async function settleEdits(): Promise<void> {
   while (inFlight.length > 0) await Promise.allSettled([...inFlight]);
 }
 
-export async function applyEdit(doc: OpenDoc, command: EditCommand): Promise<boolean> {
-  docsState.error = null;
-  const pending = apiApplyEdit(doc.summary.id, command);
+/**
+ * Éditions, annulations et rétablissements passent **l'un après l'autre** (A23) : deux Ctrl+Z
+ * rapides annulent deux fois, le second voyant l'état laissé par le premier, au lieu
+ * d'afficher « rien à annuler ». Chaque opération est aussi attendue par l'enregistrement
+ * et la fermeture (`inFlight`).
+ */
+const editQueue = serialQueue();
+
+function queued<T>(task: () => Promise<T>): Promise<T> {
+  const pending = editQueue(task);
   inFlight.push(pending);
-  try {
-    afterEdit(doc, await pending);
-    return true;
-  } catch (e) {
-    reportError(t.editError, e);
-    return false;
-  } finally {
-    inFlight = inFlight.filter((p) => p !== pending);
-  }
+  void pending
+    .catch(() => undefined)
+    .finally(() => (inFlight = inFlight.filter((p) => p !== pending)));
+  return pending;
+}
+
+export async function applyEdit(doc: OpenDoc, command: EditCommand): Promise<boolean> {
+  return queued(async () => {
+    docsState.error = null;
+    try {
+      afterEdit(doc, await apiApplyEdit(doc.summary.id, command));
+      return true;
+    } catch (e) {
+      reportError(t.editError, e);
+      return false;
+    }
+  });
 }
 
 /** Valide le champ en cours de saisie (son `change` part au blur) puis attend les éditions. */
@@ -526,21 +568,26 @@ async function flushPendingInput(): Promise<void> {
 }
 
 export async function undo(doc: OpenDoc): Promise<void> {
-  if (!doc.edit.can_undo) return;
-  try {
-    afterEdit(doc, await undoEdit(doc.summary.id));
-  } catch (e) {
-    reportError(t.editError, e);
-  }
+  // L'état est relu **dans** la file : après une annulation précédente, pas avant.
+  await queued(async () => {
+    if (!doc.edit.can_undo) return;
+    try {
+      afterEdit(doc, await undoEdit(doc.summary.id));
+    } catch (e) {
+      reportError(t.editError, e);
+    }
+  });
 }
 
 export async function redo(doc: OpenDoc): Promise<void> {
-  if (!doc.edit.can_redo) return;
-  try {
-    afterEdit(doc, await redoEdit(doc.summary.id));
-  } catch (e) {
-    reportError(t.editError, e);
-  }
+  await queued(async () => {
+    if (!doc.edit.can_redo) return;
+    try {
+      afterEdit(doc, await redoEdit(doc.summary.id));
+    } catch (e) {
+      reportError(t.editError, e);
+    }
+  });
 }
 
 /** Enregistre à son chemin ; un document sans chemin passe par « Enregistrer sous ». */
@@ -636,6 +683,7 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
       security: null,
       attachments: null,
       signatures: null,
+      view: freshView(),
     });
     docsState.activeId = summary.id;
     return true;
@@ -652,9 +700,33 @@ export async function mergeAndOpen(paths: string[]): Promise<boolean> {
 export async function ensureAnnotations(doc: OpenDoc, page: number): Promise<Annotation[]> {
   const cached = doc.annotations[page];
   if (cached) return cached;
-  const list = await fetchAnnotations(doc.summary.id, page).catch(() => []);
-  doc.annotations[page] = list;
-  return list;
+  try {
+    const list = await fetchAnnotations(doc.summary.id, page);
+    doc.annotations[page] = list;
+    return list;
+  } catch (e) {
+    // Rien en cache : la prochaine lecture réessaiera (B27).
+    reportError(t.editError, e);
+    return [];
+  }
+}
+
+/**
+ * Annotations de toutes les pages (panneau des annotations) : une seule requête, qui remplit
+ * le cache par page. En cas d'erreur, rien n'est mis en cache (l'erreur est affichée).
+ */
+export async function ensureAllAnnotations(doc: OpenDoc): Promise<Annotation[][]> {
+  const count = doc.summary.page_count;
+  const cached = Array.from({ length: count }, (_, p) => doc.annotations[p]);
+  if (cached.every((list) => list !== undefined)) return cached as Annotation[][];
+  try {
+    const all = await fetchAllAnnotations(doc.summary.id);
+    all.forEach((list, p) => (doc.annotations[p] = list));
+    return all;
+  } catch (e) {
+    reportError(t.editError, e);
+    return [];
+  }
 }
 
 export function selectAnnotation(
@@ -750,17 +822,42 @@ export async function deleteSelectedAnnotation(doc: OpenDoc): Promise<void> {
 
 export async function ensureFormInfo(doc: OpenDoc): Promise<FormInfo | null> {
   if (doc.formInfo) return doc.formInfo;
-  const info = await fetchFormInfo(doc.summary.id).catch(() => null);
-  doc.formInfo = info;
-  return info;
+  try {
+    const info = await fetchFormInfo(doc.summary.id);
+    doc.formInfo = info;
+    return info;
+  } catch (e) {
+    reportError(t.editError, e);
+    return null;
+  }
 }
 
 export async function ensureFormFields(doc: OpenDoc, page: number): Promise<FormField[]> {
   const cached = doc.formFields[page];
   if (cached) return cached;
-  const list = await fetchFormFields(doc.summary.id, page).catch(() => []);
-  doc.formFields[page] = list;
-  return list;
+  try {
+    const list = await fetchFormFields(doc.summary.id, page);
+    doc.formFields[page] = list;
+    return list;
+  } catch (e) {
+    reportError(t.editError, e);
+    return [];
+  }
+}
+
+/** Champs de toutes les pages (panneau du formulaire) : une seule requête, sans cache d'erreur. */
+export async function ensureAllFormFields(doc: OpenDoc): Promise<FormField[][]> {
+  const count = doc.summary.page_count;
+  const cached = Array.from({ length: count }, (_, p) => doc.formFields[p]);
+  if (cached.every((list) => list !== undefined)) return cached as FormField[][];
+  try {
+    const all = await fetchAllFormFields(doc.summary.id);
+    all.forEach((list, p) => (doc.formFields[p] = list));
+    return all;
+  } catch (e) {
+    reportError(t.editError, e);
+    return [];
+  }
 }
 
 export async function setFieldValue(
@@ -798,9 +895,14 @@ export async function insertSignature(
 export async function ensureObjects(doc: OpenDoc, page: number): Promise<PageObject[]> {
   const cached = doc.pageObjects[page];
   if (cached) return cached;
-  const list = await fetchPageObjects(doc.summary.id, page).catch(() => []);
-  doc.pageObjects[page] = list;
-  return list;
+  try {
+    const list = await fetchPageObjects(doc.summary.id, page);
+    doc.pageObjects[page] = list;
+    return list;
+  } catch (e) {
+    reportError(t.editError, e);
+    return [];
+  }
 }
 
 export function selectObject(doc: OpenDoc, target: { page: number; index: number } | null): void {
@@ -813,6 +915,18 @@ export async function deleteSelectedObject(doc: OpenDoc): Promise<void> {
   if (!sel) return;
   doc.selectedObject = null;
   await applyEdit(doc, { kind: 'delete_object', page: sel.page, index: sel.index });
+}
+
+/** Redimensionne l'objet `index` de la page `page` dans `rect` (points affichés). */
+export async function resizeObject(
+  doc: OpenDoc,
+  page: number,
+  index: number,
+  rect: Rect,
+): Promise<boolean> {
+  const ok = await applyEdit(doc, { kind: 'resize_object', page, index, rect });
+  if (ok) doc.selectedObject = { page, index };
+  return ok;
 }
 
 /** Déplace un objet de `(dx, dy)` points affichés ; son index ne change pas. */
@@ -925,9 +1039,9 @@ export async function refreshSignatures(doc: OpenDoc): Promise<void> {
   await ensureSignatures(doc);
 }
 
-/** Pour chaque page, contient-elle déjà du texte ? (vide en cas d'erreur) */
-export async function pagesWithText(doc: OpenDoc): Promise<boolean[]> {
-  return fetchPagesWithText(doc.summary.id).catch(() => []);
+/** Pour chaque page, contient-elle déjà du texte ? `null` en cas d'erreur (à signaler). */
+export async function pagesWithText(doc: OpenDoc): Promise<boolean[] | null> {
+  return fetchPagesWithText(doc.summary.id).catch(() => null);
 }
 
 /** Reconnaît le texte d'une page (OCR) ; faux en cas d'échec (erreur affichée). */

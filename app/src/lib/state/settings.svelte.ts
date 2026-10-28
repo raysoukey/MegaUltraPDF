@@ -4,6 +4,7 @@
 // les accès sont silencieusement ignorés.
 
 import { resolveLanguage, type Language, type LanguagePreference } from '$lib/logic/i18n';
+import { boundPositions } from '$lib/logic/position';
 import { pushRecent } from '$lib/logic/recent';
 import { currentLanguage, LANGUAGE_STORAGE_KEY, setLanguage } from '$lib/strings';
 
@@ -37,6 +38,8 @@ export interface Settings {
    * `zoomMode`, que chaque zoom met à jour (dernier zoom utilisé).
    */
   defaultZoomMode: ZoomMode;
+  /** Chemin de l'exécutable Tesseract (OCR) ; vide : recherche automatique. */
+  tesseractPath: string;
 }
 
 const DEFAULTS: Settings = {
@@ -51,6 +54,7 @@ const DEFAULTS: Settings = {
   language: 'system',
   restorePositions: true,
   defaultZoomMode: 'fitWidth',
+  tesseractPath: '',
 };
 
 const STORE_FILE = 'settings.json';
@@ -158,6 +162,9 @@ export function clearRecent(): void {
 }
 
 export function rememberPosition(path: string, position: ReadingPosition): void {
-  settings.positions = { ...settings.positions, [path]: position };
+  // Retirée puis remise : la position du fichier devient la plus récente (ordre des clés).
+  const rest = { ...settings.positions };
+  delete rest[path];
+  settings.positions = boundPositions({ ...rest, [path]: position });
   saveSettings();
 }

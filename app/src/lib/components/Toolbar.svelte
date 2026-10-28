@@ -12,6 +12,7 @@
     type OpenDoc,
   } from '$lib/state/documents.svelte';
   import { saveSettings, settings, type Theme } from '$lib/state/settings.svelte';
+  import { shortcutKeyFor } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
   import FileMenu from './FileMenu.svelte';
 
@@ -80,7 +81,9 @@
 
 <header class="toolbar">
   <div class="group">
-    <button type="button" onclick={onopen} title="{t.openFile} (Ctrl+O)">{t.openFile}</button>
+    <button type="button" onclick={onopen} title="{t.openFile} ({shortcutKeyFor('open')})"
+      >{t.openFile}</button
+    >
     <FileMenu
       {doc}
       {onopen}
@@ -140,7 +143,7 @@
       aria-label={t.zoomOut}
       type="button"
       disabled={!doc}
-      title="{t.zoomOut} (Ctrl+-)"
+      title="{t.zoomOut} ({shortcutKeyFor('zoomOut')})"
       onclick={() => doc && setScale(doc, nextZoom(doc.scale, -1), 'custom')}>−</button
     >
     <span class="zoom">{doc ? zoomPercent(doc) : '–'}</span>
@@ -148,7 +151,7 @@
       aria-label={t.zoomIn}
       type="button"
       disabled={!doc}
-      title="{t.zoomIn} (Ctrl++)"
+      title="{t.zoomIn} ({shortcutKeyFor('zoomIn')})"
       onclick={() => doc && setScale(doc, nextZoom(doc.scale, 1), 'custom')}>+</button
     >
     <button
@@ -156,7 +159,7 @@
       type="button"
       disabled={!doc}
       class:active={doc?.zoomMode === 'fitWidth'}
-      title="{t.fitWidth} (Ctrl+1)"
+      title="{t.fitWidth} ({shortcutKeyFor('fitWidth')})"
       onclick={onfitwidth}>↔</button
     >
     <button
@@ -164,7 +167,7 @@
       type="button"
       disabled={!doc}
       class:active={doc?.zoomMode === 'fitPage'}
-      title="{t.fitPage} (Ctrl+2)"
+      title="{t.fitPage} ({shortcutKeyFor('fitPage')})"
       onclick={onfitpage}>▢</button
     >
     <button
@@ -188,14 +191,18 @@
       aria-label={doc?.edit.undo_label ? t.undoLabel(doc.edit.undo_label) : t.undo}
       type="button"
       disabled={!doc || !doc.edit.can_undo}
-      title="{doc?.edit.undo_label ? t.undoLabel(doc.edit.undo_label) : t.undo} (Ctrl+Z)"
+      title="{doc?.edit.undo_label ? t.undoLabel(doc.edit.undo_label) : t.undo} ({shortcutKeyFor(
+        'undo',
+      )})"
       onclick={() => doc && undo(doc)}>↶</button
     >
     <button
       aria-label={doc?.edit.redo_label ? t.redoLabel(doc.edit.redo_label) : t.redo}
       type="button"
       disabled={!doc || !doc.edit.can_redo}
-      title="{doc?.edit.redo_label ? t.redoLabel(doc.edit.redo_label) : t.redo} (Ctrl+Y)"
+      title="{doc?.edit.redo_label ? t.redoLabel(doc.edit.redo_label) : t.redo} ({shortcutKeyFor(
+        'redo',
+      )})"
       onclick={() => doc && redo(doc)}>↷</button
     >
     <button
@@ -203,20 +210,22 @@
       type="button"
       disabled={!doc}
       class:attention={doc?.edit.modified}
-      title="{t.save} (Ctrl+S)"
+      title="{t.save} ({shortcutKeyFor('save')})"
       onclick={() => doc && save(doc)}>💾</button
     >
     <button
       type="button"
       disabled={!doc}
-      title="{t.saveAs} (Ctrl+{t.keyShift}+S)"
+      title="{t.saveAs} ({shortcutKeyFor('saveAs')})"
       onclick={() => doc && saveAs(doc)}>{t.saveAs}</button
     >
-    <button type="button" title="{t.mergeTitle} (Ctrl+M)" onclick={onmerge}>{t.merge}…</button>
+    <button type="button" title="{t.mergeTitle} ({shortcutKeyFor('merge')})" onclick={onmerge}
+      >{t.merge}…</button
+    >
     <button
       type="button"
       disabled={!doc}
-      title="{t.splitTitle} (Ctrl+{t.keyShift}+D)"
+      title="{t.splitTitle} ({shortcutKeyFor('split')})"
       onclick={onsplit}>{t.split}…</button
     >
   </div>
@@ -226,14 +235,14 @@
       aria-label={t.search}
       type="button"
       disabled={!doc}
-      title="{t.search} (Ctrl+F)"
+      title="{t.search} ({shortcutKeyFor('find')})"
       onclick={ontogglesearch}>🔍</button
     >
     <button
       aria-label={t.properties}
       type="button"
       disabled={!doc}
-      title="{t.properties} (Ctrl+I)"
+      title="{t.properties} ({shortcutKeyFor('properties')})"
       onclick={onproperties}>ⓘ</button
     >
     <select

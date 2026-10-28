@@ -196,6 +196,276 @@ pub fn bezier_ink_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Une `Ink` **sans** `/InkList` dont l'apparence a une `/Matrix` (translation 10, 20) :
+/// les points de l'apparence sont dans l'espace du formulaire, pas dans celui de la page.
+pub fn ink_with_matrix_pdf() -> Vec<u8> {
+    let appearance = "0 0 1 RG 2 w 100 100 m 150 150 l S";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [4 0 R] >>".to_string(),
+        "<< /Type /Annot /Subtype /Ink /Rect [108 118 162 172] /F 4 /C [0 0 1] \
+         /AP << /N 5 0 R >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [98 98 152 152] /Matrix [1 0 0 1 10 20] \
+             /Length {} >>\nstream\n{appearance}\nendstream",
+            appearance.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Deux cases à cocher lues autrement par pdfium-render : « sansap » (`/V /Off`, **sans**
+/// `/AS` ni `/AP`) et « on » (état coché nommé `/On`, pas `/Yes`, et cochée).
+pub fn checkbox_states_pdf() -> Vec<u8> {
+    let on = "0 0 0 rg 4 4 12 12 re f";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R] >> >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [4 0 R 5 0 R] >>".to_string(),
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /T (sansap) /V /Off /F 4 \
+         /Rect [50 700 70 720] /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /T (on) /V /On /AS /On /F 4 \
+         /Rect [50 650 70 670] /P 3 0 R /AP << /N << /On 6 0 R /Off 7 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length {} >>\nstream\n{on}\nendstream",
+            on.len()
+        ),
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>\nstream\n\nendstream"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Un document avec des métadonnées **XMP** non compressées (`/Metadata` du catalogue) :
+/// titre « Ancien », auteur « Alice », date de modification 2020.
+pub fn xmp_pdf() -> Vec<u8> {
+    let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
+xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\">\
+<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Ancien</rdf:li></rdf:Alt></dc:title>\
+<dc:creator><rdf:Seq><rdf:li>Alice</rdf:li></rdf:Seq></dc:creator>\
+<xmp:ModifyDate>2020-01-01T00:00:00Z</xmp:ModifyDate>\
+</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        format!(
+            "<< /Type /Metadata /Subtype /XML /Length {} >>\nstream\n{xmp}\nendstream",
+            xmp.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Title (Ancien) /Author (Alice) >>")
+}
+
+/// Un document dont le dictionnaire `/Info` est **direct** dans la remorque (permis, rare).
+pub fn direct_info_pdf() -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&sample_pdf(1, "Titre")).expect("squelette");
+    let info = lopdf::Dictionary::from_iter(vec![
+        ("Title", lopdf::Object::string_literal("Titre")),
+        ("Author", lopdf::Object::string_literal("Alice")),
+    ]);
+    doc.trailer.set("Info", lopdf::Object::Dictionary(info));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
+/// Trois images pour l'optimisation (Lot 9) : une grise **unie** de 2000 × 2000 en Flate
+/// (quelques kilo-octets : un JPEG réduit serait plus gros), une RGB bruitée en Flate (le
+/// JPEG la réduit fortement) et une RGB unie **non compressée**.
+pub fn optimizable_images_pdf() -> Vec<u8> {
+    use lopdf::{Object, Stream};
+    let image = |w: i64, h: i64, cs: &str, data: Vec<u8>, flate: bool| {
+        let mut d = lopdf::Dictionary::new();
+        d.set("Type", Object::Name(b"XObject".to_vec()));
+        d.set("Subtype", Object::Name(b"Image".to_vec()));
+        d.set("Width", w);
+        d.set("Height", h);
+        d.set("ColorSpace", Object::Name(cs.as_bytes().to_vec()));
+        d.set("BitsPerComponent", 8);
+        let mut s = Stream::new(d, data).with_compression(false);
+        if flate {
+            s.compress().expect("compression Flate");
+        }
+        s
+    };
+    let mut seed: u32 = 777;
+    let mut noise = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ((seed >> 24) % 17) as i16 - 8
+    };
+    let noisy: Vec<u8> = (0..800 * 600)
+        .flat_map(|_| [30i16, 120, 200].map(|c| (c + noise()).clamp(0, 255) as u8))
+        .collect();
+    images_page_pdf(vec![
+        image(2000, 2000, "DeviceGray", vec![128u8; 2000 * 2000], true),
+        image(800, 600, "DeviceRGB", noisy, true),
+        image(
+            256,
+            256,
+            "DeviceRGB",
+            [10u8, 200, 90].repeat(256 * 256),
+            false,
+        ),
+    ])
+}
+
+/// Une page qui dessine chaque image de `images` dans un carré de 100 points.
+fn images_page_pdf(images: Vec<lopdf::Stream>) -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    let mut doc = lopdf::Document::with_version("1.7");
+    let mut xobjects = Dictionary::new();
+    let mut content = String::new();
+    for (i, image) in images.into_iter().enumerate() {
+        let id = doc.add_object(image);
+        let name = format!("Im{i}");
+        content.push_str(&format!(
+            "q 100 0 0 100 {} 400 cm /{name} Do Q ",
+            50 + 110 * i
+        ));
+        xobjects.set(name.as_str(), Object::Reference(id));
+    }
+    let content_id = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
+    let mut resources = Dictionary::new();
+    resources.set("XObject", Object::Dictionary(xobjects));
+    let pages_id = doc.new_object_id();
+    let page_id = doc.add_object(Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Page".to_vec())),
+        ("Parent", Object::Reference(pages_id)),
+        (
+            "MediaBox",
+            Object::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]),
+        ),
+        ("Resources", Object::Dictionary(resources)),
+        ("Contents", Object::Reference(content_id)),
+    ]));
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Pages".to_vec())),
+            ("Kids", Object::Array(vec![Object::Reference(page_id)])),
+            ("Count", Object::Integer(1)),
+        ])),
+    );
+    let catalog_id = doc.add_object(Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Catalog".to_vec())),
+        ("Pages", Object::Reference(pages_id)),
+    ]));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
+/// Une page avec un carré rempli en **CMYK** (`k`) de couleur `cmyk` (« c m y k »).
+pub fn cmyk_pdf(cmyk: &str) -> Vec<u8> {
+    let content = format!("{cmyk} k 50 50 200 200 re f");
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R >>".to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Un document avec une signature de **droits d'utilisation** (`/Perms /UR3`, Adobe Reader
+/// Extensions) : elle n'est pas dans l'arbre des champs, et ce lot ne la vérifie pas.
+pub fn usage_rights_pdf() -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Perms << /UR3 4 0 R >> >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_string(),
+        "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached \
+         /ByteRange [0 0 0 0] /Contents <00> /Reference [<< /Type /SigRef \
+         /TransformMethod /UR3 >>] >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Un champ texte **avec** son apparence et `/NeedAppearances true` : signer peut retirer
+/// la demande de régénération sans laisser le champ vide ailleurs.
+pub fn form_with_appearances_pdf() -> Vec<u8> {
+    let ap = "BT /Helv 12 Tf 2 6 Td (Bonjour) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /NeedAppearances true \
+         /DR << /Font << /Helv 6 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << >> /Annots [4 0 R] >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (nom) /V (Bonjour) /F 4 \
+         /Rect [20 200 200 220] /P 3 0 R /AP << /N 5 0 R >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 180 20] /Resources << /Font << /Helv 6 0 R >> >> \
+             /Length {} >>\nstream\n{ap}\nendstream",
+            ap.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// La première page de [`scanned_pdf`] stockée **tournée** : `/MediaBox` paysage, `/Rotate
+/// 90`, et l'image dessinée à un quart de tour anti-horaire, si bien qu'elle s'affiche droite
+/// (comme un scanner qui enregistre une page couchée et la redresse par `/Rotate`).
+pub fn rotated_scan_pdf() -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&scanned_pdf()).expect("numérisation");
+    let pages = doc.get_pages();
+    let first = *pages.get(&1).expect("page 1");
+    for id in pages.values().skip(1).copied().collect::<Vec<_>>() {
+        doc.delete_object(id);
+    }
+    let pages_id = doc
+        .get_dictionary(first)
+        .and_then(|p| p.get(b"Parent"))
+        .and_then(lopdf::Object::as_reference)
+        .expect("parent");
+    let pages_dict = doc.get_dictionary_mut(pages_id).expect("/Pages");
+    pages_dict.set(
+        "Kids",
+        lopdf::Object::Array(vec![lopdf::Object::Reference(first)]),
+    );
+    pages_dict.set("Count", 1);
+    let page = doc.get_dictionary(first).expect("page");
+    let media: Vec<f32> = page
+        .get(b"MediaBox")
+        .and_then(lopdf::Object::as_array)
+        .expect("MediaBox")
+        .iter()
+        .map(|v| v.as_float().expect("nombre"))
+        .collect();
+    let (w, h) = (media[2], media[3]);
+    let content = format!("q\n0 {w} {} 0 {h} 0 cm\n/Im0 Do\nQ\n", -h);
+    let content_id = doc.add_object(lopdf::Stream::new(
+        lopdf::Dictionary::new(),
+        content.into_bytes(),
+    ));
+    let page = doc.get_dictionary_mut(first).expect("page");
+    page.set(
+        "MediaBox",
+        lopdf::Object::Array(vec![0.into(), 0.into(), h.into(), w.into()]),
+    );
+    page.set("Rotate", 90);
+    page.set("Contents", lopdf::Object::Reference(content_id));
+    doc.prune_objects();
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
 /// Un formulaire AcroForm écrit à la main (`/NeedAppearances true`) : texte « nom » (vide),
 /// texte multiligne « adresse », case « ok », groupe radio « choix » (A coché, B), combo
 /// « ville » (Paris, Lyon ; Paris choisi), texte lecture seule « ref », texte requis « email ».
@@ -745,6 +1015,67 @@ pub fn certified_pdf(p: i64) -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Une note qui contient `secret`, avec son popup **hors** de la note, une réponse (`/IRT`)
+/// ailleurs sur la page, et un arbre de structure (PDF balisé) qui la cite par `/OBJR`.
+/// Caviarder ou supprimer la note doit faire disparaître `secret` du fichier enregistré.
+pub fn note_with_popup_pdf(secret: &str) -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R /MarkInfo << /Marked true >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Annots [4 0 R 5 0 R 6 0 R] \
+         /StructParents 0 >>"
+            .to_string(),
+        format!(
+            "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents ({secret}) \
+             /T (Auteur) /Popup 5 0 R /P 3 0 R /StructParent 1 >>"
+        ),
+        "<< /Type /Annot /Subtype /Popup /Rect [300 300 450 400] /Parent 4 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /Contents (Reponse) \
+         /IRT 4 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /StructTreeRoot /K 8 0 R /ParentTree << /Nums [1 8 0 R] >> >>".to_string(),
+        // L'élément de structure décrit la note par son texte (`/Alt`, demandé par PDF/UA).
+        format!(
+            "<< /Type /StructElem /S /Annot /P 7 0 R /Pg 3 0 R /Alt ({secret}) \
+             /K << /Type /OBJR /Obj 4 0 R /Pg 3 0 R >> >>"
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Un texte « Secret » dans une police **sous-ensemble** (`/BaseFont /ABCDEF+Helvetica`) :
+/// seuls les glyphes utilisés seraient incorporés, un caractère nouveau s'afficherait mal.
+pub fn subset_font_pdf() -> Vec<u8> {
+    let content = "BT /F1 24 Tf 72 700 Td (Secret) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R \
+         /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /ABCDEF+Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Une page sans `/MediaBox` propre : elle **hérite** celle de `/Pages`, qui ne commence pas
+/// à l'origine (`[100 100 500 700]`).
+pub fn inherited_media_box_pdf() -> Vec<u8> {
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [100 100 500 700] >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R >>".to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,
 /// avec une table `xref` aux positions exactes.
 fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {
@@ -821,7 +1152,29 @@ fn try_sample_pdf(pages: u16, title: &str) -> Result<Vec<u8>, PdfiumError> {
         text.translate(PdfPoints::new(72.0), PdfPoints::new(760.0))?;
         page.objects_mut().add_text_object(text)?;
     }
-    doc.save_to_bytes()
+    Ok(fixed_id(doc.save_to_bytes()?))
+}
+
+/// Remplace par des zéros, **à la même largeur**, les chiffres de l'`/ID` que PDFium tire au
+/// hasard à chaque enregistrement : deux générations d'une fixture sont alors identiques
+/// (diffs binaires lisibles dans git), sans décaler aucun octet de la table de références.
+fn fixed_id(mut bytes: Vec<u8>) -> Vec<u8> {
+    let Some(at) = bytes.windows(3).rposition(|w| w == b"/ID") else {
+        return bytes;
+    };
+    let Some(end) = bytes[at..].iter().position(|&c| c == b']').map(|e| at + e) else {
+        return bytes;
+    };
+    let mut inside = false;
+    for byte in &mut bytes[at..end] {
+        match *byte {
+            b'<' => inside = true,
+            b'>' => inside = false,
+            c if inside && c.is_ascii_hexdigit() => *byte = b'0',
+            _ => {}
+        }
+    }
+    bytes
 }
 
 /// Un PDF « numérisé » de 3 pages A4 : chaque page n'est qu'une image en niveaux de gris

@@ -265,6 +265,13 @@ impl Document {
         self.reload_from_bytes(bytes)
     }
 
+    /// Les champs de **toutes** les pages (une liste par page), en une requête (B12, Lot 9).
+    pub fn all_form_fields(&self) -> CoreResult<Vec<Vec<FormField>>> {
+        (0..self.page_count())
+            .map(|p| self.form_fields(p))
+            .collect()
+    }
+
     /// Les champs de la page `page`, dans l'ordre de `/Annots`.
     pub fn form_fields(&self, page: u16) -> CoreResult<Vec<FormField>> {
         let _guard = engine::guard();
@@ -332,6 +339,16 @@ fn clamp(s: String) -> String {
     }
 }
 
+/// État coché d'une case, lu soi-même (B17, Lot 9) : `/AS` s'il est présent, sinon `/V` ;
+/// cochée si la valeur n'est pas `Off`. pdfium-render ne reconnaît que l'état nommé « Yes »
+/// (une case dont l'état coché s'appelle « On » serait lue décochée).
+fn checked_state(appearance: Option<String>, value: Option<String>) -> bool {
+    appearance
+        .or(value)
+        .map(|s| s.trim_start_matches('/').to_string())
+        .is_some_and(|s| !s.is_empty() && s != "Off")
+}
+
 /// \[Apprentissage\] **`match` sur une `enum` de la bibliothèque** : `PdfFormField` est une
 /// enum de pdfium-render, une variante par type de champ, chacune portant un type différent.
 /// On la traduit en notre `FormField` plat, plus simple à sérialiser pour l'interface.
@@ -366,7 +383,7 @@ fn read_field(page: u16, index: u16, rect: Rect, field: &PdfFormField) -> FormFi
                     rq,
                     FieldKind::Checkbox,
                     c.group_value().map(clamp),
-                    Some(c.is_checked().unwrap_or(false)),
+                    Some(checked_state(c.appearance_stream(), c.group_value())),
                     Vec::new(),
                     false,
                     false,
@@ -380,7 +397,12 @@ fn read_field(page: u16, index: u16, rect: Rect, field: &PdfFormField) -> FormFi
                     rq,
                     FieldKind::Radio,
                     r.group_value().map(clamp),
-                    Some(r.is_checked().unwrap_or(false)),
+                    // Sans `/AS`, le `/V` du groupe ne dit pas quel bouton est l'élu : on garde
+                    // alors la lecture de PDFium.
+                    Some(match r.appearance_stream() {
+                        Some(state) => checked_state(Some(state), None),
+                        None => r.is_checked().unwrap_or(false),
+                    }),
                     Vec::new(),
                     false,
                     false,

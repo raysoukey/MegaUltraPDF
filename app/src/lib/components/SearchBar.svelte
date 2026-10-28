@@ -7,7 +7,6 @@
 
   // svelte-ignore state_referenced_locally
   let query = $state(doc.search?.query ?? '');
-  let matchCase = $state(false);
   let input: HTMLInputElement | undefined = $state();
   let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -25,7 +24,7 @@
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      runSearch(doc, query, matchCase);
+      runSearch(doc, query, doc.view.matchCase);
     }, 250);
   }
 
@@ -33,7 +32,7 @@
     if (e.key === 'Enter') {
       e.preventDefault();
       if (doc.search && doc.search.query === query) stepSearch(doc, e.shiftKey ? -1 : 1);
-      else runSearch(doc, query, matchCase);
+      else runSearch(doc, query, doc.view.matchCase);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       close();
@@ -63,8 +62,8 @@
   <label
     ><input
       type="checkbox"
-      bind:checked={matchCase}
-      onchange={() => runSearch(doc, query, matchCase)}
+      bind:checked={doc.view.matchCase}
+      onchange={() => runSearch(doc, query, doc.view.matchCase)}
     />
     {t.searchMatchCase}</label
   >

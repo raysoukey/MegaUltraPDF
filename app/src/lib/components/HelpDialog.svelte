@@ -2,6 +2,7 @@
 <script lang="ts">
   // Aide intégrée (F1) : prise en main, table des raccourcis générée depuis `shortcuts.ts`,
   // et « À propos » (version, licence, PDFium).
+  import { tabNav } from '$lib/actions/tabNav';
   import { onMount } from 'svelte';
   import { trapFocus } from '$lib/actions/trapFocus';
   import licenses from '$lib/generated/licenses.json';
@@ -31,15 +32,6 @@
       version = ''; // hors Tauri : pas de version à afficher
     }
   });
-
-  /** ← → passent d'un onglet à l'autre (motif ARIA « onglets »). */
-  function onTabKey(e: KeyboardEvent) {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    e.preventDefault();
-    const i = TABS.indexOf(tab);
-    tab = TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
-    document.getElementById(`help-tab-${tab}`)?.focus();
-  }
 </script>
 
 <div
@@ -55,7 +47,7 @@
     use:trapFocus
   >
     <h2 id="help-title">{t.helpTitle}</h2>
-    <div class="tabs" role="tablist" tabindex="-1" onkeydown={onTabKey}>
+    <div class="tabs" role="tablist" use:tabNav>
       {#each TABS as k (k)}
         <button
           type="button"
@@ -63,7 +55,6 @@
           id="help-tab-{k}"
           aria-selected={tab === k}
           aria-controls="help-panel"
-          tabindex={tab === k ? 0 : -1}
           onclick={() => (tab = k)}>{tabLabel(k)}</button
         >
       {/each}
@@ -95,7 +86,7 @@
               </tr>
             {/each}
             <tr><td class="keys"><kbd>{t.ctrlWheel}</kbd></td><td>{t.zoomIn} / {t.zoomOut}</td></tr>
-            <tr><td class="keys"><kbd>Ctrl+C</kbd></td><td>{t.copy}</td></tr>
+            <tr><td class="keys"><kbd>{t.keyCtrl}+C</kbd></td><td>{t.copy}</td></tr>
           </tbody>
         </table>
       {:else}

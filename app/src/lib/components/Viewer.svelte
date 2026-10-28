@@ -1,8 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fitPageScale, fitWidthScale, nextZoom } from '$lib/logic/zoom';
-  import { pageAtScroll, pageLayout, visiblePages } from '$lib/logic/virtualization';
+  import { anchoredScroll, fitPageScale, fitWidthScale, nextZoom } from '$lib/logic/zoom';
+  import {
+    pageAtScroll,
+    pageLayout,
+    pageSlots,
+    visiblePages,
+    wheelPageStep,
+  } from '$lib/logic/virtualization';
   import {
     consumeScrollRequest,
     goToPage,
@@ -43,6 +49,9 @@
       ? []
       : visiblePages(layout, scrollTop, viewportHeight, 3).filter((i) => !visible.includes(i)),
   );
+
+  // Une seule liste de pages montées (visibles puis préchargées), clé = numéro de page.
+  const slots = $derived(pageSlots(visible, prefetch));
 
   function realIndex(layoutIndex: number): number {
     return single ? doc.page : layoutIndex;
@@ -104,16 +113,25 @@
     if (slot) container.scrollTop = slot.top;
   });
 
-  // Zoom : on garde la page courante à la même position relative.
+  // Zoom : Ctrl+molette garde sous le curseur le point visé (A14) ; les autres zooms
+  // (boutons, raccourcis) gardent le haut de la fenêtre.
   // svelte-ignore state_referenced_locally
   let lastScale = doc.scale;
+  /** Point visé par le dernier Ctrl+molette : position dans la fenêtre et part fixe avant lui. */
+  let zoomAnchor: { x: number; y: number; fixedX: number; fixedY: number } | null = null;
   $effect(() => {
     const scale = doc.scale;
     if (!container || scale === lastScale) return;
     const ratio = scale / lastScale;
     lastScale = scale;
-    container.scrollTop = container.scrollTop * ratio;
+    const a = zoomAnchor ?? { x: 0, y: 0, fixedX: GUTTER, fixedY: 0 };
+    zoomAnchor = null;
+    container.scrollTop = anchoredScroll(container.scrollTop, a.y, ratio, a.fixedY);
+    container.scrollLeft = anchoredScroll(container.scrollLeft, a.x, ratio, a.fixedX);
   });
+
+  /** Dernier changement de page à la molette : un seul par geste, pas un par cran. */
+  let lastWheelTurn = 0;
 
   function onScroll() {
     if (!container) return;
@@ -125,16 +143,39 @@
   }
 
   function onWheel(e: WheelEvent) {
-    if (!e.ctrlKey) return;
+    if (!container) return;
+    if (!e.ctrlKey) {
+      // Page unique : aux bords de la page, la molette passe à la page voisine (A16).
+      if (!single) return;
+      const step = wheelPageStep(
+        e.deltaY,
+        container.scrollTop,
+        container.scrollHeight,
+        container.clientHeight,
+      );
+      const now = Date.now();
+      if (step !== 0 && now - lastWheelTurn > 350) {
+        lastWheelTurn = now;
+        e.preventDefault();
+        goToPage(doc, doc.page + step);
+      }
+      return;
+    }
     e.preventDefault();
+    const r = container.getBoundingClientRect();
+    const y = e.clientY - r.top;
+    // Les écarts entre les pages au-dessus du point ne grandissent pas avec le zoom.
+    const point = container.scrollTop + y;
+    const pagesAbove = layout.filter((s) => s.top + s.height < point).length;
+    zoomAnchor = { x: e.clientX - r.left, y, fixedX: GUTTER, fixedY: pagesAbove * GAP };
     setScale(doc, nextZoom(doc.scale, e.deltaY < 0 ? 1 : -1), 'custom');
   }
 </script>
 
 <div class="viewer" bind:this={container} onscroll={onScroll} onwheel={onWheel} tabindex="-1">
   <div class="stack" style:height="{totalHeight}px" style:min-width="{maxWidth + 2 * GUTTER}px">
-    {#each visible as li (realIndex(li))}
-      {@const slot = layout[li]}
+    {#each slots as s (realIndex(s.index))}
+      {@const slot = layout[s.index]}
       <div
         class="slot"
         style:top="{slot.top}px"
@@ -143,29 +184,12 @@
       >
         <PageView
           {doc}
-          index={realIndex(li)}
+          index={realIndex(s.index)}
           width={slot.width}
           height={slot.height}
-          priority="visible"
+          priority={s.priority}
+          interactive={s.interactive}
           onnavigate={(p) => goToPage(doc, p)}
-        />
-      </div>
-    {/each}
-    {#each prefetch as li (`p${li}`)}
-      {@const slot = layout[li]}
-      <div
-        class="slot"
-        style:top="{slot.top}px"
-        style:width="{slot.width}px"
-        style:height="{slot.height}px"
-      >
-        <PageView
-          {doc}
-          index={li}
-          width={slot.width}
-          height={slot.height}
-          priority="prefetch"
-          interactive={false}
         />
       </div>
     {/each}

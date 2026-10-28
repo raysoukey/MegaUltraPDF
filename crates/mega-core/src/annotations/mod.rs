@@ -22,10 +22,12 @@ use pdfium_render::prelude::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::content::win_ansi_byte;
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::{PageFrame, Rect, frame_of};
+use crate::properties::parse_pdf_date;
 
 /// Nombre maximal d'annotations lues par page (un PDF est une donnée non fiable).
 pub const MAX_ANNOTATIONS_PER_PAGE: usize = 2000;
@@ -314,6 +316,12 @@ fn validate(new: &NewAnnotation) -> CoreResult<()> {
     if !(s.opacity > 0.0 && s.opacity <= 1.0) {
         return Err(invalid("l'opacité doit être comprise entre 0 (exclu) et 1"));
     }
+    // Une valeur NaN ou infinie passerait les comparaisons ci-dessous (toute comparaison
+    // avec NaN est fausse) et produirait un fichier illisible (B9, Lot 9).
+    if !(s.stroke_width.is_finite() && s.font_size.is_finite() && geometry_is_finite(&new.geometry))
+    {
+        return Err(invalid("valeur non finie (NaN ou infini)"));
+    }
     match new.kind {
         AnnotationKind::Link | AnnotationKind::Widget | AnnotationKind::Other => {
             return Err(invalid("ce genre d'annotation ne peut pas être créé"));
@@ -337,6 +345,20 @@ fn validate(new: &NewAnnotation) -> CoreResult<()> {
                 && new.contents.trim().is_empty()
             {
                 return Err(invalid("le texte ne peut pas être vide"));
+            }
+            // Texte libre et tampon sont **dessinés** en Helvetica (WinAnsi) : un caractère
+            // hors de cet alphabet s'afficherait « ÿ » (B5, Lot 9). Une note, elle, garde son
+            // commentaire en Unicode (il n'est pas dessiné).
+            if matches!(new.kind, AnnotationKind::Text | AnnotationKind::Stamp)
+                && let Some(c) = new
+                    .contents
+                    .chars()
+                    .find(|c| !matches!(c, '\n' | '\r') && win_ansi_byte(*c).is_none())
+            {
+                return Err(invalid(&format!(
+                    "caractère « {c} » hors de l'alphabet de la police (WinAnsi) : utilisez une \
+                     note pour un commentaire libre"
+                )));
             }
         }
         AnnotationKind::Rect | AnnotationKind::Ellipse => {
@@ -399,6 +421,14 @@ impl Document {
             .collect()
     }
 
+    /// Les annotations de **toutes** les pages (une liste par page) : le panneau des
+    /// annotations les obtient en une requête au lieu d'une par page (B11, Lot 9).
+    pub fn all_annotations(&self) -> CoreResult<Vec<Vec<Annotation>>> {
+        (0..self.page_count())
+            .map(|p| self.annotations(p))
+            .collect()
+    }
+
     /// Modifie une annotation ; retourne son index après modification.
     ///
     /// Une note change **sur place** (contenu, auteur : sa couleur `/C` est conservée, PDFium
@@ -453,7 +483,31 @@ impl Document {
         }
         validate(&new)?;
         self.delete_annotation(page, index)?;
-        self.add_annotation(page, &new)
+        let index = self.add_annotation(page, &new)?;
+        self.restore_creation_date(page, index, current.created.as_deref())?;
+        Ok(index)
+    }
+
+    /// Une annotation recréée (modifiée, déplacée) garde sa date de création d'origine ;
+    /// seule `/M` (modification) prend la date du jour (B1, Lot 9).
+    fn restore_creation_date(
+        &mut self,
+        page: u16,
+        index: u16,
+        created: Option<&str>,
+    ) -> CoreResult<()> {
+        let Some(when) = created
+            .and_then(parse_pdf_date)
+            .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
+        else {
+            return Ok(());
+        };
+        let _guard = engine::guard();
+        let page_index = self.checked_index_unlocked(page)?;
+        let pdf_page = self.inner().pages().get(page_index)?;
+        let mut ann = pdf_page.annotations().get(usize::from(index))?;
+        ann.set_creation_date(when)?;
+        Ok(())
     }
 
     /// Ajoute une annotation à la page et retourne son index (en fin de tableau).
@@ -657,7 +711,21 @@ impl Document {
         new.geometry = appearance::rescale(&new.geometry, &inner(&current.rect), &inner(&rect));
         validate(&new)?;
         self.delete_annotation(page, index)?;
-        self.add_annotation(page, &new)
+        let index = self.add_annotation(page, &new)?;
+        self.restore_creation_date(page, index, current.created.as_deref())?;
+        Ok(index)
+    }
+}
+
+/// Vrai si toutes les coordonnées de la géométrie sont des nombres finis.
+fn geometry_is_finite(g: &Geometry) -> bool {
+    let rect_ok = |r: &Rect| [r.x, r.y, r.w, r.h].iter().all(|v| v.is_finite());
+    let point_ok = |p: &[f32; 2]| p.iter().all(|v| v.is_finite());
+    match g {
+        Geometry::Rect { rect } => rect_ok(rect),
+        Geometry::Quads { rects } => rects.iter().all(rect_ok),
+        Geometry::Line { from, to } => point_ok(from) && point_ok(to),
+        Geometry::Strokes { strokes } => strokes.iter().flatten().all(point_ok),
     }
 }
 
@@ -719,7 +787,9 @@ fn set_meta<A: PdfPageAnnotationCommon>(a: &mut A, new: &NewAnnotation) -> CoreR
     if !new.author.trim().is_empty() {
         a.set_creator(new.author.trim())?;
     }
-    a.set_creation_date(Utc::now())?;
+    let now = Utc::now();
+    a.set_creation_date(now)?;
+    a.set_modification_date(now)?;
     a.set_is_printed(true)?;
     Ok(())
 }

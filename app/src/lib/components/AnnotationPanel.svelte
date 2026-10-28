@@ -4,7 +4,7 @@
   import { formatPdfDate } from '$lib/logic/labels';
   import {
     deleteAnnotation,
-    ensureAnnotations,
+    ensureAllAnnotations,
     goToPage,
     selectAnnotation,
     type OpenDoc,
@@ -24,13 +24,13 @@
     let cancelled = false;
     loading = true;
     (async () => {
+      // Une requête pour tout le document (et non une par page après chaque édition).
+      const all = await ensureAllAnnotations(doc);
+      if (cancelled) return;
       const out: { page: number; items: Annotation[] }[] = [];
-      for (let p = 0; p < count; p++) {
-        const items = (await ensureAnnotations(doc, p)).filter(
-          (a) => a.kind !== 'link' && a.kind !== 'widget',
-        );
+      for (let p = 0; p < Math.min(count, all.length); p++) {
+        const items = all[p].filter((a) => a.kind !== 'link' && a.kind !== 'widget');
         if (items.length > 0) out.push({ page: p, items });
-        if (cancelled) return;
       }
       pages = out;
       loading = false;
@@ -55,7 +55,7 @@
   }
 </script>
 
-<div class="panel" aria-label={t.annotations}>
+<div class="panel" role="region" aria-label={t.annotations}>
   {#if loading && pages.length === 0}
     <p class="muted">{t.loading}</p>
   {:else if total === 0}
@@ -63,14 +63,13 @@
   {:else}
     {#each pages as group (group.page)}
       <h3>{t.annotationOnPage(group.page + 1)}</h3>
-      <ul role="listbox" aria-label={t.annotationOnPage(group.page + 1)}>
+      <ul aria-label={t.annotationOnPage(group.page + 1)}>
         {#each group.items as a (a.index)}
           <li class:selected={isSelected(group.page, a)}>
             <button
               type="button"
               class="item"
-              role="option"
-              aria-selected={isSelected(group.page, a)}
+              aria-current={isSelected(group.page, a) ? 'true' : undefined}
               onclick={() => pick(group.page, a)}
               ondblclick={() => onedit(a, group.page)}
             >

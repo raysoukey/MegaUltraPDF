@@ -17,7 +17,7 @@ mod queue;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 
 use serde::{Deserialize, Serialize};
 
@@ -125,6 +125,10 @@ enum Request {
         page: u16,
         reply: SyncSender<CoreResult<Vec<crate::annotations::Annotation>>>,
     },
+    AllAnnotations {
+        id: DocId,
+        reply: SyncSender<CoreResult<Vec<Vec<crate::annotations::Annotation>>>>,
+    },
     /// Objets du contenu d'une page (Lot 5).
     PageObjects {
         id: DocId,
@@ -184,6 +188,10 @@ enum Request {
         id: DocId,
         page: u16,
         reply: SyncSender<CoreResult<Vec<crate::forms::FormField>>>,
+    },
+    AllFormFields {
+        id: DocId,
+        reply: SyncSender<CoreResult<Vec<Vec<crate::forms::FormField>>>>,
     },
     /// Nature et taille du formulaire.
     FormInfo {
@@ -285,15 +293,6 @@ impl Request {
         }
     }
 }
-
-// Les requêtes ne sont comparées que par la file de priorité, via leur numéro de séquence :
-// l'égalité structurelle n'a pas de sens ici, mais `BinaryHeap` exige `Eq`.
-impl PartialEq for Request {
-    fn eq(&self, _: &Self) -> bool {
-        false
-    }
-}
-impl Eq for Request {}
 
 /// Un document tel que l'acteur le garde.
 struct Entry {
@@ -451,6 +450,14 @@ impl ServiceHandle {
         self.call(|reply| Request::Annotations { id, page, reply })
     }
 
+    /// Annotations de toutes les pages (voir `Document::all_annotations`).
+    pub fn all_annotations(
+        &self,
+        id: DocId,
+    ) -> CoreResult<Vec<Vec<crate::annotations::Annotation>>> {
+        self.call(|reply| Request::AllAnnotations { id, reply })
+    }
+
     /// Objets du contenu d'une page (voir `Document::page_objects`).
     pub fn page_objects(
         &self,
@@ -555,6 +562,11 @@ impl ServiceHandle {
     /// Champs de formulaire d'une page (voir `Document::form_fields`).
     pub fn form_fields(&self, id: DocId, page: u16) -> CoreResult<Vec<crate::forms::FormField>> {
         self.call(|reply| Request::FormFields { id, page, reply })
+    }
+
+    /// Champs de toutes les pages (voir `Document::all_form_fields`).
+    pub fn all_form_fields(&self, id: DocId) -> CoreResult<Vec<Vec<crate::forms::FormField>>> {
+        self.call(|reply| Request::AllFormFields { id, reply })
     }
 
     /// Nature du formulaire et nombre de champs.
@@ -728,24 +740,26 @@ impl Actor {
     /// dans la file priorisée, puis traite la plus prioritaire. Ainsi une page visible
     /// envoyée après dix vignettes passe quand même devant elles.
     fn run(mut self, rx: Receiver<Request>) {
-        loop {
-            if self.queue.is_empty() {
-                match rx.recv() {
-                    Ok(req) => self.queue.push(req.priority(), req),
-                    Err(_) => return, // plus aucun handle : on s'arrête
-                }
-            }
-            loop {
-                match rx.try_recv() {
-                    Ok(req) => self.queue.push(req.priority(), req),
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => break,
-                }
-            }
-            if let Some(req) = self.queue.pop() {
-                self.handle(req);
+        while self.step(&rx) {}
+    }
+
+    /// Un tour de boucle (extrait de `run` pour être testé sans attente) : attend une requête
+    /// si la file est vide, aspire celles déjà arrivées, traite la plus prioritaire. Faux
+    /// quand plus aucun handle n'existe (l'acteur s'arrête).
+    fn step(&mut self, rx: &Receiver<Request>) -> bool {
+        if self.queue.is_empty() {
+            match rx.recv() {
+                Ok(req) => self.queue.push(req.priority(), req),
+                Err(_) => return false, // plus aucun handle : on s'arrête
             }
         }
+        while let Ok(req) = rx.try_recv() {
+            self.queue.push(req.priority(), req);
+        }
+        if let Some(req) = self.queue.pop() {
+            self.handle(req);
+        }
+        true
     }
 
     fn handle(&mut self, req: Request) {
@@ -812,6 +826,9 @@ impl Actor {
             }
             Request::Annotations { id, page, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.annotations(page)));
+            }
+            Request::AllAnnotations { id, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.all_annotations()));
             }
             Request::PageObjects { id, page, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.page_objects(page)));
@@ -880,6 +897,9 @@ impl Actor {
             }
             Request::FormFields { id, page, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.form_fields(page)));
+            }
+            Request::AllFormFields { id, reply } => {
+                let _ = reply.send(self.entry(id).and_then(|e| e.doc.all_form_fields()));
             }
             Request::FormInfo { id, reply } => {
                 let _ = reply.send(self.entry(id).and_then(|e| e.doc.form_info()));
@@ -1093,4 +1113,48 @@ fn search_all(doc: &Document, query: &str, options: &SearchOptions) -> CoreResul
         hits.extend(doc.search_page(page, query, options)?);
     }
     Ok(hits)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    /// A17 : ordre de service déterministe (sans `sleep`) : une vignette puis une page
+    /// visible arrivent pendant que l'acteur est occupé ; au tour suivant, la visible passe
+    /// d'abord.
+    #[test]
+    fn queued_visible_render_is_served_before_an_older_thumbnail() {
+        let (tx, rx) = mpsc::channel::<Request>();
+        let mut actor = Actor::new(DEFAULT_CACHE_BUDGET);
+        let (open_tx, open_rx) = mpsc::sync_channel(1);
+        tx.send(Request::OpenBytes {
+            bytes: crate::testing::sample_pdf(3, "file"),
+            password: None,
+            reply: open_tx,
+        })
+        .unwrap();
+        assert!(actor.step(&rx));
+        let id = open_rx.recv().unwrap().unwrap().id;
+        let render = |page: u16, priority: Priority| {
+            let (reply, done) = mpsc::sync_channel(1);
+            let request = RenderRequest {
+                doc: id,
+                page,
+                scale: 0.3,
+                rotation: crate::geometry::Rotation::None,
+                generation: 0,
+                priority,
+            };
+            tx.send(Request::Render { request, reply }).unwrap();
+            done
+        };
+        let thumbnail = render(1, Priority::Thumbnail);
+        let visible = render(2, Priority::Visible);
+        assert!(actor.step(&rx));
+        assert!(visible.try_recv().is_ok(), "la page visible d'abord");
+        assert!(thumbnail.try_recv().is_err(), "la vignette attend");
+        assert!(actor.step(&rx));
+        assert!(thumbnail.try_recv().is_ok());
+    }
 }

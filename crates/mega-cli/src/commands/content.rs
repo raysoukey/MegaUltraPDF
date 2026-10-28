@@ -105,26 +105,31 @@ fn apply_and_write(
     Ok(doc)
 }
 
-/// `mega redact` : caviarde une zone d'une page et écrit un nouveau fichier.
+/// `mega redact` : caviarde une zone sur chacune des pages `spec` et écrit un nouveau
+/// fichier.
 pub fn redact(
     file: &Path,
-    page: u16,
+    spec: &str,
     rect: &str,
     out: &Path,
     password: Option<&str>,
 ) -> anyhow::Result<()> {
     let [x, y, w, h] = four(rect, "--rect")?;
     let mut doc = Document::open(file, password)?;
-    let page = page_index(&doc, page)?;
+    let pages = PageSpec::parse(spec, doc.page_count())?;
     // L'appel direct donne le rapport ; la commande d'historique n'en a pas besoin ici.
-    let report = doc.redact(page, Rect { x, y, w, h })?;
+    let (mut texts, mut images, mut annotations) = (0u32, 0u32, 0u32);
+    for page in &pages {
+        let report = doc.redact(*page, Rect { x, y, w, h })?;
+        texts += u32::from(report.texts);
+        images += u32::from(report.images);
+        annotations += u32::from(report.annotations);
+    }
     doc.save_as(out)
         .with_context(|| format!("écriture de {}", out.display()))?;
     println!(
-        "Caviardé : {} texte(s), {} image(s), {} annotation(s) : {}",
-        report.texts,
-        report.images,
-        report.annotations,
+        "Caviardé sur {} page(s) : {texts} texte(s), {images} image(s), {annotations} annotation(s) : {}",
+        pages.len(),
         out.display()
     );
     Ok(())

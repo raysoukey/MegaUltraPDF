@@ -6,6 +6,8 @@ import {
   fillTemplate,
   hitTestObjects,
   isContentTool,
+  nearCorner,
+  oppositeCorner,
   rectFromCorners,
   scopePages,
 } from './content';
@@ -70,5 +72,25 @@ describe('cropMarginsValid', () => {
     expect(cropMarginsValid([300, 0, 300, 0], a4)).toBe(false);
     expect(cropMarginsValid([-1, 0, 0, 0], a4)).toBe(false);
     expect(cropMarginsValid([Number.NaN, 0, 0, 0], a4)).toBe(false);
+  });
+});
+
+describe('poignée de redimensionnement', () => {
+  it('oppositeCorner returns the bounds corner farthest from the point', () => {
+    const b = { x: 100, y: 100, w: 50, h: 20 };
+    expect(oppositeCorner(b, { x: 151, y: 99 })).toEqual({ x: 100, y: 120 });
+    expect(oppositeCorner(b, { x: 99, y: 121 })).toEqual({ x: 150, y: 100 });
+  });
+  it('nearCorner hits the bottom-right corner of a CSS box within the tolerance', () => {
+    const c = { left: 10, top: 20, width: 100, height: 50 };
+    expect(nearCorner(108, 66, c)).toBe(true);
+    expect(nearCorner(100, 60, c)).toBe(false);
+  });
+});
+
+describe('fillTemplate (C26)', () => {
+  it('accepts {title} as well as {titre}', () => {
+    expect(fillTemplate('{n}/{total} {title}', 2, 9, 'Rapport')).toBe('2/9 Rapport');
+    expect(fillTemplate('{titre}', 1, 1, 'Rapport')).toBe('Rapport');
   });
 });

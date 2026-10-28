@@ -220,8 +220,8 @@ pub(crate) fn draw_text<'a>(
                 frame.apply_matrix(pdf_matrix(m))?;
             }
             objects.add_path_object(frame)?;
-            // Libellé centré, taille bornée par la hauteur du cadre.
-            let size = s.font_size.min(rect.h * 0.6).max(4.0);
+            // Libellé centré, taille bornée par la hauteur **et** la largeur du cadre.
+            let size = stamp_font_size(new.contents.trim(), rect, s.font_size);
             let mut text = PdfPageTextObject::new(doc, new.contents.trim(), font, pt(size))?;
             text.set_fill_color(color)?;
             let b = text.bounds()?;
@@ -237,12 +237,16 @@ pub(crate) fn draw_text<'a>(
         _ => {
             let size = s.font_size;
             let top = rect.y + rect.h;
-            for (i, line) in new.contents.lines().enumerate() {
+            // Lignes coupées à la largeur du cadre (marge de 2 pt de chaque côté).
+            for (i, line) in wrap_lines(&new.contents, (rect.w - 4.0).max(1.0), size)
+                .iter()
+                .enumerate()
+            {
                 if line.trim().is_empty() {
                     continue;
                 }
                 let baseline = top - size * 0.85 - (i as f32) * size * 1.2;
-                let mut text = PdfPageTextObject::new(doc, line, font, pt(size))?;
+                let mut text = PdfPageTextObject::new(doc, line.as_str(), font, pt(size))?;
                 text.set_fill_color(color)?;
                 let b = text.bounds()?;
                 text.translate(
@@ -257,6 +261,52 @@ pub(crate) fn draw_text<'a>(
         }
     }
     Ok(())
+}
+
+/// Largeur d'avance d'un texte en Helvetica à `size` points (table AFM).
+fn advance(text: &str, size: f32) -> f32 {
+    let bytes: Vec<u8> = text
+        .chars()
+        .map(|c| crate::content::win_ansi_byte(c).unwrap_or(b'?'))
+        .collect();
+    crate::fonts::text_width(&bytes, size)
+}
+
+/// Découpe `text` en lignes d'au plus `width` points à `size` points : coupure aux espaces,
+/// un mot plus long que la ligne reste seul sur la sienne ; les retours à la ligne du texte
+/// sont conservés (une ligne vide reste vide).
+pub(crate) fn wrap_lines(text: &str, width: f32, size: f32) -> Vec<String> {
+    let mut out = Vec::new();
+    for paragraph in text.lines() {
+        let mut line = String::new();
+        for word in paragraph.split(' ') {
+            let candidate = if line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+            if !line.is_empty() && advance(&candidate, size) > width {
+                out.push(std::mem::take(&mut line));
+                line = word.to_string();
+            } else {
+                line = candidate;
+            }
+        }
+        out.push(line);
+    }
+    out
+}
+
+/// Taille du libellé d'un tampon : celle demandée, réduite pour tenir dans le cadre
+/// (60 % de sa hauteur, sa largeur moins 8 pt), jamais sous 4 pt.
+pub(crate) fn stamp_font_size(text: &str, rect: &Rect, requested: f32) -> f32 {
+    let per_point = advance(text, 1.0);
+    let by_width = if per_point > 0.0 {
+        (rect.w - 8.0).max(1.0) / per_point
+    } else {
+        requested
+    };
+    requested.min(rect.h * 0.6).min(by_width).max(4.0)
 }
 
 /// Ce que l'apparence révèle d'une annotation existante.
@@ -500,5 +550,33 @@ pub(crate) fn rescale(geometry: &Geometry, from: &Rect, to: &Rect) -> Geometry {
                 .map(|s| s.iter().map(map).collect())
                 .collect(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrapped_lines_fit_the_width() {
+        let lines = wrap_lines("un deux trois quatre cinq six sept huit\nneuf", 60.0, 12.0);
+        assert!(lines.len() > 2, "{lines:?}");
+        assert_eq!(lines.last().map(String::as_str), Some("neuf"));
+        for line in &lines {
+            assert!(advance(line, 12.0) <= 60.0 || !line.contains(' '), "{line}");
+        }
+    }
+
+    #[test]
+    fn stamp_label_size_fits_the_frame() {
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 60.0,
+        };
+        let size = stamp_font_size("APPROUVÉ", &rect, 30.0);
+        assert!(advance("APPROUVÉ", size) <= 72.0 + 0.01, "{size}");
+        assert!(size >= 4.0);
     }
 }

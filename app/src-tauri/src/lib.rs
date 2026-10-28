@@ -37,6 +37,40 @@ fn pdfium_resource_dir(resources: &Path) -> Option<PathBuf> {
     Some(resources.join("pdfium")).filter(|dir| dir.is_dir())
 }
 
+/// Chemins des fichiers d'une liste d'URL : celles `file://` seulement (espaces et accents
+/// décodés). Sert à l'ouverture depuis le Finder de macOS, qui donne des URL (C33).
+// Utilisée par l'événement macOS seulement (et par son test sur les autres systèmes).
+#[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+fn file_paths(urls: &[tauri::Url]) -> Vec<PathBuf> {
+    urls.iter()
+        .filter(|u| u.scheme() == "file")
+        .filter_map(|u| u.to_file_path().ok())
+        .collect()
+}
+
+/// Fichiers à ouvrir reçus du système (Finder) avant que l'interface les écoute : au
+/// démarrage à froid, l'événement arrive avant le chargement de la page, et un événement
+/// Tauri non écouté est perdu. L'interface les réclame une fois prête (relecture du Lot 9).
+#[derive(Default)]
+pub struct PendingPaths(std::sync::Mutex<Vec<String>>);
+
+impl PendingPaths {
+    /// Ajoute des chemins en attente.
+    pub fn push(&self, paths: Vec<String>) {
+        if let Ok(mut list) = self.0.lock() {
+            list.extend(paths);
+        }
+    }
+
+    /// Rend les chemins en attente et vide la liste.
+    pub fn take(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .map(|mut list| std::mem::take(&mut *list))
+            .unwrap_or_default()
+    }
+}
+
 /// Point d'entrée de l'application (appelé par `main.rs`).
 ///
 /// Si Tauri ne peut pas démarrer (WebView2 absent, configuration invalide), il n'y a rien
@@ -57,6 +91,7 @@ pub fn run() {
     let builder = tauri::Builder::default()
         // Un seul acteur PDFium pour toute l'application ; le handle est clonable.
         .manage(PdfService::spawn())
+        .manage(PendingPaths::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
@@ -80,6 +115,10 @@ pub fn run() {
             commands::save_attachment,
             commands::compare_pages,
             commands::ocr_status,
+            commands::all_annotations,
+            commands::all_form_fields,
+            commands::set_tesseract_path,
+            commands::take_pending_paths,
             commands::pages_with_text,
             commands::signatures,
             commands::sign_document,
@@ -97,9 +136,29 @@ pub fn run() {
             commands::split_document,
             commands::split_plan
         ]);
-    protocol::register(builder)
-        .run(context)
+    let app = protocol::register(builder)
+        .build(context)
         .expect("erreur au lancement de l'application Tauri");
+    app.run(|handle, event| {
+        // macOS : « Ouvrir avec » / double-clic dans le Finder n'arrive pas en argument de
+        // ligne de commande mais comme événement : on transmet les chemins à l'interface.
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        if let tauri::RunEvent::Opened { urls } = &event {
+            use tauri::Emitter;
+            let paths: Vec<String> = file_paths(urls)
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            if !paths.is_empty() {
+                // Gardés (démarrage à froid : personne n'écoute encore) et signalés (application
+                // déjà ouverte) ; l'interface vide la liste en les ouvrant.
+                use tauri::Manager;
+                handle.state::<PendingPaths>().push(paths.clone());
+                let _ = handle.emit("open-paths", ());
+            }
+        }
+        let _ = (handle, event);
+    });
 }
 
 #[cfg(test)]
@@ -120,5 +179,41 @@ mod tests {
             Some(resources.join("pdfium"))
         );
         std::fs::remove_dir_all(&resources).unwrap();
+    }
+
+    /// Relecture du Lot 9 : les chemins reçus avant que l'interface écoute sont gardés,
+    /// puis rendus une seule fois.
+    #[test]
+    fn pending_paths_are_kept_until_taken() {
+        let pending = PendingPaths::default();
+        pending.push(vec!["/a.pdf".to_string()]);
+        pending.push(vec!["/b.pdf".to_string()]);
+        assert_eq!(
+            pending.take(),
+            vec!["/a.pdf".to_string(), "/b.pdf".to_string()]
+        );
+        assert!(pending.take().is_empty());
+    }
+
+    /// C33 : les fichiers donnés par le Finder (URL `file://`, espaces encodés) deviennent
+    /// des chemins ; une autre URL est ignorée.
+    #[test]
+    fn opened_urls_become_paths() {
+        let (url, expected) = if cfg!(windows) {
+            (
+                "file:///C:/Mes%20docs/a.pdf",
+                PathBuf::from(r"C:\Mes docs\a.pdf"),
+            )
+        } else {
+            (
+                "file:///tmp/Mes%20docs/a.pdf",
+                PathBuf::from("/tmp/Mes docs/a.pdf"),
+            )
+        };
+        let urls = vec![
+            tauri::Url::parse(url).unwrap(),
+            tauri::Url::parse("https://example.org/b.pdf").unwrap(),
+        ];
+        assert_eq!(file_paths(&urls), vec![expected]);
     }
 }

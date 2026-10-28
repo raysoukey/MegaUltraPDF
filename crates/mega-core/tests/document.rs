@@ -290,3 +290,12 @@ fn outline_terminates_on_cycle_and_depth() {
     }
     assert!(outline.iter().map(depth).max().unwrap_or(0) <= mega_core::outline::MAX_OUTLINE_DEPTH);
 }
+
+/// A19 : les fixtures générées sont identiques d'une génération à l'autre (pas d'`/ID`
+/// aléatoire), donc stables dans l'historique git.
+#[test]
+fn sample_pdf_is_deterministic() {
+    let a = mega_core::testing::sample_pdf(2, "stable");
+    let b = mega_core::testing::sample_pdf(2, "stable");
+    assert!(a == b, "deux générations diffèrent");
+}

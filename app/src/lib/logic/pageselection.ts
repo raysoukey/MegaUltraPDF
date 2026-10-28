@@ -70,3 +70,15 @@ export function moveTarget(pageCount: number, pages: number[], slot: number): nu
 export function shiftAfterInsert(selected: number[], at: number, n: number): number[] {
   return selected.map((p) => (p >= at ? p + n : p));
 }
+
+/**
+ * Emplacement de dépôt (0 à n) sous l'ordonnée `y` de la colonne des vignettes : avant une
+ * vignette si l'on est au-dessus de sa moitié, après sinon. Un dépôt dans l'interstice
+ * entre deux vignettes va donc entre elles, et non à la fin du document (A22).
+ */
+export function slotAtY(y: number, tops: number[], heights: number[]): number {
+  for (let i = 0; i < tops.length; i++) {
+    if (y < tops[i] + heights[i] / 2) return i;
+  }
+  return tops.length;
+}

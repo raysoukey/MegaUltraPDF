@@ -94,6 +94,7 @@ export type EditCommand =
   | { kind: 'insert_signature'; page: number; rect: Rect; source: SignatureSource }
   | { kind: 'delete_object'; page: number; index: number }
   | { kind: 'move_object'; page: number; index: number; dx: number; dy: number }
+  | { kind: 'resize_object'; page: number; index: number; rect: Rect }
   | { kind: 'set_object_text'; page: number; index: number; text: string }
   | { kind: 'insert_text'; page: number; at: [number, number]; text: string; style: TextStyle }
   | { kind: 'insert_image'; page: number; rect: Rect; path: string }
@@ -385,11 +386,38 @@ export interface OcrStatus {
   languages: string[];
 }
 
-/** Verdict d'une signature (miroir de `SignatureStatus`, sérialisé `{ kind, detail }`). */
+/** Raison d'un verdict (miroir de `SigIssue`) : traduite par `strings.ts` (`sigIssues`). */
+export type SigIssue =
+  | 'cms_unreadable'
+  | 'not_signed_data'
+  | 'not_detached'
+  | 'multiple_signers'
+  | 'no_signer'
+  | 'signer_certificate_missing'
+  | 'digest_algorithm'
+  | 'no_signed_attributes'
+  | 'message_digest_missing'
+  | 'content_modified'
+  | 'content_type_invalid'
+  | 'signing_time_outside_validity'
+  | 'signed_attributes_unreadable'
+  | 'signing_certificate_mismatch'
+  | 'public_key_unreadable'
+  | 'weak_key'
+  | 'unsupported_curve'
+  | 'signature_value_unreadable'
+  | 'signature_mismatch'
+  | 'signature_algorithm'
+  | 'unsupported_format'
+  | 'byte_range_invalid'
+  | 'contents_invalid'
+  | 'usage_rights';
+
+/** Verdict d'une signature (miroir de `SignatureStatus`, sérialisé `{ kind, issue }`). */
 export type SignatureStatus =
   | { kind: 'intact' }
-  | { kind: 'invalid'; detail: string }
-  | { kind: 'unsupported'; detail: string };
+  | { kind: 'invalid'; issue: SigIssue }
+  | { kind: 'unsupported'; issue: SigIssue };
 
 /** Une signature numérique vérifiée (miroir de `mega_core::digital_signature::SignatureInfo`). */
 export interface SignatureInfo {
@@ -463,6 +491,16 @@ export async function outline(id: number): Promise<OutlineNode[]> {
   return invoke<OutlineNode[]>('outline', { id });
 }
 
+/** Annotations de toutes les pages, une liste par page (une seule requête). */
+export async function allAnnotations(id: number): Promise<Annotation[][]> {
+  return invoke<Annotation[][]>('all_annotations', { id });
+}
+
+/** Champs de formulaire de toutes les pages, une liste par page (une seule requête). */
+export async function allFormFields(id: number): Promise<FormField[][]> {
+  return invoke<FormField[][]>('all_form_fields', { id });
+}
+
 export async function annotations(id: number, page: number): Promise<Annotation[]> {
   return invoke<Annotation[]>('annotations', { id, page });
 }
@@ -516,6 +554,22 @@ export async function security(id: number): Promise<SecurityInfo> {
 
 export async function ocrStatus(): Promise<OcrStatus> {
   return invoke<OcrStatus>('ocr_status');
+}
+
+/** Fichiers reçus du Finder (macOS) en attente d'ouverture ; la liste est vidée. */
+export async function takePendingPaths(): Promise<string[]> {
+  return invoke<string[]>('take_pending_paths');
+}
+
+/** Chemin de Tesseract choisi dans les préférences (`null` ou vide : recherche automatique). */
+export async function setTesseractPath(path: string | null): Promise<void> {
+  return invoke<void>('set_tesseract_path', { path });
+}
+
+/** Choisir l'exécutable de Tesseract (dialogue natif). */
+export async function pickExecutable(): Promise<string | null> {
+  const picked = await open({ multiple: false, directory: false });
+  return typeof picked === 'string' ? picked : null;
 }
 
 export async function pagesWithText(id: number): Promise<boolean[]> {

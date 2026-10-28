@@ -3,6 +3,7 @@
   // Préférences (Fichier ▸ Préférences…, Ctrl+,) : chaque réglage s'applique et s'enregistre
   // immédiatement ; il n'y a donc qu'un bouton « Fermer ».
   import { trapFocus } from '$lib/actions/trapFocus';
+  import { pickExecutable, setTesseractPath } from '$lib/api';
   import type { LanguagePreference } from '$lib/logic/i18n';
   import {
     clearRecent,
@@ -18,6 +19,18 @@
   let { onclose }: { onclose: () => void } = $props();
 
   type Simple = 'theme' | 'defaultZoomMode' | 'viewMode' | 'author' | 'restorePositions';
+
+  /** Chemin de Tesseract : enregistré et transmis au cœur (vide : recherche automatique). */
+  function setTesseract(path: string) {
+    settings.tesseractPath = path.trim();
+    saveSettings();
+    void setTesseractPath(settings.tesseractPath || null).catch(() => {});
+  }
+
+  async function browseTesseract() {
+    const picked = await pickExecutable().catch(() => null);
+    if (picked) setTesseract(picked);
+  }
 
   /** Modifie un réglage simple puis l'enregistre (sauvegarde différée). */
   function set<K extends Simple>(key: K, value: (typeof settings)[K]) {
@@ -84,6 +97,18 @@
         value={settings.author}
         oninput={(e) => set('author', e.currentTarget.value)}
       />
+
+      <label for="pref-tesseract">{t.prefTesseract}</label>
+      <span class="path">
+        <input
+          id="pref-tesseract"
+          type="text"
+          placeholder={t.prefTesseractAuto}
+          value={settings.tesseractPath}
+          onchange={(e) => setTesseract(e.currentTarget.value)}
+        />
+        <button type="button" onclick={browseTesseract}>{t.browse}</button>
+      </span>
     </div>
 
     <label class="check">
@@ -109,6 +134,14 @@
 </div>
 
 <style>
+  .path {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .path input {
+    flex: 1;
+    min-width: 0;
+  }
   .grid {
     display: grid;
     grid-template-columns: max-content minmax(14rem, 1fr);

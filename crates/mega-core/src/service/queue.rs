@@ -26,15 +26,25 @@ pub enum Priority {
 /// \[Apprentissage\] `BinaryHeap` sort toujours le **plus grand** élément. On veut la plus
 /// haute priorité, et à priorité égale la requête la plus ancienne (plus petit numéro de
 /// séquence) : `Reverse(seq)` inverse la comparaison du numéro pour que le plus petit soit
-/// « le plus grand ». L'`impl Ord` ci-dessous compare la priorité, puis la séquence.
-#[derive(Debug, PartialEq, Eq)]
+/// « le plus grand ». L'`impl Ord` ci-dessous compare la priorité, puis la séquence ;
+/// l'égalité aussi (A18, Lot 9) : elle doit dire la même chose que l'ordre, et l'élément
+/// transporté (une requête) n'a pas à être comparable.
+#[derive(Debug)]
 struct Entry<T> {
     priority: Priority,
     seq: Reverse<u64>,
     item: T,
 }
 
-impl<T: Eq> Ord for Entry<T> {
+impl<T> PartialEq for Entry<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority && self.seq == other.seq
+    }
+}
+
+impl<T> Eq for Entry<T> {}
+
+impl<T> Ord for Entry<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.priority
             .cmp(&other.priority)
@@ -42,19 +52,19 @@ impl<T: Eq> Ord for Entry<T> {
     }
 }
 
-impl<T: Eq> PartialOrd for Entry<T> {
+impl<T> PartialOrd for Entry<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 /// File qui rend d'abord la priorité la plus haute, puis la plus ancienne.
-pub(crate) struct PriorityQueue<T: Eq> {
+pub(crate) struct PriorityQueue<T> {
     heap: BinaryHeap<Entry<T>>,
     next_seq: u64,
 }
 
-impl<T: Eq> Default for PriorityQueue<T> {
+impl<T> Default for PriorityQueue<T> {
     fn default() -> Self {
         PriorityQueue {
             heap: BinaryHeap::new(),
@@ -63,7 +73,7 @@ impl<T: Eq> Default for PriorityQueue<T> {
     }
 }
 
-impl<T: Eq> PriorityQueue<T> {
+impl<T> PriorityQueue<T> {
     pub(crate) fn push(&mut self, priority: Priority, item: T) {
         self.heap.push(Entry {
             priority,
@@ -103,5 +113,37 @@ mod tests {
     fn priority_order_is_visible_first() {
         assert!(Priority::Visible > Priority::Prefetch);
         assert!(Priority::Prefetch > Priority::Thumbnail);
+    }
+
+    /// Un élément dont l'égalité est absurde (toujours fausse), comme une requête.
+    #[derive(Debug)]
+    struct Never;
+    impl PartialEq for Never {
+        fn eq(&self, _: &Self) -> bool {
+            false
+        }
+    }
+
+    /// L'égalité des entrées suit leur ordre (priorité, séquence) : réflexive, cohérente
+    /// avec `Ord`, quel que soit l'élément transporté (A18, Lot 9).
+    #[test]
+    fn entries_compare_on_priority_and_sequence() {
+        let entry = Entry {
+            priority: Priority::Visible,
+            seq: Reverse(1),
+            item: Never,
+        };
+        assert!(entry == entry, "réflexive");
+        assert_eq!(entry.cmp(&entry), Ordering::Equal);
+    }
+
+    /// La file accepte un élément sans égalité du tout.
+    #[test]
+    fn queue_needs_no_equality_on_items() {
+        struct NoEq(u8);
+        let mut q = PriorityQueue::default();
+        q.push(Priority::Prefetch, NoEq(1));
+        q.push(Priority::Visible, NoEq(2));
+        assert_eq!(q.pop().map(|n| n.0), Some(2));
     }
 }

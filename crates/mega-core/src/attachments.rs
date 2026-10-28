@@ -6,6 +6,7 @@
 //! s'en sert jamais pour composer un chemin d'écriture (l'utilisateur choisit le chemin de
 //! sortie) ; la CLI le passe par `display_safe` avant de l'afficher.
 
+use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -113,11 +114,16 @@ impl Document {
     /// Joint le fichier `path` sous son nom de fichier (dédoublonné si besoin).
     pub fn add_attachment(&mut self, path: &Path) -> CoreResult<()> {
         self.mark_changed();
-        let size = std::fs::metadata(path)?.len();
-        if size > MAX_ATTACHMENT_BYTES {
+        // Une seule lecture, bornée : le fichier ne peut pas grossir entre une vérification de
+        // taille et sa lecture (C7, Lot 9).
+        // [Apprentissage] `Read::take(n)` limite ce qu'un lecteur peut rendre à n octets.
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)?
+            .take(MAX_ATTACHMENT_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
             return Err(invalid(format!(
-                "pièce jointe trop volumineuse ({} Mo, maximum {} Mo)",
-                size / (1024 * 1024),
+                "pièce jointe trop volumineuse (plus de {} Mo)",
                 MAX_ATTACHMENT_BYTES / (1024 * 1024)
             )));
         }
@@ -126,7 +132,6 @@ impl Document {
             .map(|n| n.to_string_lossy().into_owned())
             .filter(|n| !n.is_empty())
             .ok_or_else(|| invalid("nom de fichier invalide".to_string()))?;
-        let bytes = std::fs::read(path)?;
         let existing: Vec<String> = self.attachments()?.into_iter().map(|a| a.name).collect();
         let name = unique_name(&wanted, &existing);
         let _guard = engine::guard();

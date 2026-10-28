@@ -8,7 +8,6 @@ import {
   quadsFromSelection,
   resize,
   selectionAfterMove,
-  toPdfRect,
 } from './annotations';
 
 function ann(index: number, rect: Rect, kind: Annotation['kind'] = 'rect'): Annotation {
@@ -84,26 +83,6 @@ describe('noteIconRect', () => {
       w: 20,
       h: 20,
     });
-  });
-});
-
-describe('toPdfRect', () => {
-  const page = { width_pt: 100, height_pt: 200 };
-  it('maps a CSS rect back to PDF coordinates without rotation', () => {
-    expect(toPdfRect({ left: 10, top: 20, width: 30, height: 40 }, page, 1, 'none')).toEqual({
-      x: 10,
-      y: 140,
-      w: 30,
-      h: 40,
-    });
-  });
-  it('maps a CSS rect in the top-left of a cw90 view to the top-right of the PDF page', () => {
-    // Page affichée tournée de 90° : largeur CSS 200, hauteur CSS 100. Le coin haut-gauche
-    // de la vue correspond au coin bas-gauche d'origine devenu... voir pdfRectToCss(cw90).
-    const r = toPdfRect({ left: 0, top: 0, width: 20, height: 10 }, page, 1, 'cw90');
-    expect(r).toEqual({ x: 0, y: 0, w: 10, h: 20 });
-    const r2 = toPdfRect({ left: 180, top: 90, width: 20, height: 10 }, page, 2, 'cw90');
-    expect(r2).toEqual({ x: 45, y: 90, w: 5, h: 10 });
   });
 });
 

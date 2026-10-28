@@ -116,6 +116,13 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   certificats de test (`fixtures/test-signer*.p12`, mot de passe `test`). Ne jamais vérifier
   une signature CMS sur des attributs réencodés (`der` trie un `SET OF`) : octets d'origine
   (`cms::signed_attrs_span`). Tout parcours d'un graphe PDF garde un ensemble des nœuds visités.
+- Consolidation (Lot 9) : `cleanup::before_save` pose `/ModDate`, retire popups, `/IRT` et
+  `/OBJR` qui citeraient une annotation supprimée (sinon le caviardage fuit), et élague par
+  `cleanup::prune` (jamais `prune_objects` de lopdf, quadratique). Mesurer un texte Helvetica :
+  `fonts::text_width` (table AFM), jamais un objet PDFium par appel. Un verdict de signature est
+  un code `SigIssue`, traduit dans `strings.ts` (`sigIssues`). Une édition sans effet réel
+  (OCR sans mot) n'ajoute pas d'étape : `Command::changed_document`. CLI : option globale
+  `--force` ; toute sortie passe par `save_as` (ou `cleanup::before_save`).
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
   produirait un paquet sans PDFium). Les ressources sont dans la surcouche
   `tauri.release.conf.json` car `tauri-build` les exige à chaque compilation.

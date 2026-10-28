@@ -1,12 +1,13 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { tabNav } from '$lib/actions/tabNav';
   import { tabLabel } from '$lib/logic/labels';
   import { activate, docsState, requestClose } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
 </script>
 
 {#if docsState.docs.length > 0}
-  <div class="tabs" role="tablist" aria-label={t.appName}>
+  <div class="tabs" role="tablist" aria-label={t.appName} use:tabNav>
     {#each docsState.docs as doc (doc.summary.id)}
       {@const active = doc.summary.id === docsState.activeId}
       <div class="tab" class:active role="presentation">

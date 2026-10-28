@@ -17,3 +17,34 @@ export function nextFocus(current: number, usable: boolean[], shift: boolean): n
   }
   return -1;
 }
+
+/** Ce qu'il faut savoir d'un élément focalisable pour les groupes de boutons radio. */
+export interface RadioLike {
+  /** Nom du groupe pour un bouton radio ; `null` pour tout autre élément. */
+  name: string | null;
+  checked: boolean;
+  /** Peut recevoir le focus (ni désactivé ni caché) ; vrai si absent. */
+  usable?: boolean;
+}
+
+/**
+ * Arrêts de tabulation : un seul par groupe de boutons radio, choisi parmi les boutons
+ * **utilisables** (le coché, sinon le premier), comme le navigateur ; les flèches parcourent
+ * ensuite le groupe (C24, Lot 9). Un groupe dont le bouton coché est désactivé garde ainsi
+ * un arrêt. Tout autre élément utilisable est un arrêt.
+ */
+export function radioTabStops(items: RadioLike[]): boolean[] {
+  const ok = (i: RadioLike) => i.usable !== false;
+  const checkedGroups = new Set(
+    items.filter((i) => i.name && i.checked && ok(i)).map((i) => i.name),
+  );
+  const seen = new Set<string>();
+  return items.map((item) => {
+    if (!ok(item)) return false;
+    if (!item.name) return true;
+    if (checkedGroups.has(item.name)) return item.checked;
+    if (seen.has(item.name)) return false;
+    seen.add(item.name);
+    return true;
+  });
+}

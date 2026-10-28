@@ -304,6 +304,12 @@ fn pnpm() -> Command {
     }
 }
 
+/// Arguments de `pnpm` pour l'inventaire npm : les seules dépendances **livrées** (`--prod`),
+/// pas les outils de développement (Vite, eslint…), qui ne sont pas distribués (C31).
+fn npm_license_args() -> [&'static str; 6] {
+    ["--dir", "app", "licenses", "list", "--json", "--prod"]
+}
+
 /// Génère les deux fichiers d'inventaire depuis la racine du workspace.
 pub fn generate(root: &Path) -> anyhow::Result<()> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -314,9 +320,7 @@ pub fn generate(root: &Path) -> anyhow::Result<()> {
         "cargo metadata",
     )?;
     let npm = run(
-        pnpm()
-            .args(["--dir", "app", "licenses", "list", "--json"])
-            .current_dir(root),
+        pnpm().args(npm_license_args()).current_dir(root),
         "pnpm licenses list",
     )?;
     let mut entries = crate_entries_from_metadata(&metadata)?;
@@ -536,5 +540,17 @@ mod tests {
         let mut e = entry("x", "1.0.0", Source::Npm);
         e.license = Some("MIT | Apache-2.0".into());
         assert!(render_markdown(&[e]).contains(r"| MIT \| Apache-2.0 |"));
+    }
+}
+
+#[cfg(test)]
+mod prod_tests {
+    use super::*;
+
+    /// C31 : l'inventaire ne liste que les dépendances livrées (pas les outils de dev).
+    #[test]
+    fn npm_licenses_list_production_dependencies_only() {
+        assert!(npm_license_args().contains(&"--prod"));
+        assert!(npm_license_args().contains(&"--json"));
     }
 }

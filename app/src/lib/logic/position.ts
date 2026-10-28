@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Où rouvrir un fichier : à la position mémorisée ou avec le zoom par défaut (logique pure).
 
-/** Zoom de départ d'un document, tel que le stockent les préférences. */
-export type ZoomModeLike = 'custom' | 'fitWidth' | 'fitPage';
+import type { ZoomMode } from '$lib/state/settings.svelte';
 
 /** Page et zoom d'ouverture d'un document. */
 export interface StartPosition {
   page: number;
   scale: number;
-  zoomMode: ZoomModeLike;
+  zoomMode: ZoomMode;
 }
 
 /** La partie des préférences qui décide de la position d'ouverture. */
@@ -16,7 +15,7 @@ export interface PositionSettings {
   /** Dernier zoom utilisé (mis à jour à chaque zoom). */
   scale: number;
   /** Zoom choisi dans les préférences pour ouvrir un fichier inconnu. */
-  defaultZoomMode: ZoomModeLike;
+  defaultZoomMode: ZoomMode;
   restorePositions: boolean;
   positions: Record<string, StartPosition>;
 }
@@ -32,4 +31,15 @@ export function initialPosition(s: PositionSettings, path: string | null): Start
   if (remembered)
     return { page: remembered.page, scale: remembered.scale, zoomMode: remembered.zoomMode };
   return { page: 0, scale: s.scale, zoomMode: s.defaultZoomMode };
+}
+
+/**
+ * Garde les `keep` positions les plus récemment mémorisées (ordre d'insertion des clés :
+ * mémoriser une position la replace en dernier). Sans borne, les préférences grossiraient
+ * à chaque fichier ouvert (A20).
+ */
+export function boundPositions<T>(positions: Record<string, T>, keep = 100): Record<string, T> {
+  const keys = Object.keys(positions);
+  if (keys.length <= keep) return positions;
+  return Object.fromEntries(keys.slice(keys.length - keep).map((k) => [k, positions[k]]));
 }

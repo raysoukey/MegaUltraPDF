@@ -1,0 +1,175 @@
+[
+  {
+    "wait": 1800
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 3",
+    "label": "trois vignettes"
+  },
+  {
+    "eval": "(() => { const th = document.querySelectorAll('.thumb'); const spacer = document.querySelector('.list').firstElementChild; window.__dt = new DataTransfer(); th[2].dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: window.__dt })); const a = th[0].getBoundingClientRect(); const b = th[1].getBoundingClientRect(); window.__drop = { x: a.left + 10, y: (a.bottom + b.top) / 2 }; window.__gap = [a.bottom, b.top]; spacer.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.__dt, clientX: window.__drop.x, clientY: window.__drop.y })); return true; })()",
+    "label": "glisser la page 3 au-dessus de l'interstice entre les vignettes 1 et 2"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "(() => { const ind = document.querySelector('.drop-indicator'); if (!ind) return 'ERREUR pas d indicateur'; const t = ind.getBoundingClientRect().top; const th = document.querySelectorAll('.thumb'); const second = th[1].getBoundingClientRect(); const third = th[2].getBoundingClientRect(); return (t > second.top - 60 && t < second.top + 10 && t < third.top) || 'ERREUR ' + t + ' (vignette 2 en ' + second.top + ')'; })()",
+    "label": "l'indicateur de dépôt est entre les vignettes 1 et 2 (pas à la fin)"
+  },
+  {
+    "eval": "(() => { const spacer = document.querySelector('.list').firstElementChild; spacer.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__dt, clientX: window.__drop.x, clientY: window.__drop.y })); return true; })()",
+    "label": "déposer"
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Déplacer\"]') !== null",
+    "label": "page déplacée (libellé « Déplacer »)"
+  },
+  {
+    "eval": "(() => { document.querySelector('.sidebar button[aria-label^=\"Pivoter\"]').click(); return true; })()",
+    "label": "deuxième édition : pivoter"
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 3000
+  },
+  {
+    "assert": "document.querySelector('main .error') === null",
+    "label": "double Ctrl+Z rapide : aucun bandeau d'erreur"
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler\"]').disabled === true",
+    "label": "les deux éditions sont annulées"
+  },
+  {
+    "eval": "(() => { const v = document.querySelector('.viewer'); v.scrollTop = 150; const page = document.querySelector('.page[data-page=\"0\"]'); const r = page.getBoundingClientRect(); const vr = v.getBoundingClientRect(); const y = vr.top + 260; window.__y = y; window.__f = (y - r.top) / r.height; v.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100, clientX: vr.left + 200, clientY: y })); return window.__f.toFixed(3); })()",
+    "label": "Ctrl+molette sur un point de la page 1"
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "(() => { const r = document.querySelector('.page[data-page=\"0\"]').getBoundingClientRect(); const f = (window.__y - r.top) / r.height; return Math.abs(f - window.__f) < 0.02 || 'ERREUR ' + f.toFixed(3) + ' au lieu de ' + window.__f.toFixed(3); })()",
+    "label": "le point visé reste sous le curseur"
+  },
+  {
+    "click": "button[aria-label='Page unique']"
+  },
+  {
+    "wait": 600
+  },
+  {
+    "click": "button[aria-label='Ajuster à la page']"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "eval": "(() => { const v = document.querySelector('.viewer'); const vr = v.getBoundingClientRect(); v.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120, clientX: vr.left + 200, clientY: vr.top + 200 })); return true; })()",
+    "label": "molette vers le bas en mode page unique"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value.trim() === '2' || 'ERREUR page ' + document.querySelector('input[aria-label=\"Numéro de page\"]').value",
+    "label": "la molette passe à la page 2"
+  },
+  {
+    "click": "button[aria-label='Défilement continu']"
+  },
+  {
+    "wait": 400
+  },
+  {
+    "eval": "(() => { document.querySelector('.sidebar [role=tablist] [role=tab]').focus(); return true; })()",
+    "label": "focus sur l'onglet Vignettes"
+  },
+  {
+    "key": "ArrowRight"
+  },
+  {
+    "wait": 400
+  },
+  {
+    "assert": "(() => { const tab = document.querySelector('.sidebar [role=tab][aria-selected=true]'); return (tab && tab.textContent.trim() === 'Signets' && document.activeElement === tab) || 'ERREUR ' + (tab && tab.textContent); })()",
+    "label": "→ passe à l'onglet Signets (sélectionné et focalisé)"
+  },
+  {
+    "key": ",",
+    "ctrl": true
+  },
+  {
+    "wait": 600
+  },
+  {
+    "eval": "(() => { const s = document.querySelector('#pref-language'); s.value = 'en'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "interface en anglais"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 400
+  },
+  {
+    "assert": "(() => { const tab = document.querySelector('.sidebar [role=tab][aria-selected=true]'); return (tab && tab.textContent.trim() === 'Bookmarks') || 'ERREUR ' + (tab && tab.textContent); })()",
+    "label": "l'onglet Signets reste choisi après le changement de langue"
+  },
+  {
+    "key": ",",
+    "ctrl": true
+  },
+  {
+    "wait": 600
+  },
+  {
+    "eval": "(() => { const s = document.querySelector('#pref-language'); s.value = 'fr'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "retour au français"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 400
+  },
+  {
+    "eval": "(() => { window.__page = document.querySelector('input[aria-label=\"Numéro de page\"]').value.trim(); document.querySelector('.sidebar [role=tab][aria-selected=true]').focus(); return window.__page; })()",
+    "label": "page courante mémorisée, focus sur l'onglet latéral"
+  },
+  {
+    "key": "End"
+  },
+  {
+    "wait": 500
+  },
+  {
+    "key": "Home"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "(() => { const p = document.querySelector('input[aria-label=\"Numéro de page\"]').value.trim(); const tab = document.querySelector('.sidebar [role=tab][aria-selected=true]'); return (p === window.__page && tab.textContent.trim() === 'Vignettes') || 'ERREUR page ' + p + ' au lieu de ' + window.__page + ', onglet ' + tab.textContent; })()",
+    "label": "Fin / Début changent d'onglet sans changer de page"
+  }
+]

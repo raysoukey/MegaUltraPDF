@@ -134,6 +134,15 @@ pub enum EditCommand {
         /// Déplacement vertical (points, positif vers le haut).
         dy: f32,
     },
+    /// Redimensionne un objet du contenu pour qu'il occupe `rect` (points, espace affiché).
+    ResizeObject {
+        /// Page.
+        page: u16,
+        /// Position de l'objet.
+        index: u16,
+        /// Nouvelle emprise.
+        rect: Rect,
+    },
     /// Remplace le texte d'un objet texte.
     SetObjectText {
         /// Page.
@@ -238,6 +247,12 @@ pub trait Command {
     fn label_in(&self, _doc: &Document) -> String {
         self.label()
     }
+    /// Après une application réussie : le document a-t-il réellement changé ? Sinon, aucune
+    /// étape d'historique n'est ajoutée (une page où l'OCR ne trouve aucun mot). Par
+    /// défaut : oui.
+    fn changed_document(&self, _doc: &Document) -> bool {
+        true
+    }
 }
 
 fn plural(n: usize, singular: &str, plural: &str) -> String {
@@ -286,6 +301,7 @@ impl Command for EditCommand {
             EditCommand::InsertSignature { .. } => "Apposer une signature".to_string(),
             EditCommand::DeleteObject { .. } => "Supprimer : Objet".to_string(),
             EditCommand::MoveObject { .. } => "Déplacer : Objet".to_string(),
+            EditCommand::ResizeObject { .. } => "Redimensionner : Objet".to_string(),
             EditCommand::SetObjectText { .. } => "Modifier le texte".to_string(),
             EditCommand::InsertText { .. } => "Insérer du texte".to_string(),
             EditCommand::InsertImage { .. } => "Insérer une image".to_string(),
@@ -340,6 +356,9 @@ impl Command for EditCommand {
                 .map(|f| format!("Remplir : {}", f.name)),
             EditCommand::DeleteObject { page, index } => object("Supprimer", *page, *index),
             EditCommand::MoveObject { page, index, .. } => object("Déplacer", *page, *index),
+            EditCommand::ResizeObject { page, index, .. } => {
+                object("Redimensionner", *page, *index)
+            }
             EditCommand::Watermark { spec } => Some(pages_label("Filigraner", &spec.pages, doc)),
             EditCommand::PageNumbers { spec } => Some(pages_label("Numéroter", &spec.pages, doc)),
             EditCommand::CropPages { spec } => Some(pages_label("Recadrer", &spec.pages, doc)),
@@ -391,6 +410,9 @@ impl Command for EditCommand {
                 dx,
                 dy,
             } => doc.move_object(*page, *index, *dx, *dy),
+            EditCommand::ResizeObject { page, index, rect } => {
+                doc.resize_object(*page, *index, *rect)
+            }
             EditCommand::SetObjectText { page, index, text } => {
                 doc.set_object_text(*page, *index, text)
             }
@@ -423,6 +445,18 @@ impl Command for EditCommand {
             EditCommand::DeleteAttachment { index } => doc.delete_attachment(*index),
             #[cfg(feature = "ocr")]
             EditCommand::OcrPage { page, languages } => doc.ocr_page(*page, languages),
+        }
+    }
+
+    // `doc` ne sert qu'à l'OCR (feature `ocr`).
+    #[cfg_attr(not(feature = "ocr"), allow(unused_variables))]
+    fn changed_document(&self, doc: &Document) -> bool {
+        match self {
+            // L'OCR n'ajoute une couche que s'il a reconnu des mots : la page a alors du texte
+            // (elle n'en avait pas, sinon l'OCR aurait été refusé).
+            #[cfg(feature = "ocr")]
+            EditCommand::OcrPage { page, .. } => doc.page_has_text(*page).unwrap_or(true),
+            _ => true,
         }
     }
 }
@@ -540,6 +574,11 @@ impl Document {
             self.reload_from_bytes(before)?;
             self.changed = changed_before;
             return Err(e);
+        }
+        if !command.changed_document(self) {
+            // Rien n'a changé (aucun mot reconnu, par exemple) : pas d'étape d'historique.
+            self.changed = changed_before;
+            return Ok(());
         }
         if !self.history.redo.is_empty() {
             self.history.redo.clear();

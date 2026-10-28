@@ -86,12 +86,18 @@ fn search_candidates_order() {
     };
     let app = Path::new("/app/tess").join(exe);
     let env = OsString::from("/env/tesseract");
-    let path_var = std::env::join_paths([Path::new("/a"), Path::new("/b")]).unwrap();
+    // Dossiers du `PATH` absolus sur chaque système (seuls ceux-là sont retenus).
+    let (a, b) = if cfg!(windows) {
+        (Path::new(r"C:\a"), Path::new(r"C:\b"))
+    } else {
+        (Path::new("/a"), Path::new("/b"))
+    };
+    let path_var = std::env::join_paths([a, b]).unwrap();
     let list = ocr::search_candidates(Some(&app), Some(env), Some(path_var));
     assert_eq!(list[0], app);
     assert_eq!(list[1], PathBuf::from("/env/tesseract"));
-    assert_eq!(list[2], Path::new("/a").join(exe));
-    assert_eq!(list[3], Path::new("/b").join(exe));
+    assert_eq!(list[2], a.join(exe));
+    assert_eq!(list[3], b.join(exe));
     assert!(list.len() > 4, "dossiers d'installation usuels en dernier");
 }
 
@@ -187,4 +193,99 @@ fn ocr_status_matches_the_installed_tool() {
     } else {
         assert!(status.languages.is_empty());
     }
+}
+
+// --- Lot 9 : page vide, annotations, PATH, page tournée (C39-C41) -----------------------
+
+/// Une page où Tesseract ne trouve rien n'ajoute pas d'étape d'historique et ne rend pas le
+/// document « modifié ».
+#[test]
+fn page_without_words_adds_no_history_step() {
+    if tesseract().is_none() {
+        return;
+    }
+    let mut doc = Document::from_bytes(blank_pdf(300.0, 300.0), None).unwrap();
+    doc.apply(&EditCommand::OcrPage {
+        page: 0,
+        languages: vec!["eng".to_string()],
+    })
+    .unwrap();
+    assert!(!doc.can_undo(), "aucune étape d'historique");
+    assert!(!doc.is_modified());
+}
+
+/// Le texte d'une annotation (note de texte libre posée sur un scan) n'entre pas dans la
+/// couche reconnue : seule la page est lue.
+#[test]
+fn ocr_ignores_annotations() {
+    use mega_core::{AnnotationKind, Color, Geometry, NewAnnotation, Rect, Style};
+    let Some(exe) = tesseract() else {
+        return;
+    };
+    let mut doc = Document::from_bytes(scanned_pdf(), None).unwrap();
+    doc.add_annotation(
+        0,
+        &NewAnnotation {
+            kind: AnnotationKind::Text,
+            geometry: Geometry::Rect {
+                rect: Rect {
+                    x: 72.0,
+                    y: 300.0,
+                    w: 400.0,
+                    h: 80.0,
+                },
+            },
+            style: Style {
+                color: Color { r: 0, g: 0, b: 0 },
+                fill: None,
+                opacity: 1.0,
+                stroke_width: 1.0,
+                font_size: 48.0,
+            },
+            contents: "CONFIDENTIEL".to_string(),
+            author: String::new(),
+        },
+    )
+    .unwrap();
+    doc.ocr_page_with(0, &["eng".to_string()], &exe).unwrap();
+    let text = doc.page_text(0).unwrap();
+    assert!(text.contains("Page"), "{text}");
+    assert!(!text.contains("CONFIDENTIEL"), "{text}");
+}
+
+#[test]
+fn empty_path_entries_are_skipped() {
+    let absolute = if cfg!(windows) {
+        r"C:\outils"
+    } else {
+        "/opt/outils"
+    };
+    let path_var = std::env::join_paths(["", absolute]).unwrap();
+    let candidates = ocr::search_candidates(None, None, Some(path_var));
+    assert!(
+        candidates.iter().all(|p| p.is_absolute()),
+        "aucun candidat relatif au dossier courant : {candidates:?}"
+    );
+    assert!(candidates.iter().any(|p| p.starts_with(absolute)));
+}
+
+/// Une numérisation stockée couchée et redressée par `/Rotate 90` : le texte reconnu est
+/// trouvé, en haut à gauche de la page **affichée**.
+#[test]
+fn ocr_on_a_rotated_scan_finds_the_words() {
+    let Some(exe) = tesseract() else {
+        return;
+    };
+    let mut doc = Document::from_bytes(mega_core::testing::rotated_scan_pdf(), None).unwrap();
+    doc.ocr_page_with(0, &["eng".to_string()], &exe).unwrap();
+    let hits = doc
+        .search_page(0, "Page 1", &SearchOptions::default())
+        .unwrap();
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    let size = doc.page_size(0).unwrap();
+    let r = hits[0].rects[0];
+    assert!(
+        r.x < size.width_pt / 2.0 && r.y > size.height_pt / 2.0,
+        "en haut à gauche de la page affichée : {r:?} ({size:?})"
+    );
 }

@@ -66,6 +66,7 @@ impl Document {
     pub fn insert_blank_page(&mut self, at: u16, size: PageSize) -> CoreResult<()> {
         self.mark_changed();
         let _guard = engine::guard();
+        ensure_room(self.count_unlocked(), 1)?;
         let at = self.insertion_index_unlocked(at)?;
         let paper = PdfPagePaperSize::Custom(
             PdfPoints::new(size.width_pt),
@@ -86,6 +87,7 @@ impl Document {
     ) -> CoreResult<()> {
         self.mark_changed();
         let _guard = engine::guard();
+        ensure_room(self.count_unlocked(), pages.len())?;
         let at = self.insertion_index_unlocked(at)?;
         // `other` est validé sans reprendre le jeton (le `Mutex` n'est pas réentrant).
         let source: Vec<PdfPageIndex> = pages
@@ -120,6 +122,9 @@ impl Document {
     }
 
     /// Nouveau document composé des pages `pages` (dans l'ordre donné) ; l'original est intact.
+    /// Le résultat passe par le nettoyage d'enregistrement (`cleanup::before_save`) : une note
+    /// caviardée encore citée par une réponse ne doit pas revenir dans l'extrait (relecture du
+    /// Lot 9). Sert aussi à la scission.
     pub fn extract_pages(&self, pages: &[u16]) -> CoreResult<Vec<u8>> {
         let guard = engine::guard();
         let source: Vec<PdfPageIndex> = pages
@@ -133,7 +138,7 @@ impl Document {
         }
         let mut target = new_document(&guard)?;
         copy_pages(&mut target, self.inner(), &source, 0)?;
-        Ok(target.save_to_bytes()?)
+        crate::cleanup::before_save(&target.save_to_bytes()?)
     }
 
     /// Indices valides, triés, sans doublon ; erreur si la liste est vide ou hors bornes.
@@ -157,6 +162,18 @@ impl Document {
         }
         Ok(PdfPageIndex::from(at))
     }
+}
+
+/// Refuse d'ajouter `added` pages à un document qui en a `count` si le total dépasse
+/// 65 535 : l'index de page est un `u16` partout (A4, Lot 9 ; l'ouverture refuse déjà un
+/// fichier plus long).
+pub(crate) fn ensure_room(count: u16, added: usize) -> CoreResult<()> {
+    if usize::from(count).saturating_add(added) > usize::from(u16::MAX) {
+        return Err(CoreError::InvalidOperation(
+            "un document ne peut pas dépasser 65 535 pages".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Copie `source_pages` de `source` dans `target` à partir de `at`, dans l'ordre donné.
@@ -191,7 +208,7 @@ pub fn merge(docs: &[&Document]) -> CoreResult<Vec<u8>> {
     for doc in docs {
         target.pages_mut().append(doc.inner())?;
     }
-    Ok(target.save_to_bytes()?)
+    crate::cleanup::before_save(&target.save_to_bytes()?)
 }
 
 /// Scinde `doc` en autant de PDF que de groupes dans `parts` (indices 0-based).
@@ -288,4 +305,20 @@ pub fn split_to_dir(
         crate::edit::write_atomically(path, bytes)?;
     }
     Ok(paths)
+}
+
+#[cfg(test)]
+mod room_tests {
+    use super::*;
+
+    /// Un document ne dépasse jamais 65 535 pages : l'index de page est un `u16` (A4).
+    #[test]
+    fn inserting_beyond_65535_pages_is_refused() {
+        assert!(ensure_room(65_534, 1).is_ok());
+        assert!(matches!(
+            ensure_room(65_535, 1),
+            Err(CoreError::InvalidOperation(_))
+        ));
+        assert!(ensure_room(10, 65_530).is_err());
+    }
 }

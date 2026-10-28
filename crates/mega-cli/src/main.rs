@@ -46,6 +46,11 @@ fn main() {
 /// Le programme proprement dit : analyse des arguments, puis une sous-commande.
 fn run() {
     let cli = Cli::parse();
+    let force = cli.force;
+    if let Err(e) = commands::preflight(&cli.command, force) {
+        eprintln!("Erreur : {e:#}");
+        std::process::exit(1);
+    }
     let result = match cli.command {
         Command::Info { file, password } => commands::info::run(&file, password.as_deref()),
         Command::Render {
@@ -63,7 +68,6 @@ fn run() {
             bookmarks,
             out,
             prefix,
-            force,
             password,
         } => {
             use mega_core::pages::SplitMode;
@@ -113,11 +117,11 @@ fn run() {
         } => commands::content::objects(&file, page, password.as_deref()),
         Command::Redact {
             file,
-            page,
+            pages,
             rect,
             out,
             password,
-        } => commands::content::redact(&file, page, &rect, &out, password.as_deref()),
+        } => commands::content::redact(&file, &pages, &rect, &out, password.as_deref()),
         Command::Watermark {
             file,
             text,
@@ -173,7 +177,6 @@ fn run() {
             jpeg,
             quality,
             prefix,
-            force,
             password,
         } => commands::export::images(
             &file,
@@ -309,6 +312,7 @@ fn run() {
             scale,
             out,
             password,
+            password_b,
         } => commands::tools::compare(
             &a,
             &b,
@@ -317,6 +321,7 @@ fn run() {
             scale,
             &out,
             password.as_deref(),
+            password_b.as_deref().or(password.as_deref()),
         ),
     };
     // \[Apprentissage\] `{e:#}` affiche la chaîne complète des causes d'une erreur

@@ -42,3 +42,17 @@ export function fitPageScale(
   const byHeight = (containerHeightPx - 2 * gutterPx) / page.height_pt;
   return clampScale(Math.min(byWidth, byHeight));
 }
+
+/**
+ * Défilement qui garde **sous le curseur** le même point du contenu après un zoom de facteur
+ * `ratio` (A14, Lot 9). `cursor` : position du curseur dans la fenêtre ; `fixed` : la part du
+ * contenu avant ce point qui ne grandit pas (écarts entre les pages, marges). Jamais négatif.
+ */
+export function anchoredScroll(
+  scroll: number,
+  cursor: number,
+  ratio: number,
+  fixed: number,
+): number {
+  return Math.max(0, (scroll + cursor - fixed) * ratio + fixed - cursor);
+}

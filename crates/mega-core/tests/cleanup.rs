@@ -250,3 +250,108 @@ fn second_overlay_reuses_the_existing_wrapper() {
     let text: String = doc.text_boxes(0).unwrap().iter().map(|b| b.ch).collect();
     assert!(text.contains("UN") && text.contains("DEUX"));
 }
+
+// --- Lot 9 : /NM et /P (B3), courbes de l'/InkList (B25) ---------------------------------
+
+/// Les annotations de la page 1, avec la référence de la page.
+fn annots_of(doc: &lopdf::Document) -> Vec<(lopdf::ObjectId, lopdf::Dictionary)> {
+    let page = *doc.get_pages().get(&1).unwrap();
+    let annots = doc.get_dictionary(page).unwrap().get(b"Annots").unwrap();
+    let array = match annots {
+        lopdf::Object::Reference(id) => doc.get_object(*id).unwrap().as_array().unwrap().clone(),
+        lopdf::Object::Array(a) => a.clone(),
+        _ => panic!("/Annots"),
+    };
+    array
+        .iter()
+        .map(|o| match o {
+            lopdf::Object::Reference(id) => (page, doc.get_dictionary(*id).unwrap().clone()),
+            lopdf::Object::Dictionary(d) => (page, d.clone()),
+            _ => panic!("annotation"),
+        })
+        .collect()
+}
+
+fn shape(kind: AnnotationKind, x: f32, y: f32, w: f32, h: f32) -> NewAnnotation {
+    NewAnnotation {
+        kind,
+        geometry: Geometry::Rect {
+            rect: Rect { x, y, w, h },
+        },
+        style: style(),
+        contents: String::new(),
+        author: String::new(),
+    }
+}
+
+#[test]
+fn saved_annotations_have_nm_and_p() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "nm"), None).unwrap();
+    for x in [50.0, 200.0] {
+        doc.add_annotation(0, &shape(AnnotationKind::Rect, x, 100.0, 80.0, 40.0))
+            .unwrap();
+    }
+    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap()).unwrap();
+    let saved = lopdf::Document::load_mem(&out).unwrap();
+    let annots = annots_of(&saved);
+    assert_eq!(annots.len(), 2);
+    let mut names = std::collections::BTreeSet::new();
+    for (page, dict) in annots {
+        let nm = dict.get(b"NM").unwrap().as_str().unwrap().to_vec();
+        assert!(names.insert(nm), "/NM unique");
+        assert_eq!(dict.get(b"P").unwrap().as_reference().unwrap(), page);
+    }
+}
+
+/// Nos ellipses sont des `Ink` dessinées en courbes de Bézier : l'`/InkList` doit suivre la
+/// courbe (points échantillonnés), pas seulement ses quatre extrémités (un losange).
+#[test]
+fn ellipse_ink_list_samples_the_curves() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "ellipse"), None).unwrap();
+    doc.add_annotation(
+        0,
+        &shape(AnnotationKind::Ellipse, 100.0, 100.0, 200.0, 100.0),
+    )
+    .unwrap();
+    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap()).unwrap();
+    let saved = lopdf::Document::load_mem(&out).unwrap();
+    let (_, dict) = annots_of(&saved).remove(0);
+    let points: Vec<f32> = dict
+        .get(b"InkList")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s.as_array().unwrap().iter().map(|v| v.as_float().unwrap()))
+        .collect();
+    assert!(points.len() / 2 >= 16, "{} points", points.len() / 2);
+    let xs: Vec<f32> = points.iter().step_by(2).copied().collect();
+    let ys: Vec<f32> = points.iter().skip(1).step_by(2).copied().collect();
+    let min = |v: &[f32]| v.iter().copied().fold(f32::MAX, f32::min);
+    let max = |v: &[f32]| v.iter().copied().fold(f32::MIN, f32::max);
+    let (cx, rx) = ((min(&xs) + max(&xs)) / 2.0, (max(&xs) - min(&xs)) / 2.0);
+    let (cy, ry) = ((min(&ys) + max(&ys)) / 2.0, (max(&ys) - min(&ys)) / 2.0);
+    for (x, y) in xs.iter().zip(&ys) {
+        let e = ((x - cx) / rx).powi(2) + ((y - cy) / ry).powi(2);
+        assert!(
+            (e - 1.0).abs() < 0.05,
+            "point ({x}, {y}) hors de l'ellipse : {e}"
+        );
+    }
+}
+
+/// Une apparence avec `/Matrix` : les points de l'`/InkList` sont dans l'espace de la page.
+#[test]
+fn ink_matrix_is_applied() {
+    let out = mega_core::cleanup::before_save(&mega_core::testing::ink_with_matrix_pdf()).unwrap();
+    let saved = lopdf::Document::load_mem(&out).unwrap();
+    let (_, dict) = annots_of(&saved).remove(0);
+    let first: Vec<f32> = dict.get(b"InkList").unwrap().as_array().unwrap()[0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .take(2)
+        .map(|v| v.as_float().unwrap())
+        .collect();
+    assert_eq!(first, vec![110.0, 120.0]);
+}

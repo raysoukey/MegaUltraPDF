@@ -11,6 +11,7 @@
   import { saveSettings, settings } from '$lib/state/settings.svelte';
   import { currentStyle, setStamp, setTool, toolState } from '$lib/state/tools.svelte';
   import { STAMP_IDS, stampLabel, type StampId } from '$lib/logic/tools';
+  import { shortcutKeyFor, type Action } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
   import ContentToolbar from './ContentToolbar.svelte';
   import StylePicker from './StylePicker.svelte';
@@ -31,23 +32,30 @@
     onocr: () => void;
   } = $props();
 
-  const TOOLS: { tool: Tool; glyph: string; key: string }[] = [
-    { tool: 'select', glyph: '⬚', key: 'Escape' },
-    { tool: 'note', glyph: '🗨', key: 'N' },
-    { tool: 'text', glyph: 'T', key: 'T' },
-    { tool: 'ink', glyph: '✎', key: 'D' },
-    { tool: 'rect', glyph: '▭', key: '' },
-    { tool: 'ellipse', glyph: '◯', key: '' },
-    { tool: 'line', glyph: '╱', key: '' },
-    { tool: 'arrow', glyph: '➚', key: '' },
-    { tool: 'stamp', glyph: '✔', key: '' },
-    { tool: 'signature', glyph: '✍', key: '' },
+  // Les touches affichées viennent de la table des raccourcis (une seule source, B10).
+  const TOOLS: { tool: Tool; glyph: string; action?: Action }[] = [
+    { tool: 'select', glyph: '⬚', action: 'escape' },
+    { tool: 'note', glyph: '🗨', action: 'toolNote' },
+    { tool: 'text', glyph: 'T', action: 'toolText' },
+    { tool: 'ink', glyph: '✎', action: 'toolInk' },
+    { tool: 'rect', glyph: '▭' },
+    { tool: 'ellipse', glyph: '◯' },
+    { tool: 'line', glyph: '╱' },
+    { tool: 'arrow', glyph: '➚' },
+    { tool: 'stamp', glyph: '✔' },
+    { tool: 'signature', glyph: '✍' },
   ];
-  const MARKUPS: { tool: Tool; kind: AnnotationKind; glyph: string; key: string }[] = [
-    { tool: 'highlight', kind: 'highlight', glyph: '🖍', key: 'H' },
-    { tool: 'underline', kind: 'underline', glyph: 'U̲', key: 'U' },
-    { tool: 'strikeout', kind: 'strike_out', glyph: 'S̶', key: 'K' },
+  const MARKUPS: { tool: Tool; kind: AnnotationKind; glyph: string; action: Action }[] = [
+    { tool: 'highlight', kind: 'highlight', glyph: '🖍', action: 'toolHighlight' },
+    { tool: 'underline', kind: 'underline', glyph: 'U̲', action: 'toolUnderline' },
+    { tool: 'strikeout', kind: 'strike_out', glyph: 'S̶', action: 'toolStrikeout' },
   ];
+
+  /** « Libellé (touche) », ou le libellé seul sans raccourci. */
+  function titled(label: string, action?: Action): string {
+    const key = action ? shortcutKeyFor(action) : null;
+    return key ? `${label} (${key})` : label;
+  }
 
   async function markup(tool: Tool, kind: AnnotationKind) {
     setTool(tool);
@@ -65,7 +73,7 @@
         class:active={toolState.tool === item.tool}
         aria-pressed={toolState.tool === item.tool}
         aria-label={t.tool[item.tool]}
-        title="{t.tool[item.tool]}{item.key ? ` (${t.keyNames[item.key] ?? item.key})` : ''}"
+        title={titled(t.tool[item.tool], item.action)}
         onclick={() => setTool(item.tool)}>{item.glyph}</button
       >
     {/each}
@@ -87,7 +95,7 @@
         type="button"
         disabled={!doc.selection}
         aria-label={t.tool[m.tool]}
-        title="{t.tool[m.tool]} ({m.key})"
+        title={titled(t.tool[m.tool], m.action)}
         onclick={() => markup(m.tool, m.kind)}>{m.glyph}</button
       >
     {/each}

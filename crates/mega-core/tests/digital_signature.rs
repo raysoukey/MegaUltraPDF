@@ -100,7 +100,10 @@ fn signing_time_outside_the_certificate_validity_is_invalid() {
     let der = cms::sign_digest(&rsa(), &digest, 4_070_908_800).unwrap();
     let check = cms::verify(&der, &digest);
     assert!(
-        matches!(check.status, SignatureStatus::Invalid(ref m) if m.contains("validité")),
+        check.status
+            == SignatureStatus::Invalid(
+                mega_core::digital_signature::SigIssue::SigningTimeOutsideValidity
+            ),
         "{check:?}"
     );
 }
@@ -366,6 +369,19 @@ fn write_signed_samples_for_pyhanko() {
     let dir = std::path::PathBuf::from(std::env::var("MEGA_CMS_SAMPLES").unwrap());
     std::fs::write(dir.join("ours.pdf"), sign(fixture("simple.pdf"), &rsa())).unwrap();
     std::fs::write(dir.join("ours-ec.pdf"), sign(fixture("form.pdf"), &ec())).unwrap();
+    std::fs::write(
+        dir.join("ours-objstm.pdf"),
+        sign(fixture("simple-objstm.pdf"), &rsa()),
+    )
+    .unwrap();
+    let mut old = fixture("simple.pdf");
+    old[5..8].copy_from_slice(b"1.4");
+    std::fs::write(dir.join("ours-pdf14.pdf"), sign(old, &rsa())).unwrap();
+    std::fs::write(
+        dir.join("ours-ap.pdf"),
+        sign(mega_core::testing::form_with_appearances_pdf(), &ec()),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -477,4 +493,164 @@ fn display_data_rewritten_after_signing_is_not_shown() {
     assert_eq!(info.status, SignatureStatus::Intact, "{info:?}");
     assert!(!info.covers_whole_document);
     assert_eq!(info.reason, None, "motif non signé masqué");
+}
+
+// --- Lot 9 : lecture stricte et révisions signées propres (C34-C38) ----------------------
+
+use mega_core::digital_signature::SigIssue;
+
+#[test]
+fn byte_range_with_extra_entries_is_invalid() {
+    let original = fixture("simple.pdf");
+    let mut signed = sign(original.clone(), &rsa());
+    // `/ByteRange[0 a b c      ]` : on glisse « /X » dans les espaces de bourrage.
+    let key = b"/ByteRange[0 ";
+    let at = original.len()
+        + signed[original.len()..]
+            .windows(key.len())
+            .position(|w| w == key)
+            .unwrap();
+    let close = at + signed[at..].iter().position(|&c| c == b']').unwrap();
+    assert!(&signed[close - 3..close] == b"   ", "bourrage attendu");
+    signed[close - 3..close].copy_from_slice(b" /X");
+    let info = only(signatures(&signed).unwrap());
+    assert_eq!(
+        info.status,
+        SignatureStatus::Invalid(SigIssue::ByteRangeInvalid)
+    );
+}
+
+#[test]
+fn usage_rights_signature_is_reported_unsupported() {
+    let list = signatures(&mega_core::testing::usage_rights_pdf()).unwrap();
+    let info = only(list);
+    assert_eq!(
+        info.status,
+        SignatureStatus::Unsupported(SigIssue::UsageRights)
+    );
+}
+
+/// Le dictionnaire de la révision signée (la plus récente) de `bytes`.
+fn latest(bytes: &[u8]) -> lopdf::Document {
+    lopdf::Document::load_mem(bytes).unwrap()
+}
+
+#[test]
+fn signed_widget_has_an_empty_appearance() {
+    let signed = latest(&sign(fixture("simple.pdf"), &rsa()));
+    let widget = signed
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .find(|d| d.get(b"FT").ok() == Some(&lopdf::Object::Name(b"Sig".to_vec())))
+        .unwrap();
+    let ap = widget.get(b"AP").unwrap().as_dict().unwrap();
+    let n = signed
+        .get_object(ap.get(b"N").unwrap().as_reference().unwrap())
+        .unwrap()
+        .as_stream()
+        .unwrap();
+    let bbox: Vec<f32> = n
+        .dict
+        .get(b"BBox")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_float().unwrap())
+        .collect();
+    assert_eq!(bbox, vec![0.0; 4]);
+}
+
+/// `/NeedAppearances` de la révision la plus récente.
+fn need_appearances(signed: &lopdf::Document) -> Option<lopdf::Object> {
+    let form = match signed.catalog().unwrap().get(b"AcroForm").unwrap() {
+        lopdf::Object::Reference(id) => signed.get_dictionary(*id).unwrap(),
+        lopdf::Object::Dictionary(d) => d,
+        _ => panic!("/AcroForm"),
+    };
+    form.get(b"NeedAppearances").ok().cloned()
+}
+
+/// Relecture du Lot 9 : la signature ne touche pas `/NeedAppearances` — une apparence
+/// présente peut être périmée (champ rempli sur une page jamais ouverte), et les autres
+/// lecteurs afficheraient alors l'ancienne valeur dans le document signé.
+#[test]
+fn signing_leaves_need_appearances_alone() {
+    for bytes in [
+        mega_core::testing::form_with_appearances_pdf(),
+        fixture("form.pdf"),
+    ] {
+        let signed = latest(&sign(bytes, &ec()));
+        assert_eq!(
+            need_appearances(&signed),
+            Some(lopdf::Object::Boolean(true))
+        );
+    }
+}
+
+/// Relecture du Lot 9 : un catalogue qui déclare déjà une version plus récente que
+/// l'en-tête (`/Version /1.7` avec `%PDF-1.4`) n'est pas ramené à 1.6.
+#[test]
+fn catalog_version_is_never_lowered() {
+    let mut lo = lopdf::Document::load_mem(&fixture("simple.pdf")).unwrap();
+    lo.version = "1.4".to_string();
+    let root = lo.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    lo.get_dictionary_mut(root)
+        .unwrap()
+        .set("Version", lopdf::Object::Name(b"1.7".to_vec()));
+    let mut bytes = Vec::new();
+    lo.save_to(&mut bytes).unwrap();
+    assert!(bytes.starts_with(b"%PDF-1.4"));
+    let signed = latest(&sign(bytes, &rsa()));
+    assert_eq!(
+        signed.catalog().unwrap().get(b"Version").unwrap(),
+        &lopdf::Object::Name(b"1.7".to_vec())
+    );
+}
+
+#[test]
+fn signed_revision_renews_the_second_id() {
+    let original = fixture("simple.pdf");
+    let before = latest(&original);
+    let signed = latest(&sign(original, &rsa()));
+    let id = |d: &lopdf::Document| -> Vec<Vec<u8>> {
+        d.trailer
+            .get(b"ID")
+            .ok()
+            .and_then(|i| i.as_array().ok())
+            .map(|a| a.iter().map(|s| s.as_str().unwrap().to_vec()).collect())
+            .unwrap_or_default()
+    };
+    let (old, new) = (id(&before), id(&signed));
+    assert_eq!(new.len(), 2, "{new:?}");
+    if old.len() == 2 {
+        assert_eq!(new[0], old[0], "premier identifiant conservé");
+        assert_ne!(new[1], old[1], "second identifiant renouvelé");
+    }
+}
+
+#[test]
+fn old_header_is_upgraded_in_the_signed_revision() {
+    let mut original = fixture("simple.pdf");
+    assert!(original.starts_with(b"%PDF-1.7"));
+    original[5..8].copy_from_slice(b"1.4");
+    let signed = latest(&sign(original, &rsa()));
+    assert_eq!(
+        signed.catalog().unwrap().get(b"Version").unwrap(),
+        &lopdf::Object::Name(b"1.6".to_vec())
+    );
+}
+
+#[test]
+fn xref_stream_trailer_is_clean() {
+    let original = fixture("simple-objstm.pdf");
+    let signed = sign(original.clone(), &rsa());
+    let tail = &signed[original.len()..];
+    let has = |needle: &[u8]| tail.windows(needle.len()).any(|w| w == needle);
+    assert!(
+        !has(b"/DecodeParms") && !has(b"/Predictor"),
+        "{}",
+        String::from_utf8_lossy(tail)
+    );
 }

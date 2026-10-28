@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { pickPdfFiles, startupFile } from '$lib/api';
+  import { pickPdfFiles, setTesseractPath, startupFile, takePendingPaths } from '$lib/api';
   import type { Annotation } from '$lib/api';
   import AnnotationEditor from '$lib/components/AnnotationEditor.svelte';
   import AnnotationToolbar from '$lib/components/AnnotationToolbar.svelte';
@@ -139,14 +139,39 @@
     if (doc && !doc.formInfo) void ensureFormInfo(doc);
   });
 
+  // Changer de langue efface les messages affichés : ils resteraient dans l'ancienne (C25).
+  let shownLanguage = ui.language;
+  $effect(() => {
+    if (ui.language === shownLanguage) return;
+    shownLanguage = ui.language;
+    docsState.notice = null;
+    docsState.error = null;
+  });
+
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenOpen: (() => void) | undefined;
     let unlistenClose: (() => void) | undefined;
     (async () => {
       await loadSettings();
       applyLanguage();
+      if (settings.tesseractPath) void setTesseractPath(settings.tesseractPath).catch(() => {});
       const path = await startupFile().catch(() => null);
       if (path) await openPath(path);
+      try {
+        // macOS : fichiers ouverts depuis le Finder. Le cœur les garde en attente (un
+        // démarrage à froid les reçoit avant que la page écoute) ; on les réclame à chaque
+        // signal, et une fois tout de suite pour ceux arrivés avant.
+        const { listen } = await import('@tauri-apps/api/event');
+        const openPending = async () => {
+          const paths = await takePendingPaths().catch(() => []);
+          if (paths.length > 0) await openPaths(paths);
+        };
+        unlistenOpen = await listen('open-paths', () => void openPending());
+        await openPending();
+      } catch {
+        // hors Tauri : pas d'événement
+      }
       try {
         const { getCurrentWebview } = await import('@tauri-apps/api/webview');
         unlisten = await getCurrentWebview().onDragDropEvent((event) => {
@@ -175,6 +200,7 @@
     })();
     return () => {
       unlisten?.();
+      unlistenOpen?.();
       unlistenClose?.();
     };
   });
@@ -369,7 +395,7 @@
 <svelte:window onkeydown={onKeydown} />
 
 {#key ui.language}
-  <main>
+  <main aria-busy={docsState.busy}>
     <Toolbar
       {doc}
       onopen={onOpen}
@@ -402,6 +428,9 @@
     {/if}
     {#if doc && searchOpen}
       <SearchBar {doc} onclose={() => (searchOpen = false)} />
+    {/if}
+    {#if docsState.busy}
+      <p class="busy" role="status">{t.working}</p>
     {/if}
     {#if docsState.error}
       <p class="error" role="alert">{docsState.error}</p>

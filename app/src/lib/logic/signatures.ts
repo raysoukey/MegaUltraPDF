@@ -17,8 +17,8 @@ export function signatureVerdict(info: SignatureInfo): { tone: VerdictTone; text
         ? { tone: 'ok', text: t.sigIntact }
         : { tone: 'warn', text: t.sigModifiedAfter };
     case 'invalid':
-      return { tone: 'bad', text: t.sigInvalid(info.status.detail) };
+      return { tone: 'bad', text: t.sigInvalid(t.sigIssues[info.status.issue]) };
     case 'unsupported':
-      return { tone: 'warn', text: t.sigUnsupported(info.status.detail) };
+      return { tone: 'warn', text: t.sigUnsupported(t.sigIssues[info.status.issue]) };
   }
 }

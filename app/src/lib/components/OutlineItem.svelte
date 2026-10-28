@@ -5,8 +5,9 @@
   import OutlineItem from './OutlineItem.svelte';
 
   let { doc, node, depth }: { doc: OpenDoc; node: OutlineNode; depth: number } = $props();
-  // svelte-ignore state_referenced_locally
-  let open = $state(depth < 1);
+  // Déplié ou replié : gardé dans la vue du document (survit au changement de langue).
+  const key = $derived(`${depth}:${node.page ?? ''}:${node.title}`);
+  const open = $derived(doc.view.outlineOpen[key] ?? depth < 1);
 </script>
 
 <li
@@ -20,7 +21,7 @@
         type="button"
         class="toggle"
         aria-label={open ? '−' : '+'}
-        onclick={() => (open = !open)}>{open ? '▾' : '▸'}</button
+        onclick={() => (doc.view.outlineOpen[key] = !open)}>{open ? '▾' : '▸'}</button
       >
     {:else}
       <span class="toggle"></span>

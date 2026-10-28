@@ -11,6 +11,8 @@
 //! (`m` déplacer, `l` ligne, `c` courbe, `re` rectangle…). `lopdf::content::Content::decode`
 //! le découpe en opérations ; on en déduit la liste de points attendue dans `/InkList`.
 
+use std::collections::BTreeSet;
+
 use lopdf::content::Content;
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
@@ -36,11 +38,15 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
         return Ok(bytes.to_vec());
     }
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
-    for page_id in pages {
-        clean_page_annotations(&mut doc, page_id)?;
+    for page_id in &pages {
+        clean_page_annotations(&mut doc, *page_id)?;
+        identify_annotations(&mut doc, *page_id)?;
     }
+    drop_dangling_annotation_links(&mut doc, &pages)?;
+    // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
+    crate::properties::stamp_mod_date(&mut doc);
     let pages_before = doc.get_pages().len();
-    doc.prune_objects();
+    prune(&mut doc);
     doc.renumber_objects();
     let mut out = Vec::new();
     doc.save_to(&mut out)?;
@@ -50,6 +56,45 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
         return Ok(bytes.to_vec());
     }
     Ok(out)
+}
+
+/// Objets atteignables depuis la remorque (racine, `/Info`, `/Encrypt`…), en suivant toutes
+/// les références des dictionnaires, tableaux et dictionnaires de flux.
+///
+/// \[Apprentissage\] `lopdf::Document::prune_objects` tient la liste des objets vus dans
+/// un `Vec` et appelle `contains` à chaque référence : temps **quadratique**, sensible sur un
+/// gros fichier (C22, Lot 9). Un `BTreeSet` répond à « déjà vu ? » en temps logarithmique.
+pub(crate) fn reachable(doc: &Document) -> BTreeSet<ObjectId> {
+    fn refs_of(object: &Object, out: &mut Vec<ObjectId>) {
+        match object {
+            Object::Reference(id) => out.push(*id),
+            Object::Array(items) => items.iter().for_each(|o| refs_of(o, out)),
+            Object::Dictionary(dict) => dict.iter().for_each(|(_, o)| refs_of(o, out)),
+            Object::Stream(stream) => stream.dict.iter().for_each(|(_, o)| refs_of(o, out)),
+            _ => {}
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let mut todo = Vec::new();
+    for (_, value) in doc.trailer.iter() {
+        refs_of(value, &mut todo);
+    }
+    while let Some(id) = todo.pop() {
+        if seen.insert(id)
+            && let Some(object) = doc.objects.get(&id)
+        {
+            refs_of(object, &mut todo);
+        }
+    }
+    seen
+}
+
+/// Retire les objets inatteignables (orphelins) et rend leur nombre.
+pub(crate) fn prune(doc: &mut Document) -> usize {
+    let keep = reachable(doc);
+    let before = doc.objects.len();
+    doc.objects.retain(|id, _| keep.contains(id));
+    before - doc.objects.len()
 }
 
 /// Vrai si `out` se relit comme un PDF non vide ayant encore `pages_before` pages.
@@ -121,6 +166,262 @@ fn clean_page_annotations(doc: &mut Document, page_id: ObjectId) -> CoreResult<(
     Ok(())
 }
 
+/// Le tableau `/Annots` d'une page : où le réécrire (objet indirect, ou `None` s'il est
+/// direct dans la page) et ses éléments.
+fn page_annots(doc: &Document, page_id: ObjectId) -> Option<(Option<ObjectId>, Vec<Object>)> {
+    match doc.get_dictionary(page_id).ok()?.get(b"Annots").ok()? {
+        Object::Reference(id) => Some((
+            Some(*id),
+            doc.get_object(*id).ok()?.as_array().ok()?.clone(),
+        )),
+        Object::Array(array) => Some((None, array.clone())),
+        _ => None,
+    }
+}
+
+/// Donne à chaque annotation de la page qui n'en a pas un `/NM` (nom unique sur la page)
+/// et un `/P` (sa page) : clés facultatives que PDFium n'écrit pas, mais dont se servent les
+/// lecteurs qui synchronisent, fusionnent ou répondent à des commentaires (§12.5.2, B3).
+fn identify_annotations(doc: &mut Document, page_id: ObjectId) -> CoreResult<()> {
+    let Some((array_id, mut items)) = page_annots(doc, page_id) else {
+        return Ok(());
+    };
+    let mut names: BTreeSet<Vec<u8>> = items
+        .iter()
+        .filter_map(|item| match item {
+            Object::Reference(id) => doc.get_dictionary(*id).ok(),
+            Object::Dictionary(dict) => Some(dict),
+            _ => None,
+        })
+        .filter_map(|d| {
+            d.get(b"NM")
+                .and_then(Object::as_str)
+                .ok()
+                .map(<[u8]>::to_vec)
+        })
+        .collect();
+    let mut inline_changed = false;
+    for (i, item) in items.iter_mut().enumerate() {
+        let mut fresh = || {
+            let mut name = format!("mega-{}-{}-{i}", page_id.0, page_id.1).into_bytes();
+            while names.contains(&name) {
+                name.push(b'x');
+            }
+            names.insert(name.clone());
+            Object::String(name, lopdf::StringFormat::Literal)
+        };
+        let dict = match item {
+            Object::Reference(id) => match doc.get_dictionary_mut(*id) {
+                Ok(dict) => dict,
+                Err(_) => continue,
+            },
+            Object::Dictionary(dict) => {
+                inline_changed |= !dict.has(b"NM") || !dict.has(b"P");
+                dict
+            }
+            _ => continue,
+        };
+        if !dict.has(b"NM") {
+            dict.set("NM", fresh());
+        }
+        if !dict.has(b"P") {
+            dict.set("P", Object::Reference(page_id));
+        }
+    }
+    if inline_changed {
+        match array_id {
+            Some(id) => {
+                doc.objects.insert(id, Object::Array(items));
+            }
+            None => doc
+                .get_dictionary_mut(page_id)
+                .map_err(structure)?
+                .set("Annots", Object::Array(items)),
+        }
+    }
+    Ok(())
+}
+
+/// Une annotation retirée de la page (supprimée, caviardée) ne doit pas survivre dans le
+/// fichier par un objet qui la cite encore (B20, Lot 9) : son **popup** (dont `/Parent` la
+/// vise et qui, lui, peut être hors de la zone caviardée), une **réponse** (`/IRT`), ou
+/// l'**arbre de structure** d'un PDF balisé (marqueur `/OBJR`). On retire ces liens ; l'élagage
+/// qui suit supprime alors la note, son `/Contents` compris.
+///
+/// \[Apprentissage\] L'élagage garde tout objet **atteignable** depuis la racine : supprimer
+/// une note de `/Annots` ne suffit pas tant qu'un autre objet la référence encore.
+fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> CoreResult<()> {
+    // Annotations encore listées sur une page (par référence).
+    let listed = |doc: &Document| -> BTreeSet<ObjectId> {
+        pages
+            .iter()
+            .filter_map(|page| page_annots(doc, *page))
+            .flat_map(|(_, items)| items)
+            .filter_map(|item| item.as_reference().ok())
+            .collect()
+    };
+    let before = listed(doc);
+    // 1. Popups dont le parent n'est plus listé : retirés de `/Annots`.
+    for page_id in pages {
+        let Some((array_id, items)) = page_annots(doc, *page_id) else {
+            continue;
+        };
+        let orphan = |item: &Object| {
+            let dict = match item {
+                Object::Reference(id) => doc.get_dictionary(*id).ok(),
+                Object::Dictionary(dict) => Some(dict),
+                _ => None,
+            };
+            dict.is_some_and(|d| {
+                subtype(d) == b"Popup"
+                    && d.get(b"Parent")
+                        .and_then(Object::as_reference)
+                        .is_ok_and(|parent| !before.contains(&parent))
+            })
+        };
+        let kept: Vec<Object> = items.iter().filter(|i| !orphan(i)).cloned().collect();
+        if kept.len() == items.len() {
+            continue;
+        }
+        match array_id {
+            Some(id) => {
+                doc.objects.insert(id, Object::Array(kept));
+            }
+            None => doc
+                .get_dictionary_mut(*page_id)
+                .map_err(structure)?
+                .set("Annots", Object::Array(kept)),
+        }
+    }
+    // 2. Annotations qui ne sont plus listées nulle part.
+    let alive = listed(doc);
+    let dead: BTreeSet<ObjectId> = doc
+        .objects
+        .iter()
+        .filter(|(id, object)| {
+            !alive.contains(id)
+                && object.as_dict().is_ok_and(|d| {
+                    d.has(b"Rect")
+                        && (d.get(b"Type").and_then(Object::as_name).ok()
+                            == Some(b"Annot".as_slice())
+                            || d.has(b"Subtype"))
+                })
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    if dead.is_empty() {
+        return Ok(());
+    }
+    // 3. Leur texte d'abord, par précaution : même si un lien oublié les garde atteignables,
+    //    plus rien de lisible n'y reste (relecture du Lot 9).
+    for id in &dead {
+        if let Ok(dict) = doc.get_dictionary_mut(*id) {
+            for key in [
+                b"Contents".as_slice(),
+                b"RC",
+                b"T",
+                b"Subj",
+                b"Popup",
+                b"AP",
+                b"FS",
+            ] {
+                dict.remove(key);
+            }
+        }
+    }
+    // 4. Marqueurs `/OBJR` vers elles rangés en objets indirects.
+    let dead_objr: BTreeSet<ObjectId> = doc
+        .objects
+        .iter()
+        .filter(|(_, o)| o.as_dict().is_ok_and(|d| is_objr_to(d, &dead)))
+        .map(|(id, _)| *id)
+        .collect();
+    // 5. Liens `/IRT` et entrées `/OBJR` vers elles : retirés partout, objets directs compris.
+    for object in doc.objects.values_mut() {
+        scrub_links(object, &dead, &dead_objr, 0);
+    }
+    Ok(())
+}
+
+/// Vrai si `dict` est un marqueur de contenu `/OBJR` dont la cible `/Obj` est dans `dead`.
+fn is_objr_to(dict: &Dictionary, dead: &BTreeSet<ObjectId>) -> bool {
+    dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"OBJR".as_slice())
+        && dict
+            .get(b"Obj")
+            .and_then(Object::as_reference)
+            .is_ok_and(|id| dead.contains(&id))
+}
+
+/// Retire de `object` (et de ce qu'il contient directement) les clés `/IRT` qui visent une
+/// annotation de `dead`, et les entrées `/OBJR` qui la citent dans le `/K` d'un élément de
+/// structure : le marqueur entier part (sa clé `/Obj` est obligatoire, §14.7.4.3), et avec
+/// lui le texte qui décrivait l'annotation (`/Alt`, `/ActualText`, `/E`). Profondeur bornée :
+/// un objet direct ne peut pas se contenir lui-même, mais un fichier hostile peut
+/// l'imbriquer très loin.
+fn scrub_links(
+    object: &mut Object,
+    dead: &BTreeSet<ObjectId>,
+    dead_objr: &BTreeSet<ObjectId>,
+    depth: usize,
+) {
+    if depth > 64 {
+        return;
+    }
+    let is_dead_marker = |o: &Object| match o {
+        Object::Dictionary(d) => is_objr_to(d, dead),
+        Object::Reference(id) => dead_objr.contains(id),
+        _ => false,
+    };
+    match object {
+        Object::Dictionary(dict) => {
+            if dict
+                .get(b"IRT")
+                .and_then(Object::as_reference)
+                .is_ok_and(|id| dead.contains(&id))
+            {
+                dict.remove(b"IRT");
+            }
+            let mut removed = false;
+            let mut emptied = false;
+            match dict.get_mut(b"K") {
+                Ok(Object::Array(kids)) => {
+                    let before = kids.len();
+                    kids.retain(|k| !is_dead_marker(k));
+                    removed = kids.len() != before;
+                    emptied = kids.is_empty();
+                }
+                Ok(k) if is_dead_marker(k) => {
+                    removed = true;
+                    emptied = true;
+                }
+                _ => {}
+            }
+            if emptied {
+                dict.remove(b"K");
+            }
+            if removed {
+                for key in [b"Alt".as_slice(), b"ActualText", b"E"] {
+                    dict.remove(key);
+                }
+            }
+            for (_, value) in dict.iter_mut() {
+                scrub_links(value, dead, dead_objr, depth + 1);
+            }
+        }
+        Object::Array(items) => {
+            for item in items.iter_mut() {
+                scrub_links(item, dead, dead_objr, depth + 1);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, value) in stream.dict.iter_mut() {
+                scrub_links(value, dead, dead_objr, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn subtype(dict: &Dictionary) -> Vec<u8> {
     dict.get(b"Subtype")
         .ok()
@@ -171,6 +472,23 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
     let mut strokes: Vec<Vec<f32>> = Vec::new();
     let mut current: Vec<f32> = Vec::new();
     let num = |o: &Object| o.as_float().ok();
+    // Une courbe de Bézier est échantillonnée en 8 segments depuis le point courant : une
+    // `/InkList` réduite aux extrémités ferait d'une ellipse un losange (B25, Lot 9).
+    let curve = |current: &mut Vec<f32>, c1: [f32; 2], c2: [f32; 2], end: [f32; 2]| {
+        let [Some(&x0), Some(&y0)] = [current.len().checked_sub(2), current.len().checked_sub(1)]
+            .map(|i| i.and_then(|i| current.get(i)))
+        else {
+            current.extend(end);
+            return;
+        };
+        for step in 1..=8 {
+            let t = step as f32 / 8.0;
+            let u = 1.0 - t;
+            let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+            current.push(a * x0 + b * c1[0] + c * c2[0] + d * end[0]);
+            current.push(a * y0 + b * c1[1] + c * c2[1] + d * end[1]);
+        }
+    };
     for op in content.operations.iter().take(100_000) {
         let v: Vec<f32> = op.operands.iter().filter_map(num).collect();
         match (op.operator.as_str(), v.as_slice()) {
@@ -183,8 +501,19 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
                 current.extend([*x, *y]);
             }
             ("l", [x, y]) => current.extend([*x, *y]),
-            ("c", [.., x, y]) => current.extend([*x, *y]),
-            ("v", [.., x, y]) | ("y", [.., x, y]) => current.extend([*x, *y]),
+            ("c", [x1, y1, x2, y2, x, y]) => curve(&mut current, [*x1, *y1], [*x2, *y2], [*x, *y]),
+            ("v", [x2, y2, x, y]) => {
+                // Premier point de contrôle = point courant.
+                let start = [
+                    current
+                        .get(current.len().wrapping_sub(2))
+                        .copied()
+                        .unwrap_or(*x2),
+                    current.last().copied().unwrap_or(*y2),
+                ];
+                curve(&mut current, start, [*x2, *y2], [*x, *y]);
+            }
+            ("y", [x1, y1, x, y]) => curve(&mut current, [*x1, *y1], [*x, *y], [*x, *y]),
             ("re", [x, y, w, h]) => {
                 if current.len() >= 4 {
                     strokes.push(std::mem::take(&mut current));
@@ -203,6 +532,21 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
     }
     if strokes.is_empty() {
         return None;
+    }
+    // Les points de l'apparence sont dans l'espace du formulaire : `/Matrix` les ramène dans
+    // celui de la page (§8.10.1).
+    let matrix: Option<Vec<f32>> = stream
+        .dict
+        .get(b"Matrix")
+        .and_then(Object::as_array)
+        .ok()
+        .map(|m| m.iter().filter_map(num).collect());
+    if let Some([a, b, c, d, e, f]) = matrix.as_deref() {
+        for stroke in &mut strokes {
+            for [x, y] in stroke.as_chunks_mut::<2>().0 {
+                (*x, *y) = (a * *x + c * *y + e, b * *x + d * *y + f);
+            }
+        }
     }
     Some(
         strokes
@@ -226,5 +570,30 @@ mod tests {
             "fichier tronqué"
         );
         assert!(!rewrite_is_sane(0, b"pas un pdf"));
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    /// Même résultat que `lopdf`, y compris sur des références cycliques (signets en boucle,
+    /// popup et note qui se citent l'un l'autre).
+    #[test]
+    fn prune_matches_lopdf_on_cycles() {
+        for bytes in [
+            crate::testing::cyclic_outline_pdf(),
+            crate::testing::note_with_popup_pdf("x"),
+            crate::testing::heavy_images_pdf(),
+        ] {
+            let mut ours = Document::load_mem(&bytes).unwrap();
+            let orphan = ours.add_object(Object::Integer(42));
+            let mut theirs = ours.clone();
+            assert!(prune(&mut ours) >= 1);
+            theirs.prune_objects();
+            let keys = |d: &Document| d.objects.keys().copied().collect::<Vec<_>>();
+            assert_eq!(keys(&ours), keys(&theirs));
+            assert!(!ours.objects.contains_key(&orphan));
+        }
     }
 }

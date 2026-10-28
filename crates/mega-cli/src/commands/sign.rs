@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `mega sign` et `mega signatures` (feature `signature`, Lot 8).
 
-use std::io::BufRead;
+use std::io::{BufRead, IsTerminal};
 use std::path::Path;
 
 use anyhow::Context;
@@ -18,6 +18,12 @@ pub const P12_PASSWORD_ENV: &str = "MEGA_P12_PASSWORD";
 fn p12_password() -> anyhow::Result<String> {
     if let Ok(p) = std::env::var(P12_PASSWORD_ENV) {
         return Ok(p);
+    }
+    // Au clavier : saisie **sans écho** (le mot de passe ne s'affiche pas à l'écran). Depuis
+    // un tube (`echo … | mega sign`), une simple ligne lue.
+    if std::io::stdin().is_terminal() {
+        return rpassword::prompt_password("Mot de passe du certificat : ")
+            .context("lecture du mot de passe");
     }
     eprintln!("Mot de passe du certificat :");
     let mut line = String::new();
@@ -58,8 +64,8 @@ fn verdict(info: &SignatureInfo) -> String {
         SignatureStatus::Intact => {
             "intègre, mais le document a été modifié après cette signature".to_string()
         }
-        SignatureStatus::Invalid(why) => format!("INVALIDE : {why}"),
-        SignatureStatus::Unsupported(why) => format!("non vérifiable : {why}"),
+        SignatureStatus::Invalid(why) => format!("INVALIDE : {}", why.message()),
+        SignatureStatus::Unsupported(why) => format!("non vérifiable : {}", why.message()),
     }
 }
 

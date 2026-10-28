@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { initialPosition } from './position';
+import { boundPositions, initialPosition } from './position';
 
 const base = {
   scale: 1.25,
@@ -36,5 +36,17 @@ describe('initialPosition', () => {
       scale: 1.25,
       zoomMode: 'fitWidth',
     });
+  });
+});
+
+describe('boundPositions (A20)', () => {
+  it('keeps the most recently remembered positions only', () => {
+    const positions: Record<string, { page: number; scale: number; zoomMode: 'custom' }> = {};
+    for (let i = 0; i < 120; i++)
+      positions[`f${i}.pdf`] = { page: i, scale: 1, zoomMode: 'custom' };
+    const kept = boundPositions(positions, 100);
+    expect(Object.keys(kept)).toHaveLength(100);
+    expect(kept['f0.pdf']).toBeUndefined();
+    expect(kept['f119.pdf']?.page).toBe(119);
   });
 });

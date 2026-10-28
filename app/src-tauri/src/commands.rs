@@ -108,6 +108,26 @@ pub async fn annotations(
     blocking(handle, move |h| h.annotations(id, page)).await
 }
 
+/// Annotations de toutes les pages, en une requête (Lot 9).
+#[tauri::command]
+pub async fn all_annotations(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<Vec<Vec<mega_core::Annotation>>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.all_annotations(id)).await
+}
+
+/// Champs de formulaire de toutes les pages, en une requête (Lot 9).
+#[tauri::command]
+pub async fn all_form_fields(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<Vec<Vec<mega_core::FormField>>, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.all_form_fields(id)).await
+}
+
 /// Objets du contenu d'une page (Lot 5).
 #[tauri::command]
 pub async fn page_objects(
@@ -343,6 +363,22 @@ pub async fn ocr_status(
     blocking(handle, |_| Ok(mega_core::ocr::ocr_status())).await
 }
 
+/// Fichiers reçus du système (Finder) en attente d'ouverture ; la liste est vidée.
+#[tauri::command]
+pub fn take_pending_paths(pending: State<'_, crate::PendingPaths>) -> Vec<String> {
+    pending.take()
+}
+
+/// Chemin de Tesseract choisi dans les préférences (vide ou absent : recherche automatique).
+#[tauri::command]
+pub fn set_tesseract_path(path: Option<String>) {
+    let path = path
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .map(std::path::PathBuf::from);
+    mega_core::ocr::set_tesseract_path(path);
+}
+
 /// Pour chaque page, contient-elle déjà du texte ? (choix des pages à reconnaître)
 #[tauri::command]
 pub async fn pages_with_text(
@@ -508,13 +544,28 @@ mod tests {
         assert_eq!(json[0]["covers_whole_document"], true);
         assert!(json[0]["signed_at"].is_i64());
         let invalid = serde_json::to_value(mega_core::digital_signature::SignatureStatus::Invalid(
-            "modifié".to_string(),
+            mega_core::digital_signature::SigIssue::ContentModified,
         ))
         .unwrap();
         assert_eq!(
             invalid,
-            serde_json::json!({ "kind": "invalid", "detail": "modifié" })
+            serde_json::json!({ "kind": "invalid", "issue": "content_modified" })
         );
+    }
+
+    /// Le chemin choisi dans les préférences passe avant toute recherche ; vide, il rend la
+    /// main à la recherche automatique.
+    #[test]
+    fn set_tesseract_path_overrides_the_search() {
+        // Un fichier factice (jamais lancé) : pointer vers l'exécutable de test lui-même
+        // risquerait qu'un autre test en parallèle le lance avec `--list-langs`.
+        let fake = std::env::temp_dir().join(format!("mega-tesseract-{}.txt", std::process::id()));
+        std::fs::write(&fake, b"pas un programme").unwrap();
+        set_tesseract_path(Some(fake.to_string_lossy().into_owned()));
+        assert_eq!(mega_core::ocr::find_tesseract(), Some(fake.clone()));
+        set_tesseract_path(Some("   ".to_string()));
+        assert_ne!(mega_core::ocr::find_tesseract(), Some(fake.clone()));
+        let _ = std::fs::remove_file(&fake);
     }
 
     #[test]

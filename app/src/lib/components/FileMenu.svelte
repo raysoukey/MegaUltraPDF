@@ -4,7 +4,7 @@
   import { clearRecent, settings } from '$lib/state/settings.svelte';
   import { shortcutKeyFor } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
-  import { menuNav } from '$lib/actions/menuNav';
+  import MenuButton from './MenuButton.svelte';
 
   let {
     doc,
@@ -32,20 +32,6 @@
     onpreferences: () => void;
   } = $props();
 
-  let open = $state(false);
-  let openFrom = $state<'first' | 'last'>('first');
-  let trigger: HTMLButtonElement | undefined = $state();
-
-  function close(refocus: boolean) {
-    open = false;
-    if (refocus) trigger?.focus();
-  }
-  function pick(action: () => void) {
-    // Le focus revient au bouton **avant** d'ouvrir le dialogue : c'est lui que le piège de
-    // focus du dialogue retiendra comme élément d'origine (l'élément du menu va disparaître).
-    close(true);
-    action();
-  }
   const entries = $derived<
     { label: string; action: () => void; needsDoc: boolean; key?: string }[]
   >([
@@ -75,76 +61,50 @@
   ]);
 </script>
 
-<div class="menu">
-  <button
-    type="button"
-    aria-haspopup="menu"
-    aria-expanded={open}
-    title={t.fileMenu}
-    bind:this={trigger}
-    onkeydown={(e) => {
-      // ↓ ouvre sur le premier élément, ↑ sur le dernier (motif ARIA « bouton de menu »).
-      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) {
-        e.preventDefault();
-        openFrom = e.key === 'ArrowUp' ? 'last' : 'first';
-        open = true;
-      }
-    }}
-    onclick={() => {
-      openFrom = 'first';
-      open = !open;
-    }}>{t.fileMenu} <span aria-hidden="true">▾</span></button
-  >
-  {#if open}
-    <ul
-      class="dropdown"
-      role="menu"
-      aria-label={t.fileMenu}
-      use:menuNav={{ onclose: close, start: openFrom }}
-    >
+<MenuButton label={t.fileMenu} title={t.fileMenu} minWidth="260px">
+  {#snippet items(pick)}
+    <li role="none">
+      <button type="button" role="menuitem" onclick={() => pick(onopen)}
+        >{t.openFile} <span class="key">{shortcutKeyFor('open')}</span></button
+      >
+    </li>
+    {#if settings.recent.length > 0}
+      <li class="separator" role="separator"></li>
       <li role="none">
-        <button type="button" role="menuitem" onclick={() => pick(onopen)}
-          >{t.openFile} <span class="key">{shortcutKeyFor('open')}</span></button
+        <ul class="group" role="group" aria-label={t.recentFiles}>
+          <li role="none"><span class="muted" aria-hidden="true">{t.recentFiles}</span></li>
+          {#each settings.recent.slice(0, 8) as path (path)}
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                title={path}
+                onclick={() => pick(() => onopenrecent(path))}>{path.split(/[\\/]/).pop()}</button
+              >
+            </li>
+          {/each}
+        </ul>
+      </li>
+      <li role="none">
+        <button type="button" role="menuitem" onclick={() => pick(clearRecent)}
+          >{t.clearRecent}</button
         >
       </li>
-      {#if settings.recent.length > 0}
-        <li class="separator" role="separator"></li>
-        <li role="none">
-          <ul class="group" role="group" aria-label={t.recentFiles}>
-            <li role="none"><span class="muted" aria-hidden="true">{t.recentFiles}</span></li>
-            {#each settings.recent.slice(0, 8) as path (path)}
-              <li role="none">
-                <button
-                  type="button"
-                  role="menuitem"
-                  title={path}
-                  onclick={() => pick(() => onopenrecent(path))}>{path.split(/[\\/]/).pop()}</button
-                >
-              </li>
-            {/each}
-          </ul>
-        </li>
-        <li role="none">
-          <button type="button" role="menuitem" onclick={() => pick(clearRecent)}
-            >{t.clearRecent}</button
-          >
-        </li>
-      {/if}
-      <li class="separator" role="separator"></li>
-      {#each entries as e (e.label)}
-        <li role="none">
-          <button
-            type="button"
-            role="menuitem"
-            disabled={e.needsDoc && !doc}
-            onclick={() => pick(e.action)}
-            >{e.label}{#if e.key}<span class="key">{e.key}</span>{/if}</button
-          >
-        </li>
-      {/each}
-    </ul>
-  {/if}
-</div>
+    {/if}
+    <li class="separator" role="separator"></li>
+    {#each entries as e (e.label)}
+      <li role="none">
+        <button
+          type="button"
+          role="menuitem"
+          disabled={e.needsDoc && !doc}
+          onclick={() => pick(e.action)}
+          >{e.label}{#if e.key}<span class="key">{e.key}</span>{/if}</button
+        >
+      </li>
+    {/each}
+  {/snippet}
+</MenuButton>
 
 <style>
   .group {
@@ -152,24 +112,7 @@
     margin: 0;
     padding: 0;
   }
-  .menu {
-    position: relative;
-  }
-  .dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    z-index: 20;
-    list-style: none;
-    margin: 0;
-    padding: 0.25rem;
-    min-width: 260px;
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-  }
-  .dropdown li button {
+  li button {
     width: 100%;
     display: flex;
     justify-content: space-between;

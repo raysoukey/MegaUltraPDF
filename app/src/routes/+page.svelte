@@ -31,6 +31,7 @@
   import Toolbar from '$lib/components/Toolbar.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import { isContentTool } from '$lib/logic/content';
+  import { afterEscape, isShown, request, type Dialog } from '$lib/logic/dialogs';
   import { selectedText } from '$lib/logic/selection';
   import { actionFor } from '$lib/logic/shortcuts';
   import { nextZoom } from '$lib/logic/zoom';
@@ -81,38 +82,16 @@
   const doc = $derived(activeDoc());
   let viewer: Viewer | undefined = $state();
   let searchOpen = $state(false);
-  let propertiesOpen = $state(false);
-  let helpOpen = $state(false);
-  let preferencesOpen = $state(false);
-  let mergeOpen = $state(false);
-  let splitOpen = $state(false);
-  let watermarkOpen = $state(false);
-  let ocrOpen = $state(false);
-  let signOpen = $state(false);
+  // Un seul dialogue de la page à la fois (logic/dialogs.ts).
+  let dialog = $state<Dialog | null>(null);
   // Vrai pendant une reconnaissance ou une signature : Échap n'interrompt pas l'opération.
-  let ocrRunning = $state(false);
-  let signBusy = $state(false);
-  let numberingOpen = $state(false);
-  let cropOpen = $state(false);
-  let exportOpen = $state(false);
-  let printOpen = $state(false);
-  let protectOpen = $state(false);
-  let optimizeOpen = $state(false);
-  let compareOpen = $state(false);
-  const contentDialogOpen = $derived(
-    watermarkOpen ||
-      ocrOpen ||
-      signOpen ||
-      numberingOpen ||
-      cropOpen ||
-      exportOpen ||
-      printOpen ||
-      protectOpen ||
-      optimizeOpen ||
-      compareOpen ||
-      !!doc?.textInsertRequest ||
-      !!doc?.redactRequest,
-  );
+  let dialogBusy = $state(false);
+  const openDialog = (wanted: Dialog) => (dialog = request(dialog, wanted, !!doc));
+  const closeDialog = () => {
+    dialog = null;
+    dialogBusy = false;
+  };
+  const shown = (d: Dialog) => isShown(d, dialog, !!doc);
   let editing = $state<{ annotation: Annotation; page: number } | null>(null);
 
   async function editSelected() {
@@ -250,14 +229,11 @@
     if (
       (docsState.closePrompt ||
         docsState.passwordPrompt ||
-        propertiesOpen ||
-        preferencesOpen ||
-        (helpOpen && action !== 'help') ||
-        mergeOpen ||
-        splitOpen ||
+        (dialog !== null && !(dialog === 'help' && action === 'help')) ||
         editing ||
         doc?.signatureRequest ||
-        contentDialogOpen) &&
+        doc?.textInsertRequest ||
+        doc?.redactRequest) &&
       action !== 'escape'
     )
       return;
@@ -282,10 +258,10 @@
         if (doc) saveAs(doc);
         break;
       case 'merge':
-        mergeOpen = true;
+        openDialog('merge');
         break;
       case 'split':
-        if (doc) splitOpen = true;
+        openDialog('split');
         break;
       case 'toolNote':
         if (doc) setTool('note');
@@ -349,38 +325,25 @@
         if (doc) goToPage(doc, doc.page - 1);
         break;
       case 'help':
-        helpOpen = !helpOpen;
+        if (dialog === 'help') closeDialog();
+        else openDialog('help');
         break;
       case 'preferences':
-        preferencesOpen = true;
+        openDialog('preferences');
         break;
       case 'properties':
-        if (doc) propertiesOpen = true;
+        openDialog('properties');
         break;
       case 'print':
-        if (doc) printOpen = true;
+        openDialog('print');
         break;
       case 'escape':
         if (docsState.closePrompt) resolveClosePrompt('cancel');
         else if (doc?.signatureRequest) cancelSignature(doc);
         else if (doc?.textInsertRequest) cancelTextInsert(doc);
         else if (doc?.redactRequest) cancelRedact(doc);
-        else if (watermarkOpen) watermarkOpen = false;
-        else if (ocrOpen) ocrOpen = ocrRunning;
-        else if (signOpen) signOpen = signBusy;
-        else if (numberingOpen) numberingOpen = false;
-        else if (cropOpen) cropOpen = false;
-        else if (printOpen) printOpen = false;
-        else if (exportOpen) exportOpen = false;
-        else if (protectOpen) protectOpen = false;
-        else if (optimizeOpen) optimizeOpen = false;
-        else if (compareOpen) compareOpen = false;
+        else if (dialog !== null) dialog = afterEscape(dialog, dialogBusy);
         else if (editing) editing = null;
-        else if (mergeOpen) mergeOpen = false;
-        else if (splitOpen) splitOpen = false;
-        else if (helpOpen) helpOpen = false;
-        else if (preferencesOpen) preferencesOpen = false;
-        else if (propertiesOpen) propertiesOpen = false;
         else if (docsState.passwordPrompt) cancelPassword();
         else if (searchOpen) searchOpen = false;
         else if (doc?.selectedObject) selectObject(doc, null);
@@ -403,27 +366,27 @@
       onfitwidth={() => viewer?.fitWidth()}
       onfitpage={() => viewer?.fitPage()}
       ontogglesearch={() => (searchOpen = !searchOpen)}
-      onproperties={() => (propertiesOpen = true)}
-      onhelp={() => (helpOpen = true)}
-      onpreferences={() => (preferencesOpen = true)}
-      onmerge={() => (mergeOpen = true)}
-      onsplit={() => doc && (splitOpen = true)}
-      onexport={() => doc && (exportOpen = true)}
-      onprint={() => doc && (printOpen = true)}
-      onprotect={() => doc && (protectOpen = true)}
-      onsign={() => doc && (signOpen = true)}
-      onoptimize={() => doc && (optimizeOpen = true)}
-      oncompare={() => doc && (compareOpen = true)}
+      onproperties={() => openDialog('properties')}
+      onhelp={() => openDialog('help')}
+      onpreferences={() => openDialog('preferences')}
+      onmerge={() => openDialog('merge')}
+      onsplit={() => openDialog('split')}
+      onexport={() => openDialog('export')}
+      onprint={() => openDialog('print')}
+      onprotect={() => openDialog('protect')}
+      onsign={() => openDialog('sign')}
+      onoptimize={() => openDialog('optimize')}
+      oncompare={() => openDialog('compare')}
     />
     <Tabs />
     {#if doc}
       <AnnotationToolbar
         {doc}
         onedit={editSelected}
-        onwatermark={() => (watermarkOpen = true)}
-        onnumbering={() => (numberingOpen = true)}
-        oncrop={() => (cropOpen = true)}
-        onocr={() => (ocrOpen = true)}
+        onwatermark={() => openDialog('watermark')}
+        onnumbering={() => openDialog('numbering')}
+        oncrop={() => openDialog('crop')}
+        onocr={() => openDialog('ocr')}
       />
     {/if}
     {#if doc && searchOpen}
@@ -466,20 +429,20 @@
         oncancel={cancelPassword}
       />
     {/if}
-    {#if doc && propertiesOpen}
-      <PropertiesDialog {doc} onclose={() => (propertiesOpen = false)} />
+    {#if doc && shown('properties')}
+      <PropertiesDialog {doc} onclose={closeDialog} />
     {/if}
-    {#if helpOpen}
-      <HelpDialog onclose={() => (helpOpen = false)} />
+    {#if shown('help')}
+      <HelpDialog onclose={closeDialog} />
     {/if}
-    {#if preferencesOpen}
-      <PreferencesDialog onclose={() => (preferencesOpen = false)} />
+    {#if shown('preferences')}
+      <PreferencesDialog onclose={closeDialog} />
     {/if}
-    {#if mergeOpen}
-      <MergeDialog onclose={() => (mergeOpen = false)} />
+    {#if shown('merge')}
+      <MergeDialog onclose={closeDialog} />
     {/if}
-    {#if doc && splitOpen}
-      <SplitDialog {doc} onclose={() => (splitOpen = false)} />
+    {#if doc && shown('split')}
+      <SplitDialog {doc} onclose={closeDialog} />
     {/if}
     {#if doc && doc.signatureRequest}
       <SignatureDialog {doc} page={doc.signatureRequest.page} rect={doc.signatureRequest.rect} />
@@ -490,35 +453,35 @@
     {#if doc && doc.redactRequest}
       <RedactConfirmDialog {doc} />
     {/if}
-    {#if doc && ocrOpen}
-      <OcrDialog {doc} bind:running={ocrRunning} onclose={() => (ocrOpen = false)} />
+    {#if doc && shown('ocr')}
+      <OcrDialog {doc} bind:running={dialogBusy} onclose={closeDialog} />
     {/if}
-    {#if doc && signOpen}
-      <SignDialog {doc} bind:busy={signBusy} onclose={() => (signOpen = false)} />
+    {#if doc && shown('sign')}
+      <SignDialog {doc} bind:busy={dialogBusy} onclose={closeDialog} />
     {/if}
-    {#if doc && watermarkOpen}
-      <WatermarkDialog {doc} onclose={() => (watermarkOpen = false)} />
+    {#if doc && shown('watermark')}
+      <WatermarkDialog {doc} onclose={closeDialog} />
     {/if}
-    {#if doc && numberingOpen}
-      <NumberingDialog {doc} onclose={() => (numberingOpen = false)} />
+    {#if doc && shown('numbering')}
+      <NumberingDialog {doc} onclose={closeDialog} />
     {/if}
-    {#if doc && cropOpen}
-      <CropDialog {doc} onclose={() => (cropOpen = false)} />
+    {#if doc && shown('crop')}
+      <CropDialog {doc} onclose={closeDialog} />
     {/if}
-    {#if doc && exportOpen}
-      <ExportDialog {doc} onclose={() => (exportOpen = false)} />
+    {#if doc && shown('export')}
+      <ExportDialog {doc} onclose={closeDialog} />
     {/if}
-    {#if doc && protectOpen}
-      <ProtectDialog {doc} onclose={() => (protectOpen = false)} />
+    {#if doc && shown('protect')}
+      <ProtectDialog {doc} onclose={closeDialog} />
     {/if}
-    {#if doc && optimizeOpen}
-      <OptimizeDialog {doc} onclose={() => (optimizeOpen = false)} />
+    {#if doc && shown('optimize')}
+      <OptimizeDialog {doc} onclose={closeDialog} />
     {/if}
-    {#if doc && compareOpen}
-      <CompareDialog {doc} onclose={() => (compareOpen = false)} />
+    {#if doc && shown('compare')}
+      <CompareDialog {doc} onclose={closeDialog} />
     {/if}
-    {#if doc && printOpen}
-      <PrintView {doc} onclose={() => (printOpen = false)} />
+    {#if doc && shown('print')}
+      <PrintView {doc} onclose={closeDialog} />
     {/if}
     {#if doc && editing}
       {#key editing.annotation.index}

@@ -549,3 +549,58 @@ fn default_history_keeps_20_steps() {
     }
     assert_eq!(undone, 20);
 }
+
+// --- Lot 10 : groupes d'éditions (OCR de plusieurs pages = un seul pas) -----------------
+
+fn rotate(page: u16) -> EditCommand {
+    EditCommand::RotatePages {
+        pages: vec![page],
+        quarter_turns: 1,
+    }
+}
+
+#[test]
+fn group_of_three_edits_undoes_in_one_step() {
+    let mut doc = three();
+    let before = doc.render_page(2, 0.3).unwrap().rgba;
+    doc.begin_edit_group(mega_core::edit::ocr_group_label(3));
+    for page in 0..3 {
+        doc.apply(&rotate(page)).unwrap();
+    }
+    doc.end_edit_group();
+    assert_eq!(
+        doc.undo_label().as_deref(),
+        Some("Reconnaître le texte (3 pages)")
+    );
+    doc.undo().unwrap();
+    assert!(!doc.can_undo(), "un seul pas");
+    assert_eq!(doc.render_page(2, 0.3).unwrap().rgba, before);
+    doc.redo().unwrap();
+    assert_ne!(
+        doc.render_page(2, 0.3).unwrap().rgba,
+        before,
+        "tout est rétabli"
+    );
+}
+
+#[test]
+fn undo_refused_while_group_open() {
+    let mut doc = three();
+    doc.apply(&delete(0)).unwrap();
+    doc.begin_edit_group("Groupe".to_string());
+    doc.apply(&rotate(0)).unwrap();
+    assert!(matches!(doc.undo(), Err(CoreError::InvalidOperation(_))));
+    assert!(matches!(doc.redo(), Err(CoreError::InvalidOperation(_))));
+    doc.end_edit_group();
+    doc.undo().unwrap();
+    assert_eq!(doc.undo_label().as_deref(), Some("Supprimer 1 page"));
+}
+
+#[test]
+fn empty_group_adds_no_step() {
+    let mut doc = three();
+    doc.begin_edit_group("Rien".to_string());
+    doc.end_edit_group();
+    assert!(!doc.can_undo());
+    assert!(!doc.is_modified());
+}

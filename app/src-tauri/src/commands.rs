@@ -352,6 +352,28 @@ pub async fn edit_state(
     blocking(handle, move |h| h.edit_state(id)).await
 }
 
+/// Ouvre le groupe d'annulation d'une reconnaissance de texte sur `pages` pages : les pages
+/// reconnues une à une ne forment qu'un pas d'annulation.
+#[tauri::command]
+pub async fn begin_edit_group(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+    pages: usize,
+) -> Result<(), AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.begin_edit_group(id, pages)).await
+}
+
+/// Ferme le groupe d'annulation ouvert et rend l'état de l'historique.
+#[tauri::command]
+pub async fn end_edit_group(
+    service: State<'_, ServiceHandle>,
+    id: DocId,
+) -> Result<EditState, AppError> {
+    let handle = service.inner().clone();
+    blocking(handle, move |h| h.end_edit_group(id)).await
+}
+
 /// État de Tesseract pour l'OCR : trouvé ou non, et ses langues installées.
 #[tauri::command]
 pub async fn ocr_status(

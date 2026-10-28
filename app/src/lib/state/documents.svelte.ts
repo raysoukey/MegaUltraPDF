@@ -4,6 +4,8 @@
 
 import {
   allAnnotations as fetchAllAnnotations,
+  beginEditGroup,
+  endEditGroup,
   allFormFields as fetchAllFormFields,
   annotations as fetchAnnotations,
   attachments as fetchAttachments,
@@ -76,6 +78,7 @@ import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
 import { serialQueue } from '$lib/logic/queue';
 import { redactNotice } from '$lib/logic/redact';
+import { inGroup } from '$lib/logic/group';
 import { t } from '$lib/strings';
 import {
   forgetRecent,
@@ -1053,6 +1056,41 @@ export async function pagesWithText(doc: OpenDoc): Promise<boolean[] | null> {
 /** Reconnaît le texte d'une page (OCR) ; faux en cas d'échec (erreur affichée). */
 export async function ocrPage(doc: OpenDoc, page: number, languages: string[]): Promise<boolean> {
   return applyEdit(doc, { kind: 'ocr_page', page, languages });
+}
+
+/**
+ * Reconnaît `pages` une à une (progression, arrêt possible) en un seul pas d'annulation ;
+ * rend les pages traitées. `onPage` est appelé avant chaque page ; `stop()` vrai arrête.
+ */
+export async function ocrPagesGrouped(
+  doc: OpenDoc,
+  pages: number[],
+  languages: string[],
+  onPage: (done: number) => void,
+  stop: () => boolean,
+): Promise<number[]> {
+  const processed: number[] = [];
+  const body = async () => {
+    for (const page of pages) {
+      if (stop()) break;
+      onPage(processed.length);
+      if (!(await ocrPage(doc, page, languages))) break;
+      processed.push(page);
+    }
+    return processed;
+  };
+  if (pages.length < 2) return body();
+  return inGroup(
+    () => beginEditGroup(doc.summary.id, pages.length),
+    body,
+    async () => {
+      try {
+        doc.edit = await endEditGroup(doc.summary.id);
+      } catch (e) {
+        reportError(t.editError, e);
+      }
+    },
+  );
 }
 
 /**

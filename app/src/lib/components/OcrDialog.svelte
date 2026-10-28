@@ -6,7 +6,12 @@
   import { trapFocus } from '$lib/actions/trapFocus';
   import { ocrStatus, type OcrStatus } from '$lib/api';
   import { ocrOutcome, ocrPages, type OcrScope } from '$lib/logic/ocr';
-  import { ocrPage, pagesWithText, showNotice, type OpenDoc } from '$lib/state/documents.svelte';
+  import {
+    ocrPagesGrouped,
+    pagesWithText,
+    showNotice,
+    type OpenDoc,
+  } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
 
   // `running` est lié par la page : Échap ne ferme pas le dialogue pendant la reconnaissance
@@ -58,13 +63,14 @@
     running = true;
     stopRequested = false;
     const pages = [...targets];
-    const processed: number[] = [];
-    for (const page of pages) {
-      if (stopRequested) break;
-      progress = t.ocrProgress(processed.length + 1, pages.length);
-      if (!(await ocrPage(doc, page, chosen))) break;
-      processed.push(page);
-    }
+    // Toutes les pages reconnues ne font qu'un pas d'annulation (Lot 10).
+    const processed = await ocrPagesGrouped(
+      doc,
+      pages,
+      chosen,
+      (done) => (progress = t.ocrProgress(done + 1, pages.length)),
+      () => stopRequested,
+    );
     running = false;
     progress = '';
     if (processed.length > 0) {

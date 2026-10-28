@@ -480,3 +480,29 @@ fn visible_signature_invalidates_the_render_cache() {
         .unwrap();
     assert_ne!(before, after, "le tampon apparaît au rendu suivant");
 }
+
+/// Lot 10 : un groupe d'éditions ouvert par le service ne fait qu'un pas d'annulation.
+#[test]
+fn edit_group_through_the_service() {
+    let handle = PdfService::spawn();
+    let id = handle.open_bytes(sample_pdf(2, "groupe"), None).unwrap().id;
+    handle.begin_edit_group(id, 2).unwrap();
+    for page in 0..2 {
+        handle
+            .apply(
+                id,
+                mega_core::edit::EditCommand::RotatePages {
+                    pages: vec![page],
+                    quarter_turns: 1,
+                },
+            )
+            .unwrap();
+    }
+    let state = handle.end_edit_group(id).unwrap();
+    assert_eq!(
+        state.undo_label.as_deref(),
+        Some("Reconnaître le texte (2 pages)")
+    );
+    let (_, state) = handle.undo(id).unwrap();
+    assert!(!state.can_undo);
+}

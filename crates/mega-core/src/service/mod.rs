@@ -161,6 +161,15 @@ enum Request {
         id: DocId,
         reply: SyncSender<CoreResult<EditState>>,
     },
+    BeginOcrGroup {
+        id: DocId,
+        pages: usize,
+        reply: SyncSender<CoreResult<()>>,
+    },
+    EndEditGroup {
+        id: DocId,
+        reply: SyncSender<CoreResult<EditState>>,
+    },
     Save {
         id: DocId,
         path: Option<PathBuf>,
@@ -499,6 +508,17 @@ impl ServiceHandle {
     /// État de l'historique (modifié, annuler/rétablir possibles, libellés).
     pub fn edit_state(&self, id: DocId) -> CoreResult<EditState> {
         self.call(|reply| Request::EditState { id, reply })
+    }
+
+    /// Ouvre le groupe d'éditions d'une reconnaissance de texte sur `pages` pages : un seul
+    /// pas d'annulation pour toutes (voir [`Document::begin_edit_group`]).
+    pub fn begin_edit_group(&self, id: DocId, pages: usize) -> CoreResult<()> {
+        self.call(|reply| Request::BeginOcrGroup { id, pages, reply })
+    }
+
+    /// Ferme le groupe d'éditions ouvert et rend l'état de l'historique.
+    pub fn end_edit_group(&self, id: DocId) -> CoreResult<EditState> {
+        self.call(|reply| Request::EndEditGroup { id, reply })
     }
 
     /// Enregistre à son chemin d'origine.
@@ -853,6 +873,28 @@ impl Actor {
             }
             Request::EditState { id, reply } => {
                 let _ = reply.send(self.entry(id).map(|e| e.doc.edit_state()));
+            }
+            Request::BeginOcrGroup { id, pages, reply } => {
+                let result = match self.docs.get_mut(&id) {
+                    Some(entry) => {
+                        entry
+                            .doc
+                            .begin_edit_group(crate::edit::ocr_group_label(pages));
+                        Ok(())
+                    }
+                    None => Err(CoreError::NotFound { id }),
+                };
+                let _ = reply.send(result);
+            }
+            Request::EndEditGroup { id, reply } => {
+                let result = match self.docs.get_mut(&id) {
+                    Some(entry) => {
+                        entry.doc.end_edit_group();
+                        Ok(entry.doc.edit_state())
+                    }
+                    None => Err(CoreError::NotFound { id }),
+                };
+                let _ = reply.send(result);
             }
             Request::Save { id, path, reply } => {
                 // Enregistrer ne change ni les pages ni le cache : pas d'invalidation.

@@ -690,6 +690,16 @@ export async function editState(id: number): Promise<EditState> {
   return invoke<EditState>('edit_state', { id });
 }
 
+/** Ouvre le groupe d'annulation d'une reconnaissance de texte sur `pages` pages. */
+export async function beginEditGroup(id: number, pages: number): Promise<void> {
+  return invoke<void>('begin_edit_group', { id, pages });
+}
+
+/** Ferme le groupe d'annulation ouvert. */
+export async function endEditGroup(id: number): Promise<EditState> {
+  return invoke<EditState>('end_edit_group', { id });
+}
+
 /** Enregistre à son chemin, ou dans `path` (« Enregistrer sous »). */
 export async function saveDocument(id: number, path?: string): Promise<EditResult> {
   return invoke<EditResult>('save_document', { id, path: path ?? null });

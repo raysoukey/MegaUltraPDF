@@ -548,6 +548,9 @@ pub struct EditState {
     pub undo_label: Option<String>,
     /// Libellé de l'étape à rétablir.
     pub redo_label: Option<String>,
+    /// Compte rendu du caviardage que l'édition qui vient d'avoir lieu a appliqué, pour que
+    /// l'interface signale par exemple les tracés seulement recouverts ; `None` sinon.
+    pub last_redaction: Option<crate::content::redact::RedactReport>,
 }
 
 impl Document {
@@ -560,6 +563,8 @@ impl Document {
     /// Applique une commande et l'enregistre dans l'historique. Si la commande échoue,
     /// ni le document ni l'historique ne changent.
     pub fn apply(&mut self, command: &dyn Command) -> CoreResult<()> {
+        // Le compte rendu d'un caviardage ne vaut que pour l'édition qui l'a produit.
+        self.last_redaction = None;
         let label = self.label_for(command);
         let before = self.to_bytes()?;
         let password_before = self.password().map(str::to_string);
@@ -606,6 +611,7 @@ impl Document {
 
     /// Annule la dernière édition.
     pub fn undo(&mut self) -> CoreResult<()> {
+        self.last_redaction = None;
         let Some(snapshot) = self.history.undo.pop_back() else {
             return Err(CoreError::InvalidOperation("rien à annuler".to_string()));
         };
@@ -643,6 +649,7 @@ impl Document {
 
     /// Rétablit la dernière édition annulée.
     pub fn redo(&mut self) -> CoreResult<()> {
+        self.last_redaction = None;
         let Some(snapshot) = self.history.redo.pop() else {
             return Err(CoreError::InvalidOperation("rien à rétablir".to_string()));
         };
@@ -704,6 +711,7 @@ impl Document {
             can_redo: self.can_redo(),
             undo_label: self.undo_label(),
             redo_label: self.redo_label(),
+            last_redaction: self.last_redaction,
         }
     }
 

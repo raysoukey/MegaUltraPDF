@@ -376,6 +376,10 @@ export const fr = {
     'Les textes et annotations qui touchent la zone seront retirés du fichier, les images noircies sous la zone, puis tout sera recouvert de noir (annulable avec Ctrl+Z).',
   redact: 'Caviarder',
   redacted: 'Zone caviardée.',
+  redactDone: (texts: number, images: number, paths: number, annotations: number) =>
+    `Zone caviardée : ${texts} texte(s), ${images} image(s), ${paths} tracé(s), ${annotations} annotation(s) retirés ou noircis.`,
+  redactPathsKept: (n: number) =>
+    `${n} tracé(s) traversant la zone sont seulement recouverts de noir (leur forme reste dans le fichier).`,
   watermarkTitle: 'Filigrane',
   watermarkDefaultText: 'BROUILLON',
   watermarkText: 'Texte',
@@ -946,6 +950,10 @@ export const en: Strings = {
     'Text and annotations touching the area will be removed from the file, images blacked out under the area, then everything covered in black (undo with Ctrl+Z).',
   redact: 'Redact',
   redacted: 'Area redacted.',
+  redactDone: (texts: number, images: number, paths: number, annotations: number) =>
+    `Area redacted: ${texts} text(s), ${images} image(s), ${paths} path(s), ${annotations} annotation(s) removed or blacked out.`,
+  redactPathsKept: (n: number) =>
+    `${n} path(s) crossing the area are only covered in black (their shape stays in the file).`,
   watermarkTitle: 'Watermark',
   watermarkDefaultText: 'DRAFT',
   watermarkText: 'Text',

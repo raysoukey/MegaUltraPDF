@@ -374,6 +374,8 @@ export interface EditState {
   can_redo: boolean;
   undo_label: string | null;
   redo_label: string | null;
+  /** Compte rendu du caviardage que l'édition vient d'appliquer (sinon `null`). */
+  last_redaction: RedactReport | null;
 }
 
 /** Résultat d'une édition (miroir de `EditResult`). */

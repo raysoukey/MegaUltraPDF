@@ -75,6 +75,7 @@ import { selectionRects } from '$lib/logic/selection';
 import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
 import { serialQueue } from '$lib/logic/queue';
+import { redactNotice } from '$lib/logic/redact';
 import { t } from '$lib/strings';
 import {
   forgetRecent,
@@ -194,6 +195,7 @@ const UNTOUCHED: EditState = {
   can_redo: false,
   undo_label: null,
   redo_label: null,
+  last_redaction: null,
 };
 
 export const docsState = $state<DocsState>({
@@ -625,10 +627,10 @@ async function writeTo(doc: OpenDoc, path: string | undefined): Promise<boolean>
 
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
-export function showNotice(message: string): void {
+export function showNotice(message: string, durationMs = 1500): void {
   docsState.notice = message;
   if (noticeTimer) clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => (docsState.notice = null), 1500);
+  noticeTimer = setTimeout(() => (docsState.notice = null), durationMs);
 }
 
 /** Extrait des pages vers un nouveau fichier ; l'erreur éventuelle passe par le bandeau. */
@@ -993,7 +995,11 @@ export async function confirmRedact(doc: OpenDoc): Promise<boolean> {
   if (!req) return false;
   doc.redactRequest = null;
   const ok = await applyEdit(doc, { kind: 'redact', page: req.page, rect: req.rect });
-  if (ok) showNotice(t.redacted);
+  if (ok) {
+    const notice = redactNotice(doc.edit.last_redaction);
+    // Un avertissement (tracés seulement recouverts) reste affiché le temps d'être lu.
+    showNotice(notice.message, notice.warn ? 8000 : 2500);
+  }
   return ok;
 }
 

@@ -463,6 +463,28 @@ fn watermark_number_and_crop_commands() {
         .stderr(predicate::str::contains("quatre"));
 }
 
+/// Lot 10 : le compte rendu distingue images retirées, images noircies et tracés gardés.
+#[test]
+fn redact_reports_blacked_images_and_kept_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("mosaique.pdf");
+    mega()
+        .args([
+            "redact",
+            &fixture("image-mosaic.pdf"),
+            "--page",
+            "1",
+            "--rect",
+            "100,200,100,100",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 image(s) noircie(s)"))
+        .stdout(predicate::str::contains("0 tracé(s) gardé(s)"));
+}
+
 #[test]
 fn redact_removes_text_from_output() {
     let dir = tempfile::tempdir().unwrap();

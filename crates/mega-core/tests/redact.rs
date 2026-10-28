@@ -484,3 +484,86 @@ fn smask_zone_becomes_opaque() {
     assert_eq!(px(&img, 390.0, 180.0), (255, 255, 255), "reste transparent");
     assert_eq!(px(&img, 430.0, 150.0), (0, 0, 255), "moitié opaque intacte");
 }
+
+// --- Lot 10 : tracés, vignettes, compte rendu --------------------------------------------
+
+fn kinds(doc: &Document, page: u16) -> Vec<ObjectKind> {
+    doc.page_objects(page)
+        .unwrap()
+        .iter()
+        .map(|o| o.kind)
+        .collect()
+}
+
+#[test]
+fn path_inside_zone_is_removed() {
+    let mut doc = rich();
+    // Le rectangle bleu occupe 72..172 × 500..540.
+    let report = doc.redact(0, rect(60.0, 490.0, 130.0, 60.0)).unwrap();
+    assert_eq!((report.paths_removed, report.paths_kept), (1, 0));
+    // Textes, image, puis le cache noir : le rectangle bleu a disparu.
+    assert_eq!(
+        kinds(&doc, 0),
+        vec![
+            ObjectKind::Text,
+            ObjectKind::Text,
+            ObjectKind::Image,
+            ObjectKind::Path
+        ]
+    );
+}
+
+#[test]
+fn crossing_path_is_counted_kept() {
+    let mut doc = rich();
+    let report = doc.redact(0, rect(100.0, 510.0, 30.0, 20.0)).unwrap();
+    assert_eq!((report.paths_removed, report.paths_kept), (0, 1));
+    assert_eq!(kinds(&doc, 0).len(), 5, "rectangle bleu gardé + cache");
+}
+
+#[test]
+fn thumbnail_and_piece_info_are_dropped() {
+    let mut lo = lopdf::Document::load_mem(&rich_pdf()).unwrap();
+    let page_id = *lo.get_pages().get(&1).unwrap();
+    let thumb = lo.add_object(lopdf::Stream::new(
+        lopdf::Dictionary::from_iter(vec![
+            ("Width", lopdf::Object::Integer(1)),
+            ("Height", lopdf::Object::Integer(1)),
+            ("ColorSpace", lopdf::Object::Name(b"DeviceGray".to_vec())),
+            ("BitsPerComponent", lopdf::Object::Integer(8)),
+        ]),
+        vec![0x7F],
+    ));
+    let page = lo.get_dictionary_mut(page_id).unwrap();
+    page.set("Thumb", lopdf::Object::Reference(thumb));
+    page.set(
+        "PieceInfo",
+        lopdf::Object::Dictionary(lopdf::Dictionary::from_iter(vec![(
+            "Editeur",
+            lopdf::Object::Dictionary(lopdf::Dictionary::new()),
+        )])),
+    );
+    let mut bytes = Vec::new();
+    lo.save_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    doc.redact(0, rect(60.0, 690.0, 200.0, 40.0)).unwrap();
+    let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    let page = saved
+        .get_dictionary(*saved.get_pages().get(&1).unwrap())
+        .unwrap();
+    assert!(!page.has(b"Thumb") && !page.has(b"PieceInfo"));
+}
+
+#[test]
+fn redaction_report_is_in_edit_state() {
+    let mut doc = rich();
+    doc.apply(&Cmd::Redact {
+        page: 0,
+        rect: rect(60.0, 690.0, 200.0, 40.0),
+    })
+    .unwrap();
+    let report = doc.edit_state().last_redaction.expect("compte rendu");
+    assert_eq!((report.texts, report.annotations), (1, 1));
+    doc.undo().unwrap();
+    assert!(doc.edit_state().last_redaction.is_none());
+}

@@ -44,6 +44,9 @@ pub struct Document {
     /// Vrai dès qu'une modification éloigne le document de `file_bytes` ; redevient faux à
     /// l'enregistrement, ou quand annuler / rétablir ramène à l'état enregistré.
     pub(crate) changed: bool,
+    /// Compte rendu du caviardage que la dernière édition vient d'appliquer (sinon `None`) :
+    /// l'interface le reçoit avec l'état de l'historique pour avertir l'utilisateur.
+    pub(crate) last_redaction: Option<crate::content::redact::RedactReport>,
     /// Police Unicode (DejaVu Sans) déjà chargée dans le `PdfDocument` courant : chaque
     /// chargement incorpore une copie entière de la police, on la réutilise donc tant que
     /// le document PDFium n'est pas remplacé (voir [`Document::replace_inner`]).
@@ -104,6 +107,7 @@ impl Document {
             history: crate::edit::History::new(crate::edit::HistoryLimits::default()),
             file_bytes,
             changed: false,
+            last_redaction: None,
             unicode_font: None,
         })
     }

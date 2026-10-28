@@ -82,6 +82,7 @@ fn second_instance_paths(argv: &[String], cwd: &str) -> Vec<String> {
 /// Relaie à la fenêtre existante les fichiers d'une seconde instance (Lot 11) : gardés dans
 /// [`PendingPaths`] et signalés par `open-paths` (comme le Finder sous macOS), puis la
 /// fenêtre revient au premier plan.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn relay_second_instance(app: &tauri::AppHandle, argv: &[String], cwd: &str) {
     use tauri::{Emitter, Manager};
     let paths = second_instance_paths(argv, cwd);
@@ -113,12 +114,14 @@ pub fn run() {
     {
         mega_core::engine::set_library_dir(dir);
     }
-    let builder = tauri::Builder::default()
-        // Enregistré en premier (exigence du greffon) : une seconde instance confie ses
-        // fichiers à la première et s'arrête aussitôt.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            relay_second_instance(app, &argv, &cwd);
-        }))
+    let builder = tauri::Builder::default();
+    // Enregistré en premier (exigence du greffon) : une seconde instance confie ses fichiers
+    // à la première et s'arrête aussitôt. macOS garde de lui-même une seule instance.
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+        relay_second_instance(app, &argv, &cwd);
+    }));
+    let builder = builder
         // Un seul acteur PDFium pour toute l'application ; le handle est clonable.
         .manage(PdfService::spawn())
         .manage(PendingPaths::default())

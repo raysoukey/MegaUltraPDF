@@ -539,18 +539,29 @@ pub fn startup_files() -> Vec<String> {
     )
 }
 
-/// État « lecteur PDF par défaut » du système, pour les préférences (Lot 11).
+/// État « lecteur PDF par défaut » du système, pour les préférences (Lot 11). Asynchrone :
+/// `reg` ou `xdg-mime` tournent hors du fil de la fenêtre, qui ne se fige jamais.
 #[tauri::command]
-pub fn default_app_status() -> crate::default_app::DefaultAppStatus {
-    crate::default_app::status()
+pub async fn default_app_status() -> crate::default_app::DefaultAppStatus {
+    tauri::async_runtime::spawn_blocking(crate::default_app::status)
+        .await
+        .unwrap_or(crate::default_app::DefaultAppStatus {
+            kind: crate::default_app::DefaultAppKind::Unknown,
+            handler: None,
+            portable: false,
+        })
 }
 
 /// Aide à faire de MegaUltraPDF le lecteur par défaut (Paramètres de Windows, `xdg-mime`,
 /// marche à suivre sous macOS).
 #[tauri::command]
-pub fn make_default_app(app: tauri::AppHandle) -> crate::default_app::DefaultAppAction {
-    use tauri_plugin_opener::OpenerExt;
-    crate::default_app::make_default(|url| app.opener().open_url(url, None::<&str>).is_ok())
+pub async fn make_default_app(app: tauri::AppHandle) -> crate::default_app::DefaultAppAction {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_opener::OpenerExt;
+        crate::default_app::make_default(|url| app.opener().open_url(url, None::<&str>).is_ok())
+    })
+    .await
+    .unwrap_or(crate::default_app::DefaultAppAction::Unsupported)
 }
 
 /// Les arguments qui désignent un fichier PDF existant, en chemins absolus, dans l'ordre et

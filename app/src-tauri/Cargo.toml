@@ -27,9 +27,13 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-opener = "2"
+
 # Une seule instance (Lot 11) : un PDF ouvert depuis l'Explorateur ou le gestionnaire de
 # fichiers alors que l'application tourne arrive dans la fenêtre existante (nouvel onglet)
-# au lieu d'ouvrir une seconde fenêtre. Greffon officiel Tauri.
+# au lieu d'ouvrir une seconde fenêtre. Greffon officiel Tauri. Pas sous macOS : le système y
+# garde déjà une seule instance (fichiers par `RunEvent::Opened`), et la socket partagée du
+# greffon dans /tmp laisserait un autre utilisateur bloquer le lancement (relecture du Lot 11).
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 serde.workspace = true
 thiserror.workspace = true

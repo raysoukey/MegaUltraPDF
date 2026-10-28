@@ -844,26 +844,62 @@ fn modifying_keeps_the_creation_date() {
     assert!(a.modified.is_some(), "/M posé");
 }
 
+/// Lot 10 : texte libre et tampon dessinent le grec et le cyrillique avec la police Unicode ;
+/// seuls les caractères absents de la police (CJK) sont refusés.
 #[test]
-fn non_win_ansi_text_is_refused_where_helvetica_draws_it() {
+fn unicode_text_annotations_are_drawn_and_cjk_refused() {
     let mut doc = Document::from_bytes(sample_pdf(1, "ansi"), None).unwrap();
-    for kind in [AnnotationKind::Text, AnnotationKind::Stamp] {
+    let plain = doc.render_page(0, 1.0).unwrap();
+    for (i, kind) in [AnnotationKind::Text, AnnotationKind::Stamp]
+        .into_iter()
+        .enumerate()
+    {
+        let y = 600.0 - 100.0 * i as f32;
+        let index = doc
+            .add_annotation(
+                0,
+                &new(
+                    kind,
+                    Geometry::Rect {
+                        rect: rect(72.0, y, 200.0, 40.0),
+                    },
+                    style((0, 0, 0)),
+                    "Ωmega Привет",
+                ),
+            )
+            .unwrap();
+        let a = &doc.annotations(0).unwrap()[usize::from(index)];
+        assert_eq!(a.contents.as_deref(), Some("Ωmega Привет"), "{kind:?}");
         let refused = doc.add_annotation(
             0,
             &new(
                 kind,
                 Geometry::Rect {
-                    rect: rect(72.0, 600.0, 200.0, 40.0),
+                    rect: rect(72.0, 300.0, 200.0, 40.0),
                 },
                 style((0, 0, 0)),
-                "Ωmega",
+                "你好",
             ),
         );
         assert!(
-            matches!(refused, Err(CoreError::InvalidOperation(_))),
+            matches!(&refused, Err(CoreError::InvalidOperation(m)) if m.contains("你")),
             "{kind:?} : {refused:?}"
         );
     }
+    let drawn = doc.render_page(0, 1.0).unwrap();
+    // Zone du texte libre (72..272 × 600..640 en points, page A4 de 842 pt de haut).
+    let dark = |img: &mega_core::RenderedPage| {
+        let mut n = 0;
+        for y in (842 - 640)..(842 - 600) {
+            for x in 72..272 {
+                if pixel(img, x, y).0 < 100 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    assert!(dark(&drawn) > dark(&plain) + 50, "glyphes dessinés");
     // Une note garde son commentaire Unicode (il n'est pas dessiné en Helvetica).
     doc.add_annotation(
         0,

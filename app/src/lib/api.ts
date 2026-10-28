@@ -195,8 +195,8 @@ export interface PageObject {
   font: string | null;
 }
 
-/** Famille de police Standard 14 (miroir de `FontFamily`). */
-export type FontFamily = 'helvetica' | 'times' | 'courier';
+/** Famille de police : Standard 14 ou Unicode incorporée (miroir de `FontFamily`). */
+export type FontFamily = 'helvetica' | 'times' | 'courier' | 'unicode';
 
 /** Style d'un texte inséré (miroir de `TextStyle`). */
 export interface TextStyle {

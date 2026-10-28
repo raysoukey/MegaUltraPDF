@@ -43,6 +43,7 @@ pub fn before_save(bytes: &[u8]) -> CoreResult<Vec<u8>> {
         identify_annotations(&mut doc, *page_id)?;
     }
     drop_dangling_annotation_links(&mut doc, &pages)?;
+    dedupe_font_files(&mut doc);
     // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
     crate::properties::stamp_mod_date(&mut doc);
     let pages_before = doc.get_pages().len();
@@ -87,6 +88,55 @@ pub(crate) fn reachable(doc: &Document) -> BTreeSet<ObjectId> {
         }
     }
     seen
+}
+
+/// Fait pointer les descripteurs de police vers **un seul** exemplaire de chaque programme
+/// de police identique (`/FontFile`, `/FontFile2`, `/FontFile3`) ; l'élagage retire ensuite
+/// les copies. Rend le nombre de références réécrites.
+///
+/// PDFium incorpore la police Unicode **entière** à chaque chargement (Lot 10) : après un
+/// rechargement du document (filigrane, annuler…), une nouvelle insertion de texte en
+/// recharge une copie. Sans cette passe, chaque copie ajouterait environ 400 Ko au fichier.
+pub(crate) fn dedupe_font_files(doc: &mut Document) -> usize {
+    use std::collections::BTreeMap;
+    const KEYS: [&[u8]; 3] = [b"FontFile", b"FontFile2", b"FontFile3"];
+    // Programme de police (filtre + octets) → premier objet qui le porte.
+    let mut first: BTreeMap<(Vec<u8>, Vec<u8>), ObjectId> = BTreeMap::new();
+    let mut rewrites: Vec<(ObjectId, &'static [u8], ObjectId)> = Vec::new();
+    for (id, object) in &doc.objects {
+        let Ok(dict) = object.as_dict() else {
+            continue;
+        };
+        if dict.get(b"Type").ok() != Some(&Object::Name(b"FontDescriptor".to_vec())) {
+            continue;
+        }
+        for key in KEYS {
+            let Ok(file) = dict.get(key).and_then(Object::as_reference) else {
+                continue;
+            };
+            let Some(Ok(stream)) = doc.objects.get(&file).map(Object::as_stream) else {
+                continue;
+            };
+            let filter = stream
+                .dict
+                .get(b"Filter")
+                .ok()
+                .map(|f| format!("{f:?}").into_bytes())
+                .unwrap_or_default();
+            let canonical = *first
+                .entry((filter, stream.content.clone()))
+                .or_insert(file);
+            if canonical != file {
+                rewrites.push((*id, key, canonical));
+            }
+        }
+    }
+    for (descriptor, key, canonical) in &rewrites {
+        if let Ok(dict) = doc.get_dictionary_mut(*descriptor) {
+            dict.set(*key, Object::Reference(*canonical));
+        }
+    }
+    rewrites.len()
 }
 
 /// Retire les objets inatteignables (orphelins) et rend leur nombre.

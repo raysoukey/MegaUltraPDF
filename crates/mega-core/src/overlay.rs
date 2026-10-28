@@ -170,16 +170,7 @@ fn check_text(text: &str) -> CoreResult<()> {
     if text.chars().count() > MAX_OVERLAY_TEXT_CHARS {
         return Err(invalid("texte trop long (200 caractères au plus)"));
     }
-    let missing = fonts::missing_glyphs(text);
-    if !missing.is_empty() {
-        let list: Vec<String> = missing.iter().map(char::to_string).collect();
-        return Err(CoreError::InvalidOperation(format!(
-            "caractères absents de la police : {} (écritures chinoise, japonaise, coréenne… \
-             non prises en charge)",
-            list.join(", ")
-        )));
-    }
-    Ok(())
+    fonts::check_drawable(text)
 }
 
 impl Document {

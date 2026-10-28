@@ -361,7 +361,10 @@ export const fr = {
     helvetica: 'Helvetica (sans empattement)',
     times: 'Times (avec empattement)',
     courier: 'Courier (à chasse fixe)',
+    unicode: 'DejaVu Sans (grec, cyrillique… ; incorporée)',
   } as Record<string, string>,
+  fontUnicodeHint:
+    'Un texte grec, cyrillique ou en latin étendu est écrit en DejaVu Sans (incorporée), quelle que soit la police choisie.',
   bold: 'Gras',
   italic: 'Italique',
   insert: 'Insérer',
@@ -926,7 +929,10 @@ export const en: Strings = {
     helvetica: 'Helvetica (sans serif)',
     times: 'Times (serif)',
     courier: 'Courier (monospace)',
+    unicode: 'DejaVu Sans (Greek, Cyrillic…; embedded)',
   } as Record<string, string>,
+  fontUnicodeHint:
+    'Greek, Cyrillic or extended Latin text is written in DejaVu Sans (embedded), whatever font is chosen.',
   bold: 'Bold',
   italic: 'Italic',
   insert: 'Insert',

@@ -235,7 +235,7 @@ fn insert_text_is_extractable_and_undoable() {
 }
 
 #[test]
-fn insert_text_rejects_non_winansi() {
+fn insert_text_rejects_characters_missing_from_fonts() {
     let mut doc = one_page();
     let style = text_style(FontFamily::Helvetica, false, false, 12.0);
     let err = doc
@@ -245,7 +245,7 @@ fn insert_text_rejects_non_winansi() {
         CoreError::InvalidOperation(m) => assert!(m.contains("non pris en charge"), "{m}"),
         other => panic!("{other:?}"),
     }
-    assert!(doc.insert_text(0, [100.0, 500.0], "Σ", &style).is_err());
+    assert!(doc.insert_text(0, [100.0, 500.0], "你", &style).is_err());
     // L'alphabet latin étendu de WinAnsi passe (é, —, «, », €, œ).
     doc.insert_text(0, [100.0, 500.0], "élève — « ok » 5 € œuf", &style)
         .unwrap();
@@ -521,4 +521,84 @@ fn resize_object_scales_an_image_and_is_undoable() {
             "page tournée = {rotate_first} : {got:?}"
         );
     }
+}
+
+// --- Lot 10 : police Unicode incorporée -------------------------------------------------
+
+#[test]
+fn insert_greek_text_is_extractable() {
+    let mut doc = one_page();
+    let style = text_style(FontFamily::Helvetica, true, false, 14.0);
+    doc.insert_text(0, [100.0, 500.0], "Ελλάδα Łódź\nПривет", &style)
+        .unwrap();
+    let text = doc.page_text(0).unwrap();
+    assert!(
+        text.contains("Ελλάδα Łódź") && text.contains("Привет"),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn unicode_family_is_accepted_for_plain_text() {
+    let mut doc = one_page();
+    let style = text_style(FontFamily::Unicode, false, false, 14.0);
+    doc.insert_text(0, [100.0, 500.0], "abc", &style).unwrap();
+    assert!(doc.page_text(0).unwrap().contains("abc"));
+}
+
+/// Retouche d'un texte en police standard (non incorporée) avec des lettres hors WinAnsi :
+/// l'objet passe en police Unicode, au même endroit.
+#[test]
+fn set_object_text_switches_a_standard_font_to_unicode() {
+    let mut doc = one_page();
+    let before = doc.page_objects(0).unwrap();
+    let index = before
+        .iter()
+        .position(|o| o.kind == mega_core::ObjectKind::Text)
+        .unwrap() as u16;
+    doc.set_object_text(0, index, "Страница 1").unwrap();
+    let text = doc.page_text(0).unwrap();
+    assert!(text.contains("Страница 1"), "{text:?}");
+    let after = doc.page_objects(0).unwrap();
+    assert_eq!(after.len(), before.len(), "objet remplacé, pas ajouté");
+    let (b, a) = (
+        before[usize::from(index)].bounds,
+        after[usize::from(index)].bounds,
+    );
+    assert!(
+        (a.x - b.x).abs() < 1.0 && (a.y - b.y).abs() < 3.0,
+        "{b:?} → {a:?}"
+    );
+}
+
+/// Deux insertions séparées par un rechargement (filigrane) chargent deux fois la police
+/// dans PDFium : l'enregistrement n'en garde qu'un programme.
+#[test]
+fn two_unicode_insertions_embed_one_font_after_save() {
+    let mut doc = one_page();
+    let style = text_style(FontFamily::Unicode, false, false, 14.0);
+    doc.insert_text(0, [100.0, 500.0], "Ω", &style).unwrap();
+    doc.add_watermark(&mega_core::Watermark {
+        text: "X".to_string(),
+        size: 20.0,
+        opacity: 0.5,
+        angle_deg: 0.0,
+        color: Color { r: 0, g: 0, b: 0 },
+        pages: None,
+    })
+    .unwrap();
+    doc.insert_text(0, [100.0, 400.0], "Ж", &style).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unicode.pdf");
+    doc.save_as(&path).unwrap();
+    let saved = lopdf::Document::load_mem(&std::fs::read(&path).unwrap()).unwrap();
+    let programs = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| d.get(b"FontFile2").ok())
+        .filter_map(|r| r.as_reference().ok())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(programs.len(), 1, "un seul programme de police");
+    assert!(doc.page_text(0).unwrap().contains('Ж'));
 }

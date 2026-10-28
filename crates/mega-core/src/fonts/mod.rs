@@ -22,6 +22,22 @@ pub fn missing_glyphs(text: &str) -> Vec<char> {
     unicode::UnicodeFont::embedded().missing(text)
 }
 
+/// Refuse un texte **visible** dont un caractère n'existe dans aucune de nos polices, en
+/// listant les caractères en cause (message commun aux filigranes, au texte inséré et aux
+/// annotations dessinées).
+pub(crate) fn check_drawable(text: &str) -> crate::error::CoreResult<()> {
+    let missing = missing_glyphs(text);
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let list: Vec<String> = missing.iter().map(char::to_string).collect();
+    Err(crate::error::CoreError::InvalidOperation(format!(
+        "caractères non pris en charge par la police : {} (écritures chinoise, japonaise, \
+         coréenne, émojis… : hors de DejaVu Sans)",
+        list.join(", ")
+    )))
+}
+
 /// Vrai si `text` contient un caractère que l'encodage WinAnsi d'Helvetica ne connaît pas :
 /// il faut alors la police Unicode (Lot 10). Les retours à la ligne ne comptent pas.
 pub(crate) fn needs_unicode(text: &str) -> bool {

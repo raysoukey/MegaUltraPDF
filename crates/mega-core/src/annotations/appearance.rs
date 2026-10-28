@@ -263,8 +263,12 @@ pub(crate) fn draw_text<'a>(
     Ok(())
 }
 
-/// Largeur d'avance d'un texte en Helvetica à `size` points (table AFM).
+/// Largeur d'avance d'un texte à `size` points dans la police qui le dessinera : Helvetica
+/// (table AFM) ou, hors WinAnsi, la police Unicode incorporée.
 fn advance(text: &str, size: f32) -> f32 {
+    if crate::fonts::needs_unicode(text) {
+        return crate::fonts::unicode::UnicodeFont::embedded().text_width(text, size);
+    }
     let bytes: Vec<u8> = text
         .chars()
         .map(|c| crate::content::win_ansi_byte(c).unwrap_or(b'?'))
@@ -578,5 +582,19 @@ mod tests {
         let size = stamp_font_size("APPROUVÉ", &rect, 30.0);
         assert!(advance("APPROUVÉ", size) <= 72.0 + 0.01, "{size}");
         assert!(size >= 4.0);
+    }
+
+    /// Lot 10 : un libellé cyrillique est mesuré avec la police Unicode qui le dessine.
+    #[test]
+    fn stamp_in_cyrillic_fits_the_frame() {
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 60.0,
+        };
+        let size = stamp_font_size("ЖЖЖЖЖЖ", &rect, 30.0);
+        let drawn = crate::fonts::unicode::UnicodeFont::embedded().text_width("ЖЖЖЖЖЖ", size);
+        assert!(drawn <= 72.0 + 0.01, "{size} → {drawn}");
     }
 }

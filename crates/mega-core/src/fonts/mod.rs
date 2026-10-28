@@ -26,6 +26,13 @@ pub fn missing_glyphs(text: &str) -> Vec<char> {
 /// listant les caractères en cause (message commun aux filigranes, au texte inséré et aux
 /// annotations dessinées).
 pub(crate) fn check_drawable(text: &str) -> crate::error::CoreResult<()> {
+    if let Some(c) = text.chars().find(|c| needs_shaping(*c)) {
+        return Err(crate::error::CoreError::InvalidOperation(format!(
+            "caractère « {c} » d'une écriture de droite à gauche ou à lettres liées (hébreu, \
+             arabe, langues indiennes…) : non prise en charge, le texte serait dessiné à \
+             l'envers ou sans liaisons"
+        )));
+    }
     let missing = missing_glyphs(text);
     if missing.is_empty() {
         return Ok(());
@@ -36,6 +43,23 @@ pub(crate) fn check_drawable(text: &str) -> crate::error::CoreResult<()> {
          coréenne, émojis… : hors de DejaVu Sans)",
         list.join(", ")
     )))
+}
+
+/// Vrai pour un caractère d'une écriture qui demande une **mise en forme** que nous ne faisons
+/// pas : sens de droite à gauche (hébreu, arabe, syriaque, thâna, n'ko…) ou lettres qui se lient
+/// et se réordonnent (écritures indiennes, tibétain, birman, khmer). DejaVu Sans a des glyphes
+/// pour certaines, mais les poser un à un de gauche à droite donnerait un texte faux.
+fn needs_shaping(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x0590..=0x08FF        // hébreu, arabe, syriaque, thâna, n'ko, samaritain, mandéen
+            | 0x0900..=0x0DFF  // écritures indiennes (devanagari … cingalais)
+            | 0x0F00..=0x0FFF  // tibétain
+            | 0x1000..=0x109F  // birman
+            | 0x1780..=0x17FF  // khmer
+            | 0xFB1D..=0xFDFF  // formes de présentation hébraïques et arabes
+            | 0xFE70..=0xFEFF  // formes de présentation arabes B
+    )
 }
 
 /// Vrai si `text` contient un caractère que l'encodage WinAnsi d'Helvetica ne connaît pas :
@@ -111,6 +135,16 @@ pub(crate) fn widths_entries() -> [(&'static str, Object); 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Relecture du Lot 10 (I3) : hébreu et arabe (droite à gauche, lettres liées) ne sont pas
+    /// dessinés correctement sans mise en forme : refus, comme pour les CJK.
+    #[test]
+    fn right_to_left_and_joining_scripts_are_refused() {
+        for text in ["שלום", "مرحبا", "नमस्ते"] {
+            assert!(check_drawable(text).is_err(), "{text}");
+        }
+        assert!(check_drawable("Привет Ελλάδα Łódź").is_ok());
+    }
 
     #[test]
     fn helvetica_widths_match_the_afm() {

@@ -513,7 +513,18 @@ fn verify_signer(
         }
     }
     // CAdES : `signing-certificate-v2` désigne le certificat signataire par son empreinte ;
-    // un certificat joint différent serait une substitution (C45).
+    // un certificat joint différent serait une substitution (C45). Présent plusieurs fois,
+    // il est ambigu : refusé plutôt qu'ignoré.
+    let ess_count = info.signed_attrs.as_ref().map_or(0, |attrs| {
+        attrs
+            .iter()
+            .filter(|a| a.oid == ID_SIGNING_CERTIFICATE_V2)
+            .map(|a| a.values.len())
+            .sum::<usize>()
+    });
+    if ess_count > 1 {
+        return invalid(SigIssue::SigningCertificateMismatch);
+    }
     if let Some(value) = attribute(info, ID_SIGNING_CERTIFICATE_V2) {
         let Ok(cert_der) = cert.to_der() else {
             return invalid(SigIssue::PublicKeyUnreadable);
@@ -699,6 +710,27 @@ mod tests {
         .unwrap();
         assert_eq!(
             verify(&bad, &digest).status,
+            SignatureStatus::Invalid(SigIssue::SigningCertificateMismatch)
+        );
+    }
+
+    /// Mineur du Lot 9 : un `signing-certificate-v2` en double (l'un désignant un autre
+    /// certificat) est ambigu : la signature n'est pas déclarée intègre.
+    #[test]
+    fn duplicate_signing_certificate_is_refused() {
+        use sha2::Digest;
+        let identity = identity("test-signer.p12");
+        let digest = [4u8; 32];
+        let cert: [u8; 32] = sha2::Sha256::digest(identity.certificate.to_der().unwrap()).into();
+        let der = sign_digest_with(
+            &identity,
+            &digest,
+            1_800_000_000,
+            vec![ess_attribute(&cert), ess_attribute(&[9; 32])],
+        )
+        .unwrap();
+        assert_eq!(
+            verify(&der, &digest).status,
             SignatureStatus::Invalid(SigIssue::SigningCertificateMismatch)
         );
     }

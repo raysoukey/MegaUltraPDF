@@ -40,9 +40,14 @@
         "mimeType": "application/pdf",
         "name": "MegaUltraPDF.Document",
         "description": "Document PDF",
-        "role": "Viewer"
+        "role": "Editor"
       }
     ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/hooks.nsh"
+      }
+    },
     "macOS": {
       "signingIdentity": "-"
     },

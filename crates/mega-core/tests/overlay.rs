@@ -558,3 +558,21 @@ fn infinite_word_boxes_are_skipped() {
         "{text:?}"
     );
 }
+
+/// Relecture du Lot 10 (C1) : deux passes Unicode sur la même page (filigrane, numéros,
+/// couche OCR) ont chacune leur police ; la seconde ne doit pas réinterpréter la première.
+#[test]
+fn chained_unicode_overlays_keep_every_text() {
+    let mut doc = Document::from_bytes(blank_pdf(400.0, 400.0), None).unwrap();
+    doc.add_invisible_words(0, &[word("Договор", 20.0, 300.0, 120.0, 20.0)])
+        .unwrap();
+    let mut w = watermark("ЧЕРНОВИК", None);
+    w.angle_deg = 0.0;
+    doc.add_watermark(&w).unwrap();
+    doc.add_page_numbers(&numbering("Стр. {n}", Corner::BottomCenter, 1))
+        .unwrap();
+    let text = doc.page_text(0).unwrap();
+    for expected in ["Договор", "ЧЕРНОВИК", "Стр. 1"] {
+        assert!(text.contains(expected), "{expected} absent de {text:?}");
+    }
+}

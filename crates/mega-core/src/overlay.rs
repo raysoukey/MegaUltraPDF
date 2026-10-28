@@ -612,7 +612,7 @@ fn inherited_media_box(doc: &LoDocument, page_id: ObjectId) -> Option<Rect> {
 }
 
 /// Ressources héritées d'un ancêtre `/Pages` (copie), ou un dictionnaire vide.
-fn inherited_resources(doc: &LoDocument, page: &Dictionary) -> Dictionary {
+pub(crate) fn inherited_resources(doc: &LoDocument, page: &Dictionary) -> Dictionary {
     let mut node = page.clone();
     for _ in 0..32 {
         if let Ok(res) = node.get(b"Resources")

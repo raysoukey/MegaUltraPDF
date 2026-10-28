@@ -373,7 +373,7 @@ export const fr = {
   imageTool: 'Tracez un rectangle, puis choisissez une image.',
   redactTitle: 'Caviarder la zone',
   redactConfirm:
-    'Les textes, images et annotations qui touchent la zone seront retirés du fichier et recouverts de noir (annulable avec Ctrl+Z).',
+    'Les textes et annotations qui touchent la zone seront retirés du fichier, les images noircies sous la zone, puis tout sera recouvert de noir (annulable avec Ctrl+Z).',
   redact: 'Caviarder',
   redacted: 'Zone caviardée.',
   watermarkTitle: 'Filigrane',
@@ -943,7 +943,7 @@ export const en: Strings = {
   imageTool: 'Draw a rectangle, then choose an image.',
   redactTitle: 'Redact the area',
   redactConfirm:
-    'Text, images and annotations touching the area will be removed from the file and covered in black (undo with Ctrl+Z).',
+    'Text and annotations touching the area will be removed from the file, images blacked out under the area, then everything covered in black (undo with Ctrl+Z).',
   redact: 'Redact',
   redacted: 'Area redacted.',
   watermarkTitle: 'Watermark',

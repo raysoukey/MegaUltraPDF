@@ -25,13 +25,20 @@ use crate::engine;
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::{Rect, frame_of};
 
-/// Ce qu'un caviardage a retiré.
+/// Ce qu'un caviardage a retiré, pour en rendre compte à l'utilisateur (et lui signaler ce
+/// qui n'a été que recouvert).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RedactReport {
     /// Objets texte supprimés.
     pub texts: u16,
-    /// Objets image supprimés.
-    pub images: u16,
+    /// Images retirées entières (entièrement couvertes, ou impossibles à réécrire).
+    pub images_removed: u16,
+    /// Images remplacées par une copie dont les pixels sous la zone sont noirs (Lot 10).
+    pub images_redacted: u16,
+    /// Tracés vectoriels supprimés (contenus dans la zone).
+    pub paths_removed: u16,
+    /// Tracés qui traversent la zone : conservés sous le cache noir (signalés).
+    pub paths_kept: u16,
     /// Annotations supprimées.
     pub annotations: u16,
 }
@@ -74,7 +81,10 @@ impl Document {
         // régénération de son flux (B3).
         let snapshot = self.to_bytes()?;
         super::check_regeneration_safe(&snapshot, page)?;
-        let report = match self.redact_objects(page, rect) {
+        let report = match self
+            .redact_objects(page, rect)
+            .and_then(|report| self.redact_images(page, rect, report))
+        {
             Ok(report) => report,
             Err(e) => {
                 self.reload_from_bytes(snapshot)?;
@@ -95,6 +105,32 @@ impl Document {
                 "du texte reste sous la zone ({remaining} caractère(s) dessinés via un groupe \
                  XObject) : le caviardage par objets ne peut pas le retirer"
             )));
+        }
+        Ok(report)
+    }
+
+    /// Phase `lopdf` : les images qui touchent la zone sont noircies dessous ou retirées
+    /// (module [`super::raster`]), puis le document est rechargé.
+    fn redact_images(
+        &mut self,
+        page: u16,
+        rect: Rect,
+        mut report: RedactReport,
+    ) -> CoreResult<RedactReport> {
+        let zone = self.page_frame(page)?.to_user_space(rect);
+        let mut doc = lopdf::Document::load_mem(&self.to_bytes()?)
+            .map_err(|e| CoreError::InvalidOperation(format!("caviardage des images : {e}")))?;
+        let page_id = *doc
+            .get_pages()
+            .get(&(u32::from(page) + 1))
+            .ok_or_else(|| CoreError::InvalidOperation("page introuvable".to_string()))?;
+        let raster = super::raster::redact_images(&mut doc, page_id, &zone)?;
+        report.images_removed = raster.removed;
+        report.images_redacted = raster.redacted;
+        if raster != super::raster::RasterReport::default() {
+            let mut out = Vec::new();
+            doc.save_to(&mut out)?;
+            self.reload_from_bytes(out)?;
         }
         Ok(report)
     }
@@ -137,7 +173,8 @@ impl Document {
         for i in (0..count).rev() {
             let obj = pdf_page.objects().get(i)?;
             let kind = obj.object_type();
-            if !matches!(kind, PdfPageObjectType::Text | PdfPageObjectType::Image) {
+            // Les images sont traitées ensuite par `lopdf` (module `raster`) : pixels noircis.
+            if kind != PdfPageObjectType::Text {
                 continue;
             }
             let Ok(bounds) = obj.bounds() else {
@@ -148,10 +185,7 @@ impl Document {
             }
             drop(obj);
             pdf_page.objects_mut().remove_object_at_index(i)?;
-            match kind {
-                PdfPageObjectType::Text => report.texts = report.texts.saturating_add(1),
-                _ => report.images = report.images.saturating_add(1),
-            }
+            report.texts = report.texts.saturating_add(1);
         }
         let annots = pdf_page.annotations_mut();
         for i in (0..annots.len()).rev() {

@@ -210,7 +210,10 @@ export interface TextStyle {
 /** Ce qu'un caviardage a retiré (miroir de `RedactReport`). */
 export interface RedactReport {
   texts: number;
-  images: number;
+  images_removed: number;
+  images_redacted: number;
+  paths_removed: number;
+  paths_kept: number;
   annotations: number;
 }
 

@@ -55,7 +55,10 @@ fn redaction_removes_text_from_extraction() {
     let mut doc = rich();
     let zone = rect(60.0, 690.0, 200.0, 40.0);
     let report = doc.redact(0, zone).unwrap();
-    assert_eq!((report.texts, report.images, report.annotations), (1, 0, 1));
+    assert_eq!(
+        (report.texts, report.images_removed, report.annotations),
+        (1, 0, 1)
+    );
     let text = page_text(&doc, 0);
     assert!(!text.contains("Secret") && !text.contains("123"), "{text}");
     assert!(text.contains("Public"), "{text}");
@@ -99,9 +102,12 @@ fn redaction_is_an_undoable_command() {
 #[test]
 fn redaction_removes_images_and_annotations() {
     let mut doc = rich();
-    // L'image est posée en (300, 680) sur 100 × 50 : la zone la chevauche à peine.
-    let report = doc.redact(0, rect(380.0, 700.0, 50.0, 50.0)).unwrap();
-    assert_eq!((report.texts, report.images, report.annotations), (0, 1, 0));
+    // L'image est posée en (300, 680) sur 100 × 50 : la zone en couvre toute la hauteur.
+    let report = doc.redact(0, rect(290.0, 670.0, 120.0, 80.0)).unwrap();
+    assert_eq!(
+        (report.texts, report.images_removed, report.annotations),
+        (0, 1, 0)
+    );
     let kinds: Vec<ObjectKind> = doc
         .page_objects(0)
         .unwrap()
@@ -165,7 +171,8 @@ fn redaction_removes_image_and_annotation_bytes_from_saved_file() {
     let path = dir.path().join("riche.pdf");
     std::fs::write(&path, rich_pdf()).unwrap();
     let mut doc = Document::open(&path, None).unwrap();
-    doc.redact(0, rect(380.0, 700.0, 50.0, 50.0)).unwrap();
+    // La zone couvre toute l'image (300..400 × 680..730) : elle est retirée entière.
+    doc.redact(0, rect(290.0, 670.0, 120.0, 80.0)).unwrap();
     doc.redact(0, rect(60.0, 690.0, 200.0, 40.0)).unwrap();
     doc.save().unwrap();
     let saved = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
@@ -351,4 +358,129 @@ fn extracted_pages_do_not_carry_a_redacted_note() {
             .any(|o| object_contains(o, b"NoteTresSecrete")),
         "la note caviardée revient dans l'extrait"
     );
+}
+
+// --- Lot 10 : caviardage d'une partie d'image ---------------------------------------------
+
+use mega_core::testing::{MOSAIC_SECRET, image_mosaic_pdf};
+
+fn mosaic() -> Document {
+    Document::from_bytes(image_mosaic_pdf(), None).unwrap()
+}
+
+/// Vrai si le motif secret (12 octets) apparaît dans un flux décompressé de `bytes`.
+fn secret_in_file(bytes: &[u8]) -> bool {
+    let needle = MOSAIC_SECRET.repeat(4);
+    let doc = lopdf::Document::load_mem(bytes).unwrap();
+    doc.objects.values().any(|o| {
+        o.as_stream().is_ok_and(|s| {
+            let data = s
+                .decompressed_content()
+                .unwrap_or_else(|_| s.content.clone());
+            data.windows(needle.len()).any(|w| w == needle.as_slice())
+        })
+    })
+}
+
+/// Point d'une page de 842 pt de haut rendue à l'échelle 1 (espace affiché).
+fn px(img: &mega_core::RenderedPage, x: f32, y: f32) -> (u8, u8, u8) {
+    pixel(img, x as u32, img.height_px - y as u32)
+}
+
+#[test]
+fn partial_image_redaction_blacks_only_the_zone() {
+    let mut doc = mosaic();
+    // Quadrant haut-gauche de l'image : x 100..200, y 200..300.
+    let report = doc.redact(0, rect(100.0, 200.0, 100.0, 100.0)).unwrap();
+    assert_eq!((report.images_redacted, report.images_removed), (1, 0));
+    let img = doc.render_page(0, 1.0).unwrap();
+    assert_eq!(px(&img, 150.0, 250.0), (0, 0, 0), "quadrant caviardé");
+    assert_eq!(px(&img, 250.0, 250.0), (255, 0, 0), "rouge intact");
+    assert_eq!(px(&img, 150.0, 150.0), (0, 128, 0), "vert intact");
+    assert_eq!(px(&img, 250.0, 150.0), (0, 0, 255), "bleu intact");
+    assert_eq!(
+        doc.page_objects(0)
+            .unwrap()
+            .iter()
+            .filter(|o| o.kind == ObjectKind::Image)
+            .count(),
+        2,
+        "l'image reste (remplacée), l'autre aussi"
+    );
+}
+
+#[test]
+fn redacted_pixels_are_not_in_the_saved_file() {
+    let mut doc = Document::from_bytes(image_mosaic_pdf(), None).unwrap();
+    // Une seule page qui porte l'image : on retire les deux autres d'abord.
+    doc.apply(&Cmd::DeletePages { pages: vec![1, 2] }).unwrap();
+    assert!(
+        secret_in_file(&doc.to_bytes().unwrap()),
+        "motif présent avant"
+    );
+    doc.redact(0, rect(95.0, 195.0, 110.0, 110.0)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("caviarde.pdf");
+    doc.save_as(&path).unwrap();
+    assert!(
+        !secret_in_file(&std::fs::read(&path).unwrap()),
+        "motif disparu du fichier"
+    );
+}
+
+#[test]
+fn shared_image_stays_intact_on_other_page() {
+    let mut doc = mosaic();
+    doc.redact(0, rect(100.0, 200.0, 100.0, 100.0)).unwrap();
+    let other = doc.render_page(1, 1.0).unwrap();
+    assert_eq!(
+        px(&other, 150.0, 250.0),
+        (0xC0, 0xFF, 0xEE),
+        "page 1 intacte"
+    );
+}
+
+#[test]
+fn partial_redaction_on_rotated_page() {
+    let mut doc = mosaic();
+    // Boîte affichée de l'image sur la page tournée ; on caviarde son quart haut-gauche.
+    let image = doc
+        .page_objects(2)
+        .unwrap()
+        .into_iter()
+        .find(|o| o.kind == ObjectKind::Image)
+        .unwrap()
+        .bounds;
+    let zone = rect(
+        image.x,
+        image.y + image.h / 2.0,
+        image.w / 2.0,
+        image.h / 2.0,
+    );
+    let before = doc.render_page(2, 1.0).unwrap();
+    let report = doc.redact(2, zone).unwrap();
+    assert_eq!(report.images_redacted, 1);
+    let img = doc.render_page(2, 1.0).unwrap();
+    let (cx, cy) = (zone.x + zone.w / 2.0, zone.y + zone.h / 2.0);
+    assert_eq!(px(&img, cx, cy), (0, 0, 0), "zone affichée noire");
+    // Le quart opposé garde sa couleur d'avant.
+    let (ox, oy) = (image.x + image.w * 0.75, image.y + image.h * 0.25);
+    assert_eq!(px(&img, ox, oy), px(&before, ox, oy));
+}
+
+#[test]
+fn smask_zone_becomes_opaque() {
+    let mut doc = mosaic();
+    // Moitié gauche de l'image masquée (transparente) : x 350..400, y 100..200.
+    let before = doc.render_page(0, 1.0).unwrap();
+    assert_eq!(
+        px(&before, 360.0, 150.0),
+        (255, 255, 255),
+        "transparent avant"
+    );
+    doc.redact(0, rect(355.0, 120.0, 30.0, 30.0)).unwrap();
+    let img = doc.render_page(0, 1.0).unwrap();
+    assert_eq!(px(&img, 370.0, 135.0), (0, 0, 0), "zone noire et opaque");
+    assert_eq!(px(&img, 390.0, 180.0), (255, 255, 255), "reste transparent");
+    assert_eq!(px(&img, 430.0, 150.0), (0, 0, 255), "moitié opaque intacte");
 }

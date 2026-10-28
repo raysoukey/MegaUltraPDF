@@ -789,6 +789,102 @@ pub fn heavy_images_pdf() -> Vec<u8> {
     out
 }
 
+/// Couleur du quadrant haut-gauche de l'image de [`image_mosaic_pdf`] : ses octets
+/// `C0 FF EE` répétés forment un motif qu'aucun autre objet du fichier ne contient.
+pub const MOSAIC_SECRET: [u8; 3] = [0xC0, 0xFF, 0xEE];
+
+/// Trois pages pour le caviardage d'images (Lot 10) :
+/// - page 0 : l'image « mosaïque » 64 × 64 RGB (quadrants : haut-gauche [`MOSAIC_SECRET`],
+///   haut-droit rouge, bas-gauche vert `(0, 128, 0)`, bas-droit bleu) posée en
+///   `100 100 200 200` (x, y, largeur, hauteur), et une image bleue 32 × 32 dont le masque
+///   `/SMask` rend la moitié gauche transparente, posée en `350 100 100 100` ;
+/// - page 1 : la **même** image mosaïque (même objet), au même endroit ;
+/// - page 2 : `/Rotate 90`, la même image mosaïque au même endroit (espace utilisateur).
+///
+/// Toutes les pages font 595 × 842 points (MediaBox).
+pub fn image_mosaic_pdf() -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    let mut doc = lopdf::Document::with_version("1.7");
+    let image_dict = |w: i64, h: i64, cs: &str| {
+        let mut d = Dictionary::new();
+        d.set("Type", Object::Name(b"XObject".to_vec()));
+        d.set("Subtype", Object::Name(b"Image".to_vec()));
+        d.set("Width", w);
+        d.set("Height", h);
+        d.set("ColorSpace", Object::Name(cs.as_bytes().to_vec()));
+        d.set("BitsPerComponent", 8);
+        d
+    };
+    // Rangées de haut en bas, pixels de gauche à droite (§8.9.5.1).
+    let mut mosaic = Vec::with_capacity(64 * 64 * 3);
+    for row in 0..64 {
+        for col in 0..64 {
+            let rgb = match (row < 32, col < 32) {
+                (true, true) => MOSAIC_SECRET,
+                (true, false) => [255, 0, 0],
+                (false, true) => [0, 128, 0],
+                (false, false) => [0, 0, 255],
+            };
+            mosaic.extend_from_slice(&rgb);
+        }
+    }
+    let mut mosaic = Stream::new(image_dict(64, 64, "DeviceRGB"), mosaic);
+    mosaic.compress().expect("compression Flate");
+    let mosaic_id = doc.add_object(mosaic);
+    let mut alpha = Vec::with_capacity(32 * 32);
+    for _row in 0..32 {
+        for col in 0..32 {
+            alpha.push(if col < 16 { 0u8 } else { 255 });
+        }
+    }
+    let smask_id = doc.add_object(Stream::new(image_dict(32, 32, "DeviceGray"), alpha));
+    let mut masked = image_dict(32, 32, "DeviceRGB");
+    masked.set("SMask", Object::Reference(smask_id));
+    let masked_id = doc.add_object(Stream::new(masked, [0u8, 0, 255].repeat(32 * 32)));
+
+    let pages_id = doc.new_object_id();
+    let mut kids = Vec::new();
+    for (index, content) in [
+        "q 200 0 0 200 100 100 cm /ImA Do Q q 100 0 0 100 350 100 cm /ImB Do Q",
+        "q 200 0 0 200 100 100 cm /ImA Do Q",
+        "q 200 0 0 200 100 100 cm /ImA Do Q",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let content_id =
+            doc.add_object(Stream::new(Dictionary::new(), content.as_bytes().to_vec()));
+        let mut xobjects = Dictionary::new();
+        xobjects.set("ImA", Object::Reference(mosaic_id));
+        xobjects.set("ImB", Object::Reference(masked_id));
+        let mut resources = Dictionary::new();
+        resources.set("XObject", Object::Dictionary(xobjects));
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name(b"Page".to_vec()));
+        page.set("Parent", Object::Reference(pages_id));
+        page.set("MediaBox", vec![0.into(), 0.into(), 595.into(), 842.into()]);
+        page.set("Resources", Object::Dictionary(resources));
+        page.set("Contents", Object::Reference(content_id));
+        if index == 2 {
+            page.set("Rotate", 90);
+        }
+        kids.push(Object::Reference(doc.add_object(page)));
+    }
+    let mut pages = Dictionary::new();
+    pages.set("Type", Object::Name(b"Pages".to_vec()));
+    pages.set("Kids", kids);
+    pages.set("Count", 3);
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let mut catalog = Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    let catalog_id = doc.add_object(catalog);
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
 /// Une page avec deux **pièces jointes** (`/Names /EmbeddedFiles`, §7.11.4) écrites à la
 /// main : `notes.txt` (« Bonjour monde », 13 octets) et `données.csv` (20 octets, nom non
 /// ASCII dans `/UF` en UTF-16BE). Le texte de la page dit « Pièces jointes ».

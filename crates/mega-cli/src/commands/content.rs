@@ -118,17 +118,19 @@ pub fn redact(
     let mut doc = Document::open(file, password)?;
     let pages = PageSpec::parse(spec, doc.page_count())?;
     // L'appel direct donne le rapport ; la commande d'historique n'en a pas besoin ici.
-    let (mut texts, mut images, mut annotations) = (0u32, 0u32, 0u32);
+    let (mut texts, mut removed, mut blacked, mut annotations) = (0u32, 0u32, 0u32, 0u32);
     for page in &pages {
         let report = doc.redact(*page, Rect { x, y, w, h })?;
         texts += u32::from(report.texts);
-        images += u32::from(report.images);
+        removed += u32::from(report.images_removed);
+        blacked += u32::from(report.images_redacted);
         annotations += u32::from(report.annotations);
     }
     doc.save_as(out)
         .with_context(|| format!("écriture de {}", out.display()))?;
     println!(
-        "Caviardé sur {} page(s) : {texts} texte(s), {images} image(s), {annotations} annotation(s) : {}",
+        "Caviardé sur {} page(s) : {texts} texte(s), {removed} image(s) retirée(s), \
+         {blacked} image(s) noircie(s) sous la zone, {annotations} annotation(s) : {}",
         pages.len(),
         out.display()
     );

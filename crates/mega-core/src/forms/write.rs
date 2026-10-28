@@ -11,6 +11,7 @@
 
 use lopdf::{Dictionary, Document, Object, ObjectId, StringFormat};
 
+use crate::crypt::LopdfSession;
 use crate::error::{CoreError, CoreResult};
 
 /// Ce qu'il faut écrire.
@@ -130,33 +131,28 @@ fn set_need_appearances(doc: &mut Document) -> CoreResult<()> {
     Ok(())
 }
 
-fn load(bytes: &[u8]) -> CoreResult<Document> {
-    let doc = Document::load_mem(bytes).map_err(structure)?;
-    // `was_encrypted()` : lopdf déchiffre en silence un mot de passe utilisateur vide.
-    if doc.is_encrypted() || doc.was_encrypted() {
-        return Err(CoreError::InvalidOperation(
-            "formulaire d'un PDF chiffré : non modifiable dans cette version".to_string(),
-        ));
-    }
-    Ok(doc)
+/// Charge le document à modifier ; un document chiffré est déchiffré avec `password` et
+/// sera rechiffré à l'identique par [`save`] (Lot 10).
+fn load(bytes: &[u8], password: Option<&str>) -> CoreResult<LopdfSession> {
+    LopdfSession::load(bytes, password)
 }
 
-fn save(mut doc: Document) -> CoreResult<Vec<u8>> {
-    let mut out = Vec::new();
-    doc.save_to(&mut out)?;
-    Ok(out)
+fn save(session: LopdfSession) -> CoreResult<Vec<u8>> {
+    session.finish()
 }
 
 /// Applique `patch` au widget `index` de la page `page` et retourne le document modifié.
 pub(crate) fn patch_field(
     bytes: &[u8],
+    password: Option<&str>,
     page: usize,
     index: usize,
     patch: &Patch,
 ) -> CoreResult<Vec<u8>> {
-    let mut doc = load(bytes)?;
-    let widget_id = annotation_id(&doc, page, index)?;
-    let field = field_id(&doc, widget_id)?;
+    let mut session = load(bytes, password)?;
+    let doc = &mut session.doc;
+    let widget_id = annotation_id(doc, page, index)?;
+    let field = field_id(doc, widget_id)?;
     match patch {
         Patch::Text(text) => {
             doc.get_dictionary_mut(field)
@@ -171,7 +167,7 @@ pub(crate) fn patch_field(
         }
         Patch::Checked(checked) => {
             let widget = doc.get_dictionary(widget_id).map_err(structure)?;
-            let on = on_state(&doc, widget);
+            let on = on_state(doc, widget);
             let state = if *checked { on } else { b"Off".to_vec() };
             doc.get_dictionary_mut(widget_id)
                 .map_err(structure)?
@@ -182,7 +178,7 @@ pub(crate) fn patch_field(
         }
         Patch::RadioOn => {
             let widget = doc.get_dictionary(widget_id).map_err(structure)?;
-            let on = on_state(&doc, widget);
+            let on = on_state(doc, widget);
             doc.get_dictionary_mut(field)
                 .map_err(structure)?
                 .set("V", Object::Name(on.clone()));
@@ -206,16 +202,16 @@ pub(crate) fn patch_field(
             }
         }
     }
-    set_need_appearances(&mut doc)?;
-    save(doc)
+    set_need_appearances(doc)?;
+    save(session)
 }
 
 /// Retire `/AcroForm` du catalogue (après aplatissement : plus de champs orphelins).
-pub(crate) fn strip_acroform(bytes: &[u8]) -> CoreResult<Vec<u8>> {
-    let mut doc = load(bytes)?;
-    let catalog = doc.catalog_mut().map_err(structure)?;
+pub(crate) fn strip_acroform(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> {
+    let mut session = load(bytes, password)?;
+    let catalog = session.doc.catalog_mut().map_err(structure)?;
     if catalog.remove(b"AcroForm").is_none() {
         return Ok(bytes.to_vec());
     }
-    save(doc)
+    save(session)
 }

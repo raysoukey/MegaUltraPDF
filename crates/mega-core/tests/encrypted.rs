@@ -197,3 +197,61 @@ fn redact_on_encrypted_document_drops_the_text() {
     let reopened = Document::from_bytes(saved, Some("secret")).unwrap();
     assert!(!reopened.page_text(0).unwrap().contains("Page 1"));
 }
+
+/// `form_pdf` (ou tout autre PDF) protégé par le mot de passe d'ouverture « u ».
+fn protected(bytes: Vec<u8>) -> Vec<u8> {
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    doc.protect(&Protection {
+        user_password: "u".to_string(),
+        owner_password: "o".to_string(),
+        permissions: mega_core::Permissions {
+            print: true,
+            copy: true,
+            modify: true,
+            annotate: true,
+        },
+    })
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("protege.pdf");
+    doc.save_as(&path).unwrap();
+    std::fs::read(&path).unwrap()
+}
+
+#[test]
+fn form_of_encrypted_document_is_filled() {
+    let bytes = protected(mega_core::testing::form_pdf());
+    let mut doc = Document::from_bytes(bytes, Some("u")).unwrap();
+    doc.set_field_value(
+        0,
+        0,
+        &mega_core::FieldValue::Text {
+            text: "Dupont".to_string(),
+        },
+    )
+    .unwrap();
+    let out = doc.to_bytes().unwrap();
+    assert!(is_encrypted(&out));
+    let reopened = Document::from_bytes(out, Some("u")).unwrap();
+    assert_eq!(
+        reopened.form_fields(0).unwrap()[0].value.as_deref(),
+        Some("Dupont")
+    );
+}
+
+#[test]
+fn metadata_of_encrypted_document_is_edited() {
+    let bytes = protected(sample_pdf(1, "ancien titre"));
+    let mut doc = Document::from_bytes(bytes, Some("u")).unwrap();
+    doc.set_metadata(&mega_core::MetadataPatch {
+        title: Some("Nouveau titre".to_string()),
+        author: None,
+        subject: None,
+        keywords: None,
+    })
+    .unwrap();
+    let out = doc.to_bytes().unwrap();
+    assert!(is_encrypted(&out));
+    let reopened = Document::from_bytes(out, Some("u")).unwrap();
+    assert_eq!(reopened.title().as_deref(), Some("Nouveau titre"));
+}

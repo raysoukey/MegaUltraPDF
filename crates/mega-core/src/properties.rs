@@ -113,15 +113,10 @@ impl Document {
             }
         }
         let bytes = self.to_bytes()?;
-        let mut doc = lopdf::Document::load_mem(&bytes).map_err(|e| {
-            CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
-        })?;
-        if doc.is_encrypted() || doc.was_encrypted() {
-            return Err(CoreError::InvalidOperation(
-                "métadonnées d'un PDF chiffré : non modifiables dans cette version".to_string(),
-            ));
-        }
-        let info_id = info_id(&mut doc);
+        // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
+        let mut session = crate::crypt::LopdfSession::load(&bytes, self.password())?;
+        let doc = &mut session.doc;
+        let info_id = info_id(doc);
         let info = doc
             .get_dictionary_mut(info_id)
             .map_err(|e| CoreError::InvalidOperation(format!("dictionnaire /Info : {e}")))?;
@@ -146,7 +141,7 @@ impl Document {
             v.as_deref().map(str::trim)
         }
         update_xmp(
-            &mut doc,
+            doc,
             &XmpUpdate {
                 title: trimmed(&patch.title),
                 author: trimmed(&patch.author),
@@ -154,9 +149,8 @@ impl Document {
                 keywords: trimmed(&patch.keywords),
             },
         );
-        stamp_mod_date(&mut doc);
-        let mut out = Vec::new();
-        doc.save_to(&mut out)?;
+        stamp_mod_date(doc);
+        let out = session.finish()?;
         self.reload_from_bytes(out)
     }
 }

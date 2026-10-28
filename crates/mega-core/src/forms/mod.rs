@@ -234,7 +234,13 @@ impl Document {
             }
         };
         let bytes = self.to_bytes()?;
-        let patched = write::patch_field(&bytes, usize::from(page), usize::from(index), &patch)?;
+        let patched = write::patch_field(
+            &bytes,
+            self.password(),
+            usize::from(page),
+            usize::from(index),
+            &patch,
+        )?;
         self.reload_from_bytes(patched)
     }
 
@@ -258,7 +264,7 @@ impl Document {
         }
         let bytes = self.to_bytes()?;
         let bytes = if had_form {
-            write::strip_acroform(&bytes)?
+            write::strip_acroform(&bytes, self.password())?
         } else {
             bytes
         };

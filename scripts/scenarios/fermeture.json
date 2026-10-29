@@ -1,0 +1,12 @@
+[
+  {
+    "wait": 1800
+  },
+  {
+    "requestClose": true
+  },
+  {
+    "expectClosed": 6000,
+    "label": "document non modifié : la fenêtre se ferme (croix, Alt+F4)"
+  }
+]

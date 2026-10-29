@@ -15,6 +15,8 @@
 //   { "drag": "sélecteur", "from": [x, y], "to": [x, y] } glisser souris (coordonnées relatives à l'élément)
 //   { "drag": "sélecteur", "fromFrac": [fx, fy], "toFrac": [fx, fy] } idem, en fractions de sa taille
 //   { "launch": ["a.pdf", …] }          lance une seconde instance de l'application (MEGA_APP_EXE)
+//   { "requestClose": true }             demande la fermeture de la fenêtre (comme la croix ou Alt+F4)
+//   { "expectClosed": 5000, "label": "…" } vérifie que la fenêtre disparaît dans le délai (dernière étape)
 
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -120,7 +122,24 @@ async function drag(step) {
   await mouse('mouseReleased', tx, ty, { clickCount: 1 });
 }
 
+/** Vrai si la fenêtre a disparu (plus de page CDP, ou connexion fermée) dans `ms` millisecondes. */
+async function windowGone(ms) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (ws.readyState === WebSocket.CLOSED) return true;
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+      if (!list.some((t) => t.type === 'page' && !t.url.startsWith('devtools'))) return true;
+    } catch {
+      return true; // le WebView n'écoute plus : la fenêtre est fermée
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
 let failures = 0;
+let closed = false;
 for (const step of scenario) {
   if (step.wait !== undefined) {
     await new Promise((r) => setTimeout(r, step.wait));
@@ -141,6 +160,22 @@ for (const step of scenario) {
     const exe = process.env.MEGA_APP_EXE;
     spawn(exe, step.launch, { detached: true, stdio: 'ignore' }).unref();
     console.log(`🚀 seconde instance : ${step.launch.join(' ')}`);
+  } else if (step.requestClose) {
+    // La demande de fermeture déclenche `onCloseRequested` dans l'interface, exactement comme
+    // la croix de la fenêtre. Envoyée sans attendre de réponse : la page peut disparaître.
+    ws.send(
+      JSON.stringify({
+        id: ++nextId,
+        method: 'Runtime.evaluate',
+        params: { expression: "window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'main' })" },
+      }),
+    );
+    console.log('🚪 demande de fermeture');
+  } else if (step.expectClosed !== undefined) {
+    closed = await windowGone(step.expectClosed);
+    if (!closed) failures++;
+    console.log(`${closed ? '✔' : '✘'} ${step.label ?? 'la fenêtre se ferme'} → ${closed}`);
+    if (closed) break;
   } else if (step.media !== undefined) {
     // Émule un média CSS (« print » pour vérifier la feuille d'impression, « » pour revenir).
     await send('Emulation.setEmulatedMedia', { media: step.media });
@@ -164,6 +199,6 @@ for (const step of scenario) {
     console.log(`🖱 glisser ${step.drag} ${step.from} → ${step.to}`);
   }
 }
-ws.close();
+if (!closed) ws.close();
 console.log(failures === 0 ? 'SCÉNARIO OK' : `SCÉNARIO : ${failures} assertion(s) en échec`);
 process.exit(failures === 0 ? 0 : 1);

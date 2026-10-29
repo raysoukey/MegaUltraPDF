@@ -1,0 +1,43 @@
+[
+  {
+    "wait": 1800
+  },
+  {
+    "eval": "(() => { const b = document.querySelector('button[aria-label=\"Panneau latéral\"]'); if (!document.querySelector('.thumb') && b) b.click(); return true; })()",
+    "label": "panneau des vignettes ouvert"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "eval": "(() => { document.querySelector('.thumb').dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()",
+    "label": "page 1 choisie"
+  },
+  {
+    "click": "button[title='Pivoter à droite']"
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')",
+    "label": "document modifié"
+  },
+  {
+    "requestClose": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "document.querySelector('#close-title') !== null",
+    "label": "la fermeture demande confirmation"
+  },
+  {
+    "click": "[aria-labelledby=close-title] button.danger"
+  },
+  {
+    "expectClosed": 6000,
+    "label": "« Ne pas enregistrer » : la fenêtre se ferme"
+  }
+]

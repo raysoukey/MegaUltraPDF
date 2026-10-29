@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions de la fenêtre principale : cœur Tauri, dialogues (ouvrir, confirmer), préférences persistantes, ouverture de liens externes.",
+  "description": "Permissions de la fenêtre principale : cœur Tauri, fermeture (close, et destroy appelé par onCloseRequested après confirmation des modifications), dialogues (ouvrir, confirmer), préférences persistantes, ouverture de liens externes.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
+    "core:window:allow-destroy",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-confirm",

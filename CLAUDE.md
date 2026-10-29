@@ -156,6 +156,11 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   retouchées à la main. Icône d'action = `<Icon name>` décorative dans un bouton qui garde `aria-label` +
   `title` ; `logic/icons.ts` suit `ICON_NAMES` de `xtask/src/brand.rs` (test). Scénario CDP : un
   `change` simulé doit avoir `bubbles: true` (Svelte 5 délègue l'événement à la racine).
+- Fermeture (correctif 0.12.1) : avec un `onCloseRequested` dans l'interface, Tauri ne ferme plus la
+  fenêtre lui-même, l'API JS appelle `window.destroy()` : la capacité **`core:window:allow-destroy`**
+  est obligatoire (test `window-close.test.ts`), sinon la fenêtre ne se ferme jamais. Les scénarios
+  CDP tuent le processus à la fin : seule l'étape `expectClosed` (scénarios `fermeture*`) prouve
+  qu'il se termine seul.
 - Microsoft Defender met en quarantaine l'installeur NSIS (`Trojan:Win32/Bearfoos.A!ml`, détection
   statistique) : faux positif d'un paquet non signé et sans réputation, documenté dans le README ;
   ce n'est pas un bug de l'application. Seule vraie solution : signer les paquets Windows.

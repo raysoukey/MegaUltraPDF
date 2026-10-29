@@ -15,6 +15,7 @@
   import { shortcutKeyFor } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
   import FileMenu from './FileMenu.svelte';
+  import Icon from './Icon.svelte';
 
   let {
     doc,
@@ -81,8 +82,12 @@
 
 <header class="toolbar">
   <div class="group">
-    <button type="button" onclick={onopen} title="{t.openFile} ({shortcutKeyFor('open')})"
-      >{t.openFile}</button
+    <button
+      type="button"
+      class="icon-button"
+      aria-label={t.openFile}
+      onclick={onopen}
+      title="{t.openFile} ({shortcutKeyFor('open')})"><Icon name="open" /></button
     >
     <FileMenu
       {doc}
@@ -174,8 +179,9 @@
       aria-label={t.rotate}
       type="button"
       disabled={!doc}
+      class="icon-button"
       title="{t.rotate} (R)"
-      onclick={() => doc && rotateDoc(doc)}>⟳</button
+      onclick={() => doc && rotateDoc(doc)}><Icon name="rotate" /></button
     >
     <button
       aria-label={settings.viewMode === 'continuous' ? t.viewSingle : t.viewContinuous}
@@ -209,9 +215,10 @@
       aria-label={t.save}
       type="button"
       disabled={!doc}
+      class="icon-button"
       class:attention={doc?.edit.modified}
       title="{t.save} ({shortcutKeyFor('save')})"
-      onclick={() => doc && save(doc)}>💾</button
+      onclick={() => doc && save(doc)}><Icon name="save" /></button
     >
     <button
       type="button"
@@ -219,14 +226,20 @@
       title="{t.saveAs} ({shortcutKeyFor('saveAs')})"
       onclick={() => doc && saveAs(doc)}>{t.saveAs}</button
     >
-    <button type="button" title="{t.mergeTitle} ({shortcutKeyFor('merge')})" onclick={onmerge}
-      >{t.merge}…</button
+    <button
+      type="button"
+      class="icon-button"
+      aria-label="{t.merge}…"
+      title="{t.mergeTitle} ({shortcutKeyFor('merge')})"
+      onclick={onmerge}><Icon name="merge" /></button
     >
     <button
       type="button"
+      class="icon-button"
+      aria-label="{t.split}…"
       disabled={!doc}
       title="{t.splitTitle} ({shortcutKeyFor('split')})"
-      onclick={onsplit}>{t.split}…</button
+      onclick={onsplit}><Icon name="split" /></button
     >
   </div>
 
@@ -235,8 +248,9 @@
       aria-label={t.search}
       type="button"
       disabled={!doc}
+      class="icon-button"
       title="{t.search} ({shortcutKeyFor('find')})"
-      onclick={ontogglesearch}>🔍</button
+      onclick={ontogglesearch}><Icon name="search" /></button
     >
     <button
       aria-label={t.properties}
@@ -277,6 +291,10 @@
   }
   .right {
     margin-left: auto;
+  }
+  /* Boutons à icône : moins de marge intérieure, pour garder la hauteur des boutons texte. */
+  .icon-button {
+    padding: 0.1rem 0.3rem;
   }
   .attention {
     outline: 2px solid var(--accent);

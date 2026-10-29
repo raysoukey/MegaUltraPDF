@@ -1,0 +1,77 @@
+[
+  { "wait": 1800 },
+  {
+    "eval": "(() => { const s = document.querySelector('.toolbar select'); s.value = 'light'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "thème clair"
+  },
+  { "wait": 400 },
+  {
+    "assert": "(() => { const names = ['open', 'save', 'merge', 'split', 'search', 'rotate']; const bad = names.filter((n) => { const i = document.querySelector('.toolbar img[src=\"/icons/' + n + '.png\"]'); const b = i && i.closest('button'); return !(i && i.complete && i.naturalWidth === 64 && b && b.getAttribute('aria-label') && b.title && b.textContent.trim() === ''); }); return bad.length === 0 || 'ERREUR ' + bad.join(', '); })()",
+    "label": "barre d'outils : 6 boutons à icône seule, image chargée, nom accessible et infobulle"
+  },
+  {
+    "assert": "(() => { const i = [...document.querySelectorAll('.toolbar img')]; return i.every((x) => x.alt === '' && x.getAttribute('aria-hidden') === 'true') || 'ERREUR image non décorative'; })()",
+    "label": "les icônes sont décoratives (alt vide) : le nom vient du bouton"
+  },
+  {
+    "assert": "(() => { const names = ['annotate', 'sign']; const bad = names.filter((n) => { const i = document.querySelector('.annotation-toolbar img[src=\"/icons/' + n + '.png\"]'); const b = i && i.closest('button'); return !(i && i.naturalWidth === 64 && b && b.getAttribute('aria-label')); }); return bad.length === 0 || 'ERREUR ' + bad.join(', '); })()",
+    "label": "barre d'annotation : signature et modifier l'annotation en icônes"
+  },
+  { "shot": "01-barres-clair.png" },
+  { "click": ".toolbar [aria-haspopup=menu]" },
+  { "wait": 400 },
+  {
+    "assert": "(() => { const names = ['open', 'export', 'protect', 'sign', 'compress']; const bad = names.filter((n) => { const i = document.querySelector('[role=menu] img[src=\"/icons/' + n + '.png\"]'); return !(i && i.naturalWidth === 64 && i.closest('[role=menuitem]').textContent.trim().length > 3); }); return bad.length === 0 || 'ERREUR ' + bad.join(', '); })()",
+    "label": "menu Fichier : icônes devant Ouvrir, Exporter, Protéger, Signer, Optimiser, libellés gardés"
+  },
+  { "shot": "02-menu-fichier.png" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  { "click": ".annotation-toolbar [aria-haspopup=menu]" },
+  { "wait": 400 },
+  {
+    "assert": "(() => { const i = document.querySelector('[role=menu] img[src=\"/icons/ocr.png\"]'); return (i && i.naturalWidth === 64 && i.closest('[role=menuitem]').textContent.includes('OCR')) || 'ERREUR icône OCR absente'; })()",
+    "label": "menu Contenu : icône devant la reconnaissance de texte"
+  },
+  { "key": "Escape" },
+  { "wait": 300 },
+  {
+    "eval": "(() => { const s = document.querySelector('.toolbar select'); s.value = 'dark'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "thème sombre"
+  },
+  { "wait": 400 },
+  {
+    "assert": "document.documentElement.getAttribute('data-theme') === 'dark' || 'ERREUR thème non appliqué'",
+    "label": "thème sombre appliqué"
+  },
+  { "shot": "03-barres-sombre.png" },
+  { "key": "F1" },
+  { "wait": 500 },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=tab]')].find((x) => x.textContent.includes('propos')).click(); return true; })()",
+    "label": "onglet À propos"
+  },
+  { "wait": 400 },
+  {
+    "assert": "(() => { const i = document.querySelector('[role=dialog] img.logo'); return (i && i.complete && i.naturalWidth === 480 && i.alt === '') || 'ERREUR logo absent'; })()",
+    "label": "À propos : logo affiché"
+  },
+  { "shot": "04-a-propos-sombre.png" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  { "key": "w", "ctrl": true },
+  { "wait": 400 },
+  { "key": "w", "ctrl": true },
+  { "wait": 400 },
+  { "key": "w", "ctrl": true },
+  { "wait": 600 },
+  {
+    "assert": "(() => { const i = document.querySelector('.empty img.logo'); return (i && i.complete && i.naturalWidth === 480) || 'ERREUR logo absent de l\\'accueil'; })()",
+    "label": "écran sans document : logo affiché"
+  },
+  { "shot": "05-accueil-sombre.png" },
+  {
+    "eval": "(() => { const s = document.querySelector('.toolbar select'); s.value = 'system'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+    "label": "thème remis sur « système » (préférence mémorisée)"
+  }
+]

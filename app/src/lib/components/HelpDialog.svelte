@@ -90,6 +90,8 @@
           </tbody>
         </table>
       {:else}
+        <!-- Logo décoratif (Lot 12) : le nom de l'application est écrit juste dessous. -->
+        <img class="logo" src="/logo.png" alt="" aria-hidden="true" draggable="false" />
         <p class="app">{t.appName}</p>
         <p class="version">{t.aboutVersion(version)}</p>
         <p>{t.aboutTagline}</p>
@@ -155,6 +157,11 @@
   p {
     margin: 0 0 0.5rem;
     line-height: 1.4;
+  }
+  .logo {
+    display: block;
+    width: 200px;
+    height: auto;
   }
   .app {
     font-size: 1.2rem;

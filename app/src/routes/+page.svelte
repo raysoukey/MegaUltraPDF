@@ -415,6 +415,8 @@
         {/key}
       {:else}
         <div class="empty">
+          <!-- Logo décoratif (Lot 12) : le message qui suit dit déjà tout. -->
+          <img class="logo" src="/logo.png" alt="" aria-hidden="true" draggable="false" />
           <p>{t.noDocument}</p>
           <p class="muted">{t.dropHint}</p>
         </div>
@@ -531,6 +533,12 @@
     align-items: center;
     justify-content: center;
     gap: 0.25rem;
+  }
+  .logo {
+    width: min(320px, 60%);
+    height: auto;
+    margin-bottom: 1rem;
+    pointer-events: none;
   }
   .muted {
     color: var(--muted);

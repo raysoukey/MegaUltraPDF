@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import MenuButton from './MenuButton.svelte';
+  import Icon from './Icon.svelte';
   import type { Tool } from '$lib/logic/tools';
   import { deleteSelectedObject, type OpenDoc } from '$lib/state/documents.svelte';
   import { setTool, toolState } from '$lib/state/tools.svelte';
@@ -68,7 +69,9 @@
         <button type="button" role="menuitem" onclick={() => pick(oncrop)}>{t.cropTitle}…</button>
       </li>
       <li role="none">
-        <button type="button" role="menuitem" onclick={() => pick(onocr)}>{t.ocrMenu}</button>
+        <button type="button" role="menuitem" class="with-icon" onclick={() => pick(onocr)}
+          ><Icon name="ocr" size={18} />{t.ocrMenu}</button
+        >
       </li>
     {/snippet}
   </MenuButton>
@@ -85,6 +88,11 @@
   button.active {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
+  }
+  .with-icon {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
   .hint {
     color: var(--muted);

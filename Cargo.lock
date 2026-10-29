@@ -6606,6 +6606,7 @@ version = "0.11.2"
 dependencies = [
  "anyhow",
  "flate2",
+ "image",
  "mega-core",
  "serde",
  "serde_json",

@@ -20,3 +20,6 @@ ureq = "3"
 sha2 = "0.10"
 flate2 = "1"
 tar = "0.4"
+# Lot 12 : découpe des icônes et réduction du logo et de la bannière (`cargo xtask brand`).
+# Déjà dans l'arbre via mega-core ; png pour lire et écrire, jpeg pour la bannière du README.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

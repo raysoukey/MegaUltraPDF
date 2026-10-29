@@ -40,6 +40,12 @@ percent-encoding = "2"
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
+# Lecture du registre Windows en UTF-16 (correctif 0.11.2) : la sortie de `reg.exe` est dans
+# la page de code de la console (« (par défaut) », chemins accentués), illisible en UTF-8.
+# Déjà compilé dans l'arbre par Tauri.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
+
 [dev-dependencies]
 serde_json.workspace = true
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

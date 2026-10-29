@@ -39,6 +39,9 @@
    `default_app_status`).
 9. **Dépendance réservée à certains systèmes** : `[target.'cfg(...)'.dependencies]` dans
    `app/src-tauri/Cargo.toml`, et le même `#[cfg(...)]` devant son utilisation (`lib.rs`).
+10. **Texte et encodages** : une `String` Rust est toujours de l'UTF-8 valide. Lire la sortie
+   d'un programme qui écrit dans une autre page de code échoue (`read_to_string` rend une
+   erreur) : il faut une source qui donne du texte Unicode (`default_app.rs`, `reg_string`).
 
 ## Décisions de conception (ADR-0015)
 
@@ -72,6 +75,15 @@
   pas `%F`. Le gestionnaire de fichiers lançait donc l'application **sans** le PDF
   double-cliqué. Le modèle `app/src-tauri/linux/MegaUltraPDF.desktop` l'ajoute ; le test
   `desktop_template_passes_the_files` le garde (version 0.11.1).
+
+- **Sur l'application installée** : elle se disait « version portable ». `reg.exe` écrit
+  dans la page de code de la console ; sous un Windows français, « (par défaut) » contient
+  l'octet `0x82` (é), et `read_to_string` refuse un texte qui n'est pas de l'UTF-8. Le registre
+  se lit maintenant par l'API Windows (`winreg`, texte UTF-16 converti sans perte), ce qui
+  protège aussi les chemins accentués (`C:\Users\Hélène\…`). Test :
+  `registry_values_keep_accents` (version 0.11.2). Leçon : un test unitaire nourri d'une
+  sortie **anglaise** copiée à la main ne voit pas ce bug ; la vérification sur le vrai paquet
+  installé l'a trouvé.
 
 ## Exercices de lecture
 

@@ -11,7 +11,8 @@
 //! - **macOS** : le choix se fait dans le Finder (Lire les informations, Ouvrir avec, Tout
 //!   modifier) ; l'interface en donne la marche à suivre.
 //!
-//! Les programmes (`reg`, `xdg-mime`) sont lancés **sans shell**, arguments en liste.
+//! Le registre Windows se lit par l'API système (crate `winreg`, texte UTF-16) ; `xdg-mime`
+//! est lancé **sans shell**, arguments en liste.
 //!
 //! \[Apprentissage\] **`cfg!` contre `#[cfg]`** : `cfg!(windows)` est une expression booléenne
 //! évaluée à la compilation, mais les deux branches doivent compiler partout ; `#[cfg(windows)]`
@@ -34,10 +35,10 @@ pub const DESKTOP_FILE: &str = "MegaUltraPDF.desktop";
 /// Clé du registre où Windows range le choix de l'utilisateur pour `.pdf` ; Windows 11
 /// tient aussi `UserChoiceLatest`, plus récent, lu en premier (relecture du Lot 11).
 const USER_CHOICE: &str =
-    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pdf\UserChoice";
+    r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pdf\UserChoice";
 /// Commande d'ouverture du ProgId, écrite par les installateurs NSIS et MSI (`%1` à la fin).
 const OPEN_COMMAND: &str = r"Software\Classes\MegaUltraPDF.Document\shell\open\command";
-/// Durée maximale d'un programme système interrogé (`reg`, `xdg-mime`) : au-delà, on renonce
+/// Durée maximale d'un programme système interrogé (`xdg-mime`) : au-delà, on renonce
 /// plutôt que de figer la fenêtre.
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -79,15 +80,6 @@ pub enum DefaultAppAction {
     Unsupported,
 }
 
-/// Le ProgId d'une sortie de `reg query … /v ProgId` (ligne `ProgId    REG_SZ    valeur`).
-pub fn parse_reg_progid(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        let (_, value) = line.split_once("REG_SZ")?;
-        let value = value.trim();
-        (!value.is_empty()).then(|| value.to_string())
-    })
-}
-
 /// Le fichier `.desktop` d'une sortie de `xdg-mime query default application/pdf`.
 pub fn parse_xdg_default(output: &str) -> Option<String> {
     let value = output.lines().next()?.trim();
@@ -122,7 +114,7 @@ pub fn command_targets_exe(command: &str, exe: &Path) -> bool {
     !program.is_empty() && program.eq_ignore_ascii_case(&exe.to_string_lossy())
 }
 
-/// Le ProgId choisi pour `.pdf` d'après `query(clé)` (sortie de `reg query` déjà analysée) :
+/// Le ProgId choisi pour `.pdf` d'après `query(clé)` (valeur `ProgId` de la clé) :
 /// `UserChoiceLatest` d'abord (Windows 11), puis `UserChoice`.
 pub fn windows_handler(query: impl Fn(&str) -> Option<String>) -> Option<String> {
     query(&format!("{USER_CHOICE}Latest")).or_else(|| query(USER_CHOICE))
@@ -194,17 +186,40 @@ fn run(program: &str, args: &[&str]) -> Option<String> {
     status.success().then_some(out)
 }
 
-/// `reg.exe` du dossier système (jamais un `reg.exe` posé à côté de l'application).
-fn reg_exe() -> String {
-    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
-    format!(r"{root}\System32\reg.exe")
+/// Ruche du registre Windows à lire.
+#[derive(Debug, Clone, Copy)]
+enum Hive {
+    /// `HKEY_CURRENT_USER` : installation pour l'utilisateur.
+    User,
+    /// `HKEY_LOCAL_MACHINE` : installation pour toute la machine.
+    Machine,
 }
 
-/// Valeur `REG_SZ` lue par `reg query <clé> <args…>`.
-fn reg_value(key: &str, args: &[&str]) -> Option<String> {
-    let mut all = vec!["query", key];
-    all.extend_from_slice(args);
-    run(&reg_exe(), &all).as_deref().and_then(parse_reg_progid)
+/// Valeur texte `name` (`""` : la valeur par défaut) de la clé `key` du registre, `None` si
+/// elle manque ou est vide.
+///
+/// L'API Windows rend le texte en UTF-16, converti sans perte : « (par défaut) » et un chemin
+/// comme `C:\Users\Hélène\…` arrivent intacts, ce que la sortie de `reg.exe` (page de code de
+/// la console) ne permettait pas (correctif 0.11.2).
+#[cfg(windows)]
+fn reg_string(hive: Hive, key: &str, name: &str) -> Option<String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let root = match hive {
+        Hive::User => HKEY_CURRENT_USER,
+        Hive::Machine => HKEY_LOCAL_MACHINE,
+    };
+    let value: String = winreg::RegKey::predef(root)
+        .open_subkey(key)
+        .ok()?
+        .get_value(name)
+        .ok()?;
+    (!value.is_empty()).then_some(value)
+}
+
+/// Hors de Windows, pas de registre.
+#[cfg(not(windows))]
+fn reg_string(_hive: Hive, _key: &str, _name: &str) -> Option<String> {
+    None
 }
 
 /// Vrai si cet exécutable est **installé** sous Windows : la commande d'ouverture du ProgId
@@ -213,8 +228,8 @@ fn installed_windows() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
     };
-    ["HKCU", "HKLM"].iter().any(|hive| {
-        reg_value(&format!(r"{hive}\{OPEN_COMMAND}"), &["/ve"])
+    [Hive::User, Hive::Machine].into_iter().any(|hive| {
+        reg_string(hive, OPEN_COMMAND, "")
             .is_some_and(|command| command_targets_exe(&command, &exe))
     })
 }
@@ -234,7 +249,7 @@ fn portable() -> bool {
 /// Le choix actuel du système pour les PDF.
 pub fn status() -> DefaultAppStatus {
     let handler = if cfg!(windows) {
-        windows_handler(|key| reg_value(key, &["/v", "ProgId"]))
+        windows_handler(|key| reg_string(Hive::User, key, "ProgId"))
     } else if cfg!(target_os = "linux") {
         linux_handler()
     } else {
@@ -277,12 +292,10 @@ pub fn make_default(open_url: impl Fn(&str) -> bool) -> DefaultAppAction {
     }
     if cfg!(windows) {
         // La fiche de l'application n'existe que si l'installateur NSIS l'a enregistrée
-        // (`RegisteredApplications`) ; sinon (MSI), la page générale.
-        let registered = reg_value(
-            r"HKCU\Software\RegisteredApplications",
-            &["/v", REGISTERED_APP],
-        )
-        .is_some();
+        // (`RegisteredApplications`, utilisateur ou machine) ; sinon (MSI), la page générale.
+        let registered = [Hive::User, Hive::Machine].into_iter().any(|hive| {
+            reg_string(hive, r"Software\RegisteredApplications", REGISTERED_APP).is_some()
+        });
         let page = if registered {
             format!("ms-settings:defaultapps?registeredAppUser={REGISTERED_APP}")
         } else {
@@ -312,12 +325,30 @@ pub fn make_default(open_url: impl Fn(&str) -> bool) -> DefaultAppAction {
 mod tests {
     use super::*;
 
+    /// Correctif 0.11.2 : une installation n'était pas reconnue sous un Windows français.
+    /// `reg.exe` écrit « (par défaut) » et les chemins accentués dans la page de code de la
+    /// console, que la lecture en UTF-8 rejetait. Écrit une clé de test, la relit, l'efface.
+    #[cfg(windows)]
     #[test]
-    fn reg_query_output_gives_the_prog_id() {
-        let output = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.pdf\\UserChoice\r\n    ProgId    REG_SZ    MSEdgePDF\r\n\r\n";
-        assert_eq!(parse_reg_progid(output).as_deref(), Some("MSEdgePDF"));
-        assert_eq!(parse_reg_progid("Erreur : clé introuvable"), None);
-        assert_eq!(parse_reg_progid("    ProgId    REG_SZ    "), None);
+    fn registry_values_keep_accents() {
+        use winreg::{RegKey, enums::HKEY_CURRENT_USER};
+        let key = format!(r"Software\MegaUltraPDF-test-{}", std::process::id());
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let (created, _) = hkcu.create_subkey(&key).unwrap();
+        let command = r#""C:\Users\Hélène\MegaUltraPDF\mega-app.exe" "%1""#;
+        created.set_value("", &command).unwrap();
+        created.set_value("ProgId", &"Éditeur.PDF").unwrap();
+        let default = reg_string(Hive::User, &key, "");
+        let named = reg_string(Hive::User, &key, "ProgId");
+        let missing = reg_string(Hive::User, &key, "Absente");
+        let _ = hkcu.delete_subkey_all(&key);
+        assert_eq!(default.as_deref(), Some(command));
+        assert_eq!(named.as_deref(), Some("Éditeur.PDF"));
+        assert_eq!(missing, None);
+        assert!(command_targets_exe(
+            command,
+            Path::new(r"C:\Users\Hélène\MegaUltraPDF\mega-app.exe")
+        ));
     }
 
     #[test]

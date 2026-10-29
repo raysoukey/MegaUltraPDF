@@ -23,7 +23,9 @@ Les installateurs déclaraient déjà l'association `.pdf`, mais :
 2. **Lecteur par défaut : selon ce que chaque système permet** (`default_app.rs`). C'est une
    intégration au système, pas de la logique PDF : elle vit dans l'application.
    - **Windows** : lecture de `UserChoiceLatest\ProgId` (Windows 11), sinon
-     `UserChoice\ProgId`, par le `reg.exe` de `System32` (sans dépendance). Windows 10/11
+     `UserChoice\ProgId`, par l'API du registre (crate `winreg`, déjà présent via Tauri) :
+     la sortie de `reg.exe` suit la page de code de la console (« (par défaut) », chemins
+     accentués) et ne se lit pas en UTF-8 (correctif 0.11.2). Windows 10/11
      interdit l'auto-désignation, alors le bouton ouvre la fiche de l'application dans les
      Paramètres (`ms-settings:defaultapps?registeredAppUser=MegaUltraPDF`) si l'installateur
      l'a enregistrée, la page générale sinon.

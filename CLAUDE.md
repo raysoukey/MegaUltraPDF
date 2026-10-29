@@ -142,7 +142,9 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   Lecteur par défaut : `default_app.rs` (Windows : on ne peut qu'ouvrir les Paramètres ;
   Linux : `xdg-mime` ; macOS : marche à suivre). « Installé » = la commande d'ouverture du
   ProgId désigne `current_exe` (NSIS et MSI), jamais la présence d'`uninstall.exe` ; lire
-  `UserChoiceLatest` avant `UserChoice` ; tout programme externe passe par `run` (délai 3 s)
+  `UserChoiceLatest` avant `UserChoice` ; le registre se lit par `winreg` (UTF-16), **jamais**
+  en analysant la sortie de `reg.exe` (page de code OEM : « (par défaut) », chemins accentués) ;
+  tout programme externe passe par `run` (délai 3 s)
   et les commandes Tauri qui l'appellent sont `async` + `spawn_blocking`. Le greffon NSIS `windows/hooks.nsh` enregistre
   `Capabilities` / `RegisteredApplications`. Linux : modèle `.desktop` propre
   (`linux/MegaUltraPDF.desktop`, `bundle.linux.deb.desktopTemplate`) car celui de Tauri n'a pas

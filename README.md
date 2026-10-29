@@ -42,6 +42,33 @@ Les paquets ne sont **pas signés** : Windows affiche un avertissement SmartScre
 (« Informations complémentaires » puis « Exécuter quand même ») ; macOS demande d'ouvrir
 l'application par clic droit > Ouvrir la première fois.
 
+### Microsoft Defender signale l'installeur comme un virus
+
+Defender peut mettre en quarantaine `MegaUltraPDF_<version>_x64-setup.exe` sous le nom
+**`Trojan:Win32/Bearfoos.A!ml`**. C'est un **faux positif** :
+
+- le suffixe `!ml` (*machine learning*) désigne une détection **statistique** : le fichier
+  « ressemble » à un logiciel malveillant, aucun virus connu n'y a été trouvé ;
+- ce qui déclenche le modèle : un installeur **non signé**, **sans réputation** (chaque version
+  est un fichier nouveau, encore peu téléchargé), au format NSIS compressé, et qui écrit dans
+  le registre (association `.pdf`, « Applications par défaut ») ;
+- les paquets sont construits par la CI GitHub (`.github/workflows/release.yml`) à partir du
+  code de ce dépôt, sans étape manuelle.
+
+Que faire :
+
+1. Ne télécharger les paquets **que** depuis la page
+   [Releases](https://github.com/raysoukey/MegaUltraPDF/releases) de ce dépôt.
+2. Pour installer quand même : Sécurité Windows > Protection contre les virus et menaces >
+   Historique de protection > l'élément détecté > Actions > **Autoriser**, puis relancer
+   l'installeur. Ne désactivez pas Defender.
+3. Signaler le faux positif à Microsoft aide toutes les personnes qui téléchargent la même
+   version : <https://www.microsoft.com/wdsi/filesubmission> (« Software developer »,
+   « Incorrectly detected »).
+
+La solution durable est la **signature du code** des paquets Windows (prévue, pas encore en
+place).
+
 Construire un paquet soi-même (après le démarrage rapide ci-dessous) :
 
 ```bash

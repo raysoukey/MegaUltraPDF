@@ -51,7 +51,7 @@ jobs:
           else
             gh release create "$TAG" --draft --target "$GITHUB_SHA" \
               --title "MegaUltraPDF $TAG" \
-              --notes "Paquets non signés : Windows affiche un avertissement SmartScreen (« Informations complémentaires » puis « Exécuter quand même ») et macOS demande une ouverture via clic droit > Ouvrir. Licences tierces : THIRD_PARTY_LICENSES.md."
+              --notes "Paquets non signés : Windows affiche un avertissement SmartScreen (« Informations complémentaires » puis « Exécuter quand même ») et macOS demande une ouverture via clic droit > Ouvrir. Microsoft Defender peut signaler l'installeur comme Trojan:Win32/Bearfoos.A!ml : c'est un faux positif (détection statistique d'un installeur non signé et encore inconnu), voir la section « Microsoft Defender » du README. Licences tierces : THIRD_PARTY_LICENSES.md."
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 

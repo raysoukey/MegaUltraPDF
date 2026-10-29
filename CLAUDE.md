@@ -156,6 +156,9 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   retouchées à la main. Icône d'action = `<Icon name>` décorative dans un bouton qui garde `aria-label` +
   `title` ; `logic/icons.ts` suit `ICON_NAMES` de `xtask/src/brand.rs` (test). Scénario CDP : un
   `change` simulé doit avoir `bubbles: true` (Svelte 5 délègue l'événement à la racine).
+- Microsoft Defender met en quarantaine l'installeur NSIS (`Trojan:Win32/Bearfoos.A!ml`, détection
+  statistique) : faux positif d'un paquet non signé et sans réputation, documenté dans le README ;
+  ce n'est pas un bug de l'application. Seule vraie solution : signer les paquets Windows.
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
   produirait un paquet sans PDFium). Les ressources sont dans la surcouche
   `tauri.release.conf.json` car `tauri-build` les exige à chaque compilation.

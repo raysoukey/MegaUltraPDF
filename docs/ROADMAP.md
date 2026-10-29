@@ -18,5 +18,6 @@ Légende : ✅ terminé · 🚧 en cours · ⬜ à venir. Démarrer un lot : `/l
 | 9 | Consolidation | Constats mineurs reportés des Lots 0 à 8 (sécurité du caviardage, CLI, annotations, formulaires, polices, métadonnées, signatures, OCR, service, interface, accessibilité, distribution) ; v0.9.0 | ✅ |
 | 10 | Fonctionnalités restantes | Police Unicode incorporée (DejaVu Sans, Type0), caviardage partiel d'images et de tracés, signature numérique visible, nettoyage des documents chiffrés, OCR en un pas d'annulation, dialogues unifiés, mineurs du Lot 9 ; v0.10.0 | ✅ |
 | 11 | Lecteur par défaut | Une seule instance (fichiers ouverts en onglets), état et bouton « lecteur PDF par défaut » dans les préférences, déclarations des paquets (rôle Editor, Capabilities Windows) ; v0.11.0 | ✅ |
+| 12 | Identité visuelle | Icône d'application, 12 icônes d'actions sans légende (barre d'outils et menus), logo (accueil, À propos), bannière du README ; `cargo xtask brand` ; v0.12.0 | 🚧 |
 
 Référence complète : `docs/superpowers/specs/2026-10-26-megaultrapdf-design.md`, §5.

@@ -56,17 +56,19 @@
   <MenuButton label={t.contentMenu}>
     {#snippet items(pick)}
       <li role="none">
-        <button type="button" role="menuitem" onclick={() => pick(onwatermark)}
-          >{t.watermarkTitle}…</button
+        <button type="button" role="menuitem" class="with-icon" onclick={() => pick(onwatermark)}
+          ><span class="slot"></span>{t.watermarkTitle}…</button
         >
       </li>
       <li role="none">
-        <button type="button" role="menuitem" onclick={() => pick(onnumbering)}
-          >{t.numberingTitle}…</button
+        <button type="button" role="menuitem" class="with-icon" onclick={() => pick(onnumbering)}
+          ><span class="slot"></span>{t.numberingTitle}…</button
         >
       </li>
       <li role="none">
-        <button type="button" role="menuitem" onclick={() => pick(oncrop)}>{t.cropTitle}…</button>
+        <button type="button" role="menuitem" class="with-icon" onclick={() => pick(oncrop)}
+          ><span class="slot"></span>{t.cropTitle}…</button
+        >
       </li>
       <li role="none">
         <button type="button" role="menuitem" class="with-icon" onclick={() => pick(onocr)}
@@ -89,10 +91,15 @@
     outline: 2px solid var(--accent);
     outline-offset: -2px;
   }
+  /* Icône et libellé ; les entrées sans icône gardent la place pour rester alignées. */
   .with-icon {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+  .slot {
+    width: 18px;
+    flex: none;
   }
   .hint {
     color: var(--muted);

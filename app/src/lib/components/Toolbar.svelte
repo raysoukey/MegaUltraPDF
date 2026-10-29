@@ -229,14 +229,14 @@
     <button
       type="button"
       class="icon-button"
-      aria-label="{t.merge}…"
+      aria-label={t.mergeTitle}
       title="{t.mergeTitle} ({shortcutKeyFor('merge')})"
       onclick={onmerge}><Icon name="merge" /></button
     >
     <button
       type="button"
       class="icon-button"
-      aria-label="{t.split}…"
+      aria-label={t.splitTitle}
       disabled={!doc}
       title="{t.splitTitle} ({shortcutKeyFor('split')})"
       onclick={onsplit}><Icon name="split" /></button

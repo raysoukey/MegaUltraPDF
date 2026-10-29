@@ -14,6 +14,10 @@
     "label": "les icônes sont décoratives (alt vide) : le nom vient du bouton"
   },
   {
+    "assert": "(() => { const bad = [...document.querySelectorAll('.toolbar button')].filter((b) => b.querySelector('img.icon') && !b.title.startsWith(b.getAttribute('aria-label'))).map((b) => b.getAttribute('aria-label') + ' / ' + b.title); return bad.length === 0 || 'ERREUR ' + bad.join(' ; '); })()",
+    "label": "nom accessible = infobulle (sans le raccourci) pour chaque bouton à icône"
+  },
+  {
     "assert": "(() => { const names = ['annotate', 'sign']; const bad = names.filter((n) => { const i = document.querySelector('.annotation-toolbar img[src=\"/icons/' + n + '.png\"]'); const b = i && i.closest('button'); return !(i && i.naturalWidth === 64 && b && b.getAttribute('aria-label')); }); return bad.length === 0 || 'ERREUR ' + bad.join(', '); })()",
     "label": "barre d'annotation : signature et modifier l'annotation en icônes"
   },
@@ -24,6 +28,10 @@
     "assert": "(() => { const names = ['open', 'export', 'protect', 'sign', 'compress']; const bad = names.filter((n) => { const i = document.querySelector('[role=menu] img[src=\"/icons/' + n + '.png\"]'); return !(i && i.naturalWidth === 64 && i.closest('[role=menuitem]').textContent.trim().length > 3); }); return bad.length === 0 || 'ERREUR ' + bad.join(', '); })()",
     "label": "menu Fichier : icônes devant Ouvrir, Exporter, Protéger, Signer, Optimiser, libellés gardés"
   },
+  {
+    "assert": "(() => { const bad = [...document.querySelectorAll('[role=menu] [role=menuitem]')].filter((b) => !b.querySelector('img.icon, .slot')).map((b) => b.textContent.trim()); return bad.length === 0 || 'ERREUR non alignés : ' + bad.join(', '); })()",
+    "label": "menu Fichier : toutes les entrées alignées (icône ou emplacement vide)"
+  },
   { "shot": "02-menu-fichier.png" },
   { "key": "Escape" },
   { "wait": 300 },
@@ -32,6 +40,10 @@
   {
     "assert": "(() => { const i = document.querySelector('[role=menu] img[src=\"/icons/ocr.png\"]'); return (i && i.naturalWidth === 64 && i.closest('[role=menuitem]').textContent.includes('OCR')) || 'ERREUR icône OCR absente'; })()",
     "label": "menu Contenu : icône devant la reconnaissance de texte"
+  },
+  {
+    "assert": "(() => { const bad = [...document.querySelectorAll('[role=menu] [role=menuitem]')].filter((b) => !b.querySelector('img.icon, .slot')).map((b) => b.textContent.trim()); return bad.length === 0 || 'ERREUR non alignés : ' + bad.join(', '); })()",
+    "label": "menu Contenu : toutes les entrées alignées (icône ou emplacement vide)"
   },
   { "key": "Escape" },
   { "wait": 300 },

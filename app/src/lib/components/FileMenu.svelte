@@ -82,7 +82,11 @@
                 type="button"
                 role="menuitem"
                 title={path}
-                onclick={() => pick(() => onopenrecent(path))}>{path.split(/[\\/]/).pop()}</button
+                onclick={() => pick(() => onopenrecent(path))}
+                ><span class="item"
+                  ><span class="slot"></span><span class="name">{path.split(/[\\/]/).pop()}</span
+                  ></span
+                ></button
               >
             </li>
           {/each}
@@ -90,7 +94,7 @@
       </li>
       <li role="none">
         <button type="button" role="menuitem" onclick={() => pick(clearRecent)}
-          >{t.clearRecent}</button
+          ><span class="item"><span class="slot"></span>{t.clearRecent}</span></button
         >
       </li>
     {/if}
@@ -137,6 +141,14 @@
   .slot {
     width: 18px;
     flex: none;
+  }
+  .item {
+    min-width: 0;
+  }
+  /* Un nom de fichier trop long se termine par « … » (le chemin complet est dans l'infobulle). */
+  .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .separator {
     border-top: 1px solid var(--panel-border);

@@ -11,7 +11,8 @@
 //! - `banner-fr.png` est réduit pour le README (`docs/images/banniere.jpg`).
 //!
 //! L'icône de l'application (`app/src-tauri/icons/`) se régénère à part, avec l'outil
-//! officiel : `pnpm --dir app tauri icon assets/brand/icon.png`.
+//! officiel : `pnpm --dir app tauri icon ../assets/brand/icon.png` (le chemin part de `app/`),
+//! puis on supprime `android/`, `ios/` et `64x64.png`, que l'application n'utilise pas.
 //!
 //! \[Apprentissage\] **Traiter une image en Rust** : le crate `image` charge un PNG dans un
 //! `RgbaImage`, une grille de pixels `[r, g, b, a]` qu'on lit avec `get_pixel(x, y)`. Les
@@ -31,18 +32,19 @@ pub const ICON_NAMES: [&str; 12] = [
     "open", "save", "export", "merge", "split", "rotate", "annotate", "sign", "ocr", "search",
     "protect", "compress",
 ];
-/// Colonnes et rangées de la planche.
+/// Nombre de colonnes de la planche.
 const COLUMNS: u32 = 4;
+/// Nombre de rangées de la planche.
 const ROWS: usize = 3;
-/// Côté des icônes produites, en pixels : affichées en 20 px, elles restent nettes sur un
-/// écran à forte densité (jusqu'à 3×).
+/// Côté des icônes produites, en pixels : affichées en 24 px (18 px dans les menus), elles
+/// restent nettes sur un écran à forte densité (jusqu'à 2,7×).
 const ICON_SIZE: u32 = 64;
 /// Opacité (sur 255) au-delà de laquelle un pixel compte comme dessiné : ignore le léger
 /// halo laissé par le détourage.
 const ALPHA: u8 = 32;
-/// Une bande se termine après au moins `MIN_GAP` lignes transparentes ; une bande plus
-/// courte que `MIN_LEN` lignes est une poussière, pas un dessin.
+/// Une bande se termine après au moins `MIN_GAP` lignes transparentes.
 const MIN_GAP: usize = 6;
+/// Une bande plus courte que `MIN_LEN` lignes est une poussière, pas un dessin.
 const MIN_LEN: usize = 8;
 /// Marge transparente autour de l'icône, en pixels de la planche (≈ 2 px une fois réduite).
 const MARGIN: u32 = 8;
@@ -53,9 +55,13 @@ const BANNER_WIDTH: u32 = 1280;
 /// Rectangle de pixels : coin haut gauche, largeur, hauteur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
+    /// Colonne du coin haut gauche.
     pub x: u32,
+    /// Ligne du coin haut gauche.
     pub y: u32,
+    /// Largeur en pixels.
     pub w: u32,
+    /// Hauteur en pixels.
     pub h: u32,
 }
 
@@ -207,7 +213,8 @@ pub fn generate(root: &Path) -> anyhow::Result<()> {
     println!("bannière : {}", banner_path.display());
 
     println!(
-        "Icône de l'application : pnpm --dir app tauri icon assets/brand/icon.png (à lancer à part)"
+        "Icône de l'application (à lancer à part) : pnpm --dir app tauri icon ../assets/brand/icon.png, \
+         puis supprimer app/src-tauri/icons/android, ios et 64x64.png"
     );
     Ok(())
 }
@@ -272,11 +279,50 @@ mod tests {
         assert_eq!(square_canvas(6, 10, 0), (10, 2, 0));
     }
 
-    /// La vraie planche du projet : 6 bandes par colonne (icône, légende ×3), 12 icônes
-    /// carrées, et aucune ne contient de pixel de légende : le bas de chaque icône est
-    /// transparent sur toute la marge.
+    /// Une planche synthétique de 4 × 3 cases : une couleur d'icône propre à chaque case et,
+    /// dessous, une « légende » toujours de la même couleur. Chaque icône produite doit avoir
+    /// la couleur de **sa** case (ordre de gauche à droite, puis de haut en bas) et **aucun**
+    /// pixel de légende (relecture du Lot 12 : le test sur la vraie planche ne pouvait pas le
+    /// voir).
     #[test]
-    fn the_project_sheet_gives_twelve_captionless_icons() {
+    fn cut_icons_keeps_the_sheet_order_and_drops_the_captions() {
+        const CAPTION: Rgba<u8> = Rgba([0, 0, 255, 255]);
+        let cell = |i: u32| Rgba([10 + 20 * i as u8, 200, 30, 255]);
+        let mut sheet = RgbaImage::new(4 * 60, 3 * 60);
+        for row in 0..3 {
+            for col in 0..4 {
+                let (x0, y0) = (col * 60, row * 60);
+                // Icône : 30 × 30 ; 10 lignes vides ; légende : 30 × 8.
+                for y in 5..35 {
+                    for x in 15..45 {
+                        sheet.put_pixel(x0 + x, y0 + y, cell(row * 4 + col));
+                    }
+                }
+                for y in 45..53 {
+                    for x in 15..45 {
+                        sheet.put_pixel(x0 + x, y0 + y, CAPTION);
+                    }
+                }
+            }
+        }
+        let icons = cut_icons(&sheet).unwrap();
+        assert_eq!(icons.len(), 12);
+        for (i, icon) in icons.iter().enumerate() {
+            let centre = icon.get_pixel(ICON_SIZE / 2, ICON_SIZE / 2);
+            // Le filtre de réduction peut décaler une composante d'une unité.
+            let expected = cell(i as u32);
+            let close = (0..4).all(|c| centre[c].abs_diff(expected[c]) <= 2);
+            assert!(close, "icône {i} : mauvaise case ({centre:?})");
+            let blue = icon.pixels().any(|p| p[2] > 128 && p[3] > ALPHA);
+            assert!(!blue, "icône {i} : un pixel de légende est resté");
+        }
+    }
+
+    /// La vraie planche du projet donne 12 icônes carrées. La garde contre une légende restée
+    /// est le contrôle « 6 bandes par colonne » de `cut_icons` : une légende collée à son icône
+    /// ferait 5 bandes, et `cut_icons` refuserait la planche.
+    #[test]
+    fn the_project_sheet_gives_twelve_icons() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("assets/brand/actions.png");
@@ -285,9 +331,6 @@ mod tests {
         assert_eq!(icons.len(), ICON_NAMES.len());
         for icon in &icons {
             assert_eq!(icon.dimensions(), (ICON_SIZE, ICON_SIZE));
-            let bottom_row_drawn =
-                (0..ICON_SIZE).any(|x| icon.get_pixel(x, ICON_SIZE - 1)[3] > ALPHA);
-            assert!(!bottom_row_drawn);
         }
     }
 }

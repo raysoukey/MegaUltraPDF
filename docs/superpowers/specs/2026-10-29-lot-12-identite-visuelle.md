@@ -47,7 +47,7 @@ Résultat visé : une application reconnaissable (icône propre partout) et une 
     - `content_rows(rows: &[bool], min_gap: usize) -> Option<(usize, usize)>` : bande de l'icône, légende exclue ;
     - `bounding_box(img, rows) -> Option<Rect>` ;
     - `square(rect, margin) -> Rect`.
-- **Icône de l'application** : `pnpm --dir app tauri icon assets/brand/icon.png`. L'outil officiel régénère tout `app/src-tauri/icons/` (ico, icns, png, logos Store) ; `tauri.conf.json` reste inchangé.
+- **Icône de l'application** : `pnpm --dir app tauri icon ../assets/brand/icon.png`. L'outil officiel régénère tout `app/src-tauri/icons/` (ico, icns, png, logos Store) ; `tauri.conf.json` reste inchangé.
 
 ## B. Icônes dans l'interface
 

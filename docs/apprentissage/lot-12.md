@@ -66,6 +66,15 @@ fabrique un type qui n'accepte que les 12 noms existants (`app/src/lib/logic/ico
 - Le libellé du menu est « Reconnaître le texte (**OCR**) » ; l'icône de la planche anglaise,
   la seule transparente, porte « OCR » : elle colle au libellé.
 
+- **Après la release (correctif 0.12.1)** : l'application refusait de se fermer ; il fallait le
+  Gestionnaire des tâches. Quand l'interface intercepte la fermeture (`onCloseRequested`, pour
+  confirmer les modifications), Tauri laisse l'interface fermer elle-même la fenêtre par
+  `window.destroy()`, une commande qui demande sa **permission** (`core:window:allow-destroy`
+  dans `app/src-tauri/capabilities/default.json`). Elle manquait depuis le Lot 2 ; l'erreur
+  (« window.destroy not allowed ») ne s'affichait nulle part. Aucun test ne le voyait, car les
+  scénarios arrêtaient eux-mêmes l'application à la fin : d'où les nouvelles étapes
+  `requestClose` / `expectClosed` et le contrôle « le processus s'est terminé seul ».
+
 ## Exercices de lecture
 
 1. `xtask/src/brand.rs`, `runs` : pourquoi faut-il **recoller** deux suites séparées par un

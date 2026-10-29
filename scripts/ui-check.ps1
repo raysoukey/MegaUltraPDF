@@ -47,6 +47,21 @@ if (-not $app) {
 Start-Sleep -Seconds 6
 node "$PSScriptRoot\ui-check.mjs" $Scenario $Out
 $code = $LASTEXITCODE
+# Scenario de fermeture (etape expectClosed) : la fenetre fermee, le processus doit aussi se
+# terminer seul (bogue reel : il restait dans le Gestionnaire des taches).
+if ($code -eq 0 -and (Get-Content $Scenario -Raw) -match '"expectClosed"') {
+  $gone = $false
+  for ($i = 0; $i -lt 20; $i++) {
+    if (-not (Get-Process -Name $name -ErrorAction SilentlyContinue)) { $gone = $true; break }
+    Start-Sleep -Milliseconds 500
+  }
+  if ($gone) {
+    Write-Output "OK le processus $name s'est termine seul"
+  } else {
+    Write-Output "ECHEC le processus $name tourne encore apres la fermeture"
+    $code = 1
+  }
+}
 Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 if (-not $Exe) {

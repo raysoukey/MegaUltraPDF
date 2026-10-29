@@ -14,6 +14,8 @@
   import { shortcutKeyFor, type Action } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
   import ContentToolbar from './ContentToolbar.svelte';
+  import Icon from './Icon.svelte';
+  import type { IconName } from '$lib/logic/icons';
   import StylePicker from './StylePicker.svelte';
 
   let {
@@ -33,7 +35,7 @@
   } = $props();
 
   // Les touches affichées viennent de la table des raccourcis (une seule source, B10).
-  const TOOLS: { tool: Tool; glyph: string; action?: Action }[] = [
+  const TOOLS: { tool: Tool; glyph: string; icon?: IconName; action?: Action }[] = [
     { tool: 'select', glyph: '⬚', action: 'escape' },
     { tool: 'note', glyph: '🗨', action: 'toolNote' },
     { tool: 'text', glyph: 'T', action: 'toolText' },
@@ -43,7 +45,7 @@
     { tool: 'line', glyph: '╱' },
     { tool: 'arrow', glyph: '➚' },
     { tool: 'stamp', glyph: '✔' },
-    { tool: 'signature', glyph: '✍' },
+    { tool: 'signature', glyph: '✍', icon: 'sign' },
   ];
   const MARKUPS: { tool: Tool; kind: AnnotationKind; glyph: string; action: Action }[] = [
     { tool: 'highlight', kind: 'highlight', glyph: '🖍', action: 'toolHighlight' },
@@ -74,7 +76,9 @@
         aria-pressed={toolState.tool === item.tool}
         aria-label={t.tool[item.tool]}
         title={titled(t.tool[item.tool], item.action)}
-        onclick={() => setTool(item.tool)}>{item.glyph}</button
+        class:icon-button={item.icon}
+        onclick={() => setTool(item.tool)}
+        >{#if item.icon}<Icon name={item.icon} />{:else}{item.glyph}{/if}</button
       >
     {/each}
     {#if toolState.tool === 'stamp'}
@@ -110,7 +114,8 @@
       disabled={!doc.selectedAnnotation}
       aria-label={t.editAnnotation}
       title={t.editAnnotation}
-      onclick={onedit}>✎</button
+      class="icon-button"
+      onclick={onedit}><Icon name="annotate" /></button
     >
     <button
       type="button"
@@ -131,6 +136,10 @@
 </div>
 
 <style>
+  /* Boutons à icône : moins de marge intérieure, pour garder la hauteur des boutons glyphes. */
+  .icon-button {
+    padding: 0.1rem 0.3rem;
+  }
   .annotation-toolbar {
     display: flex;
     align-items: center;

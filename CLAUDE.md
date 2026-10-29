@@ -150,6 +150,12 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   (`linux/MegaUltraPDF.desktop`, `bundle.linux.deb.desktopTemplate`) car celui de Tauri n'a pas
   `%F` (fichier perdu au double-clic) ; vérifier un `.deb` produit, pas seulement la config. Scénarios CDP : étape `launch` (seconde instance
   de `MEGA_APP_EXE`) ; compter les onglets de document par `[role=tablist][aria-label=MegaUltraPDF]`.
+- Lot 12 : les images de l'interface sont **dérivées** des originaux `assets/brand/` : `cargo xtask brand`
+  (`app/static/icons/*.png` sans légende, `app/static/logo.png`, `docs/images/banniere.jpg`) puis
+  `pnpm --dir app tauri icon ../assets/brand/icon.png` (supprimer `android/`, `ios/`, `64x64.png`) ; jamais
+  retouchées à la main. Icône d'action = `<Icon name>` décorative dans un bouton qui garde `aria-label` +
+  `title` ; `logic/icons.ts` suit `ICON_NAMES` de `xtask/src/brand.rs` (test). Scénario CDP : un
+  `change` simulé doit avoir `bubbles: true` (Svelte 5 délègue l'événement à la racine).
 - Paquets : **toujours** `pnpm --dir app release` (jamais `pnpm tauri build` nu, qui
   produirait un paquet sans PDFium). Les ressources sont dans la surcouche
   `tauri.release.conf.json` car `tauri-build` les exige à chaque compilation.

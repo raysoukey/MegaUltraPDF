@@ -5,6 +5,8 @@
   import { shortcutKeyFor } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
   import MenuButton from './MenuButton.svelte';
+  import Icon from './Icon.svelte';
+  import type { IconName } from '$lib/logic/icons';
 
   let {
     doc,
@@ -33,9 +35,9 @@
   } = $props();
 
   const entries = $derived<
-    { label: string; action: () => void; needsDoc: boolean; key?: string }[]
+    { label: string; action: () => void; needsDoc: boolean; key?: string; icon?: IconName }[]
   >([
-    { label: t.exportTitle, action: onexport, needsDoc: true },
+    { label: t.exportTitle, action: onexport, needsDoc: true, icon: 'export' },
     {
       label: t.printTitle,
       action: onprint,
@@ -48,9 +50,9 @@
       needsDoc: true,
       key: shortcutKeyFor('properties') ?? undefined,
     },
-    { label: t.protectTitle, action: onprotect, needsDoc: true },
-    { label: t.signMenu, action: onsign, needsDoc: true },
-    { label: t.optimizeTitle, action: onoptimize, needsDoc: true },
+    { label: t.protectTitle, action: onprotect, needsDoc: true, icon: 'protect' },
+    { label: t.signMenu, action: onsign, needsDoc: true, icon: 'sign' },
+    { label: t.optimizeTitle, action: onoptimize, needsDoc: true, icon: 'compress' },
     { label: t.compareTitle, action: oncompare, needsDoc: true },
     {
       label: t.preferencesMenu,
@@ -65,7 +67,8 @@
   {#snippet items(pick)}
     <li role="none">
       <button type="button" role="menuitem" onclick={() => pick(onopen)}
-        >{t.openFile} <span class="key">{shortcutKeyFor('open')}</span></button
+        ><span class="item"><Icon name="open" size={18} />{t.openFile}</span>
+        <span class="key">{shortcutKeyFor('open')}</span></button
       >
     </li>
     {#if settings.recent.length > 0}
@@ -79,7 +82,11 @@
                 type="button"
                 role="menuitem"
                 title={path}
-                onclick={() => pick(() => onopenrecent(path))}>{path.split(/[\\/]/).pop()}</button
+                onclick={() => pick(() => onopenrecent(path))}
+                ><span class="item"
+                  ><span class="slot"></span><span class="name">{path.split(/[\\/]/).pop()}</span
+                  ></span
+                ></button
               >
             </li>
           {/each}
@@ -87,7 +94,7 @@
       </li>
       <li role="none">
         <button type="button" role="menuitem" onclick={() => pick(clearRecent)}
-          >{t.clearRecent}</button
+          ><span class="item"><span class="slot"></span>{t.clearRecent}</span></button
         >
       </li>
     {/if}
@@ -99,7 +106,10 @@
           role="menuitem"
           disabled={e.needsDoc && !doc}
           onclick={() => pick(e.action)}
-          >{e.label}{#if e.key}<span class="key">{e.key}</span>{/if}</button
+          ><span class="item"
+            >{#if e.icon}<Icon name={e.icon} size={18} />{:else}<span class="slot"
+              ></span>{/if}{e.label}</span
+          >{#if e.key}<span class="key">{e.key}</span>{/if}</button
         >
       </li>
     {/each}
@@ -119,6 +129,24 @@
     gap: 1rem;
     text-align: left;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Icône et libellé ; les entrées sans icône gardent la place pour rester alignées. */
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .slot {
+    width: 18px;
+    flex: none;
+  }
+  .item {
+    min-width: 0;
+  }
+  /* Un nom de fichier trop long se termine par « … » (le chemin complet est dans l'infobulle). */
+  .name {
     overflow: hidden;
     text-overflow: ellipsis;
   }

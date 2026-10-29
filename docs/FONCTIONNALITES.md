@@ -87,6 +87,7 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 ## Finition et distribution
 
 - [x] Interface FR / EN (préférence « système / français / anglais », sans fermer les documents) [7]
+- [x] Identité visuelle : icône d'application (fenêtre, installeurs), icônes d'actions sans légende dans la barre d'outils et les menus, logo à l'accueil et dans « À propos » [12]
 - [x] Accessibilité : menus au clavier, piège de focus dans les dialogues, noms accessibles, contour de focus, contrastes ≥ 4,5:1 vérifiés par test [7]
 - [x] Préférences (langue, thème, zoom, affichage, auteur, position de lecture, récents) [7]
 - [x] Aide intégrée (prise en main, raccourcis, « À propos » avec licences tierces) [7]

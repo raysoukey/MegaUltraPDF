@@ -1,5 +1,7 @@
 # MegaUltraPDF
 
+![MegaUltraPDF : lire, modifier, convertir, fusionner, sécuriser](docs/images/banniere.jpg)
+
 Lecteur et éditeur PDF libre, sans publicité ni télémétrie, écrit en Rust.
 Le projet est aussi un support d'apprentissage de Rust : le code est commenté en français
 et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs/apprentissage/`).
@@ -7,6 +9,8 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 - Moteur PDF : PDFium (celui de Chrome) via `pdfium-render`, piloté exclusivement par `mega-core`.
 - Interface : Tauri 2 (backend Rust) + Svelte 5 / TypeScript, sur le WebView2 du système.
 - Licence : GPL-3.0-or-later.
+- Visuels (icône, logo, icônes d'actions, bannière) : créés pour le projet par son propriétaire
+  (`assets/brand/`, images dérivées par `cargo xtask brand`).
 
 ## État (voir `docs/ROADMAP.md`)
 
@@ -21,6 +25,10 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | 6 | Export (images, texte), impression, métadonnées, protection AES-256, optimisation, pièces jointes, comparaison | ✅ |
 | 7 | Finition et distribution (interface FR/EN, accessibilité, préférences, aide, licences, installeurs) | ✅ |
 | 8 | Options avancées : OCR (Tesseract), signature numérique cryptographique et vérification | ✅ |
+| 9 | Consolidation : environ 80 améliorations et corrections reportées des lots précédents | ✅ |
+| 10 | Police Unicode incorporée, caviardage partiel d'images, signature visible, documents chiffrés | ✅ |
+| 11 | Lecteur PDF par défaut : une seule instance (fichiers en onglets), état et bouton dans les préférences | ✅ |
+| 12 | Identité visuelle : icône d'application, icônes d'actions, logo, bannière | ✅ |
 
 ## Installation
 

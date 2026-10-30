@@ -131,5 +131,34 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let mosaic = dir.join("image-mosaic.pdf");
     std::fs::write(&mosaic, mega_core::testing::image_mosaic_pdf())?;
     println!("écrit : {}", mosaic.display());
+    gen_hostile_fixtures(&dir.join("robustesse"))
+}
+
+/// Écrit le corpus de PDF malformés ou hostiles (Lot 13) dans `fixtures/robustesse/`, et, si
+/// qpdf est installé, une version **linéarisée** de `simple.pdf` (« affichage web rapide »).
+fn gen_hostile_fixtures(dir: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for (name, bytes) in mega_core::testing::hostile::corpus() {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes)?;
+        println!("écrit : {}", path.display());
+    }
+    let linearized = dir.join("linearise.pdf");
+    let simple = dir.parent().map(|d| d.join("simple.pdf")).unwrap_or_default();
+    match std::process::Command::new(qpdf_exe())
+        .arg("--linearize")
+        .arg("--deterministic-id")
+        .arg(&simple)
+        .arg(&linearized)
+        .status()
+    {
+        Ok(status) if status.success() => println!("écrit : {}", linearized.display()),
+        _ => println!("qpdf introuvable : {} non régénéré", linearized.display()),
+    }
     Ok(())
+}
+
+/// L'exécutable qpdf : `MEGA_QPDF` s'il est défini, sinon `qpdf` dans le `PATH`.
+fn qpdf_exe() -> PathBuf {
+    std::env::var_os("MEGA_QPDF").map_or_else(|| PathBuf::from("qpdf"), PathBuf::from)
 }

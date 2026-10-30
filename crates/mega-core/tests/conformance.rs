@@ -426,3 +426,55 @@ fn damaged_inputs_are_written_back_as_conforming_files() {
         );
     }
 }
+
+/// C2 (audit du Lot 13) : signer un fichier à structure inhabituelle (références hybrides,
+/// révisions successives, linéarisé, table réparée) donne une signature **intacte** à la
+/// relecture et un fichier que qpdf accepte.
+#[test]
+fn signing_unusual_structures_gives_intact_conforming_signatures() {
+    let qpdf = qpdf();
+    let dir = tempfile::tempdir().unwrap();
+    let p12 = std::fs::read(fixture("test-signer.p12")).unwrap();
+    let identity =
+        mega_core::digital_signature::SigningIdentity::from_pkcs12(&p12, "test").unwrap();
+    let options = mega_core::digital_signature::SignOptions {
+        reason: None,
+        location: None,
+        contact: None,
+        appearance: None,
+    };
+    for name in [
+        "robustesse/xref-hybride.pdf",
+        "robustesse/revisions.pdf",
+        "robustesse/linearise.pdf",
+        "robustesse/xref-decalee.pdf",
+        "robustesse/sans-endobj.pdf",
+        "robustesse/prefixe-parasite.pdf",
+        "robustesse/pdf-2-0.pdf",
+    ] {
+        let mut doc = Document::open(fixture(name), None).unwrap();
+        let text_before = doc.page_text(0).unwrap();
+        let out = dir.path().join("signe.pdf");
+        doc.sign_to(&out, &identity, &options)
+            .unwrap_or_else(|e| panic!("{name} : signature refusée : {e}"));
+        let signed = Document::open(&out, None).unwrap();
+        let list = signed.signatures().unwrap();
+        assert_eq!(list.len(), 1, "{name} : {list:?}");
+        assert!(
+            matches!(
+                list[0].status,
+                mega_core::digital_signature::SignatureStatus::Intact
+            ),
+            "{name} : {:?}",
+            list[0].status
+        );
+        assert_eq!(
+            signed.page_text(0).unwrap(),
+            text_before,
+            "{name} : contenu changé"
+        );
+        if let Some(qpdf) = &qpdf {
+            assert_conforms(qpdf, &out, None, name);
+        }
+    }
+}

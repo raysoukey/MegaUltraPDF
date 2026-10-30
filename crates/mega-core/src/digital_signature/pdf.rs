@@ -892,11 +892,20 @@ impl Document {
         } else {
             self.file_bytes().to_vec()
         };
-        // Table de références reconstruite par `lopdf` : une mise à jour incrémentale serait
-        // sans `/Prev`. On réécrit d'abord le fichier, sauf s'il porte déjà des signatures
-        // (elles seraient invalidées).
-        let needs_rewrite = match crate::crypt::load_limited(&base, None) {
-            Ok(doc) => doc.xref_recovery.is_some(),
+        // Table de références reconstruite par `lopdf` (une mise à jour incrémentale serait
+        // sans `/Prev`), ou fichier que `lopdf` ne lit pas comme PDFium : autre nombre de pages,
+        // pas de catalogue. Une table de références décalée, par exemple, se lit « sans
+        // erreur » mais sans aucune page ; et des octets parasites avant `%PDF-` décalent les
+        // positions qu'écrirait la mise à jour (audit du Lot 13, C2). On réécrit d'abord le
+        // fichier, sauf s'il porte déjà des signatures (elles seraient invalidées).
+        let pages = usize::from(self.page_count());
+        let needs_rewrite = match crate::crypt::load_exact(&base, None) {
+            Ok(doc) => {
+                !base.starts_with(b"%PDF-")
+                    || doc.xref_recovery.is_some()
+                    || doc.trailer.get(b"Root").is_err()
+                    || doc.get_pages().len() != pages
+            }
             Err(_) => true,
         };
         if needs_rewrite {

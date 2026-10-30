@@ -97,6 +97,15 @@ describe('selectedText', () => {
     const b = [...word('Nom:', 10, 100, 0), ...word('Alice', 200, 100, 0)];
     expect(selectedText(b, 0, b.length - 1)).toBe('Nom: Alice');
   });
+  it('puts a space between two words of a right-to-left line', () => {
+    // Lot 13 : en hébreu, l'ordre de lecture va vers les x décroissants.
+    const b: TextBox[] = [
+      { ch: 'ב', rect: { x: 300, y: 100, w: 10, h: 12 }, line: 0, block: 0 },
+      { ch: 'א', rect: { x: 290, y: 100, w: 10, h: 12 }, line: 0, block: 0 },
+      { ch: 'ד', rect: { x: 200, y: 100, w: 10, h: 12 }, line: 0, block: 0 },
+    ];
+    expect(selectedText(b, 0, 2)).toBe('בא ד');
+  });
   it('separates blocks with a blank line, like the text export', () => {
     // La fin d'une colonne puis le haut de la suivante : un changement de bloc.
     const b = [...word('fin', 10, 100, 0, 0), ...word('debut', 250, 300, 1, 1)];

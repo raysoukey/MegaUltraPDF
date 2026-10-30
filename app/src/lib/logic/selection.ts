@@ -132,7 +132,11 @@ export function selectedText(boxes: TextBox[], from: number, to: number): string
       } else if (box.line !== previous.line) {
         text += '\n';
       } else {
-        const gap = box.rect.x - (previous.rect.x + previous.rect.w);
+        // Écart dans un sens ou dans l'autre : une ligne de droite à gauche (hébreu, arabe)
+        // va vers les x décroissants (Lot 13).
+        const a = previous.rect;
+        const b = box.rect;
+        const gap = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w));
         const spaced = /\s/.test(previous.ch) || /\s/.test(box.ch);
         if (!spaced && gap > 0.5 * Math.max(previous.rect.h, box.rect.h)) text += ' ';
       }

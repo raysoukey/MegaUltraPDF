@@ -182,7 +182,8 @@ fn page_blocks(drawn: &[DrawnChar]) -> Vec<crate::reading_order::Block> {
         .iter()
         .map(|d| if d.horizontal { d.rect } else { hidden })
         .collect();
-    let mut blocks = crate::reading_order::layout(&horizontal);
+    let chars: Vec<char> = drawn.iter().map(|d| d.ch).collect();
+    let mut blocks = crate::reading_order::layout_chars(&horizontal, &chars);
     let mut run: Vec<usize> = Vec::new();
     let mut run_angle = 0.0;
     for (i, d) in drawn.iter().enumerate() {

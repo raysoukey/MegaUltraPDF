@@ -67,6 +67,81 @@ pub fn layout(rects: &[Rect]) -> Vec<Block> {
 }
 
 /// Vrai si le rectangle peut servir au calcul : coordonnées finies, largeur et hauteur > 0.
+/// Comme [`layout`], avec les caractères : chaque ligne écrite de droite à gauche est remise
+/// dans l'ordre logique (voir [`logical_order`]). La géométrie (lignes, segments, colonnes)
+/// reste calculée de gauche à droite.
+pub fn layout_chars(rects: &[Rect], chars: &[char]) -> Vec<Block> {
+    let mut blocks = layout(rects);
+    for line in blocks.iter_mut().flat_map(|block| block.iter_mut()) {
+        logical_order(line, rects, chars);
+    }
+    blocks
+}
+
+/// Sens d'un caractère pour la lecture (version simplifiée de l'algorithme bidirectionnel
+/// d'Unicode, UAX #9).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    /// Écriture de droite à gauche : hébreu, arabe, syriaque, thâna, N'Ko et leurs formes de
+    /// présentation.
+    Rtl,
+    /// Lettre ou chiffre d'une autre écriture, lus de gauche à droite.
+    Ltr,
+    /// Espace, ponctuation, symbole : prend le sens de ce qui l'entoure.
+    Neutral,
+}
+
+fn direction(c: char) -> Direction {
+    match u32::from(c) {
+        0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF => Direction::Rtl,
+        _ if c.is_alphanumeric() => Direction::Ltr,
+        _ => Direction::Neutral,
+    }
+}
+
+/// Remet dans l'ordre **logique** une ligne majoritairement écrite de droite à gauche (audit
+/// du Lot 13, C3).
+///
+/// Un PDF dessine les glyphes là où ils s'affichent : l'hébreu « שלום » est posé ם ו ל ש de
+/// gauche à droite. Pour une ligne dont les lettres sont surtout hébraïques ou arabes, on lit
+/// donc les caractères de droite à gauche, puis on remet de gauche à droite chaque suite
+/// latine ou numérique (« 123 », « PDF Mega »), espaces intérieures comprises. Une ligne
+/// latine qui contient un mot hébreu n'est pas touchée.
+///
+/// \[Apprentissage\] **Retourner une sous-tranche en place** : `line[k..=end]` désigne une
+/// portion du vecteur sans la copier, et `.reverse()` en inverse l'ordre directement dans
+/// `line`. Le `&mut [usize]` reçu en paramètre permet de modifier la ligne de l'appelant.
+pub fn logical_order(line: &mut [usize], rects: &[Rect], chars: &[char]) {
+    let count = |d: Direction| line.iter().filter(|&&i| direction(chars[i]) == d).count();
+    if count(Direction::Rtl) <= count(Direction::Ltr) {
+        return;
+    }
+    // De droite à gauche, par le centre de chaque caractère.
+    line.sort_by(|&a, &b| {
+        let center = |i: usize| rects[i].x + rects[i].w / 2.0;
+        center(b).total_cmp(&center(a))
+    });
+    // Chaque suite gauche-à-droite (commence et finit par une lettre ou un chiffre non RTL,
+    // neutres intérieurs compris) est retournée.
+    let mut k = 0;
+    while k < line.len() {
+        if direction(chars[line[k]]) != Direction::Ltr {
+            k += 1;
+            continue;
+        }
+        let mut end = k;
+        let mut j = k + 1;
+        while j < line.len() && direction(chars[line[j]]) != Direction::Rtl {
+            if direction(chars[line[j]]) == Direction::Ltr {
+                end = j;
+            }
+            j += 1;
+        }
+        line[k..=end].reverse();
+        k = end + 1;
+    }
+}
+
 fn usable(r: &Rect) -> bool {
     [r.x, r.y, r.w, r.h].iter().all(|v| v.is_finite()) && r.w > 0.0 && r.h > 0.0
 }
@@ -364,7 +439,10 @@ pub fn blocks_text(blocks: &[Block], chars: &[char], rects: &[Rect]) -> String {
             let mut previous: Option<usize> = None;
             for &c in line {
                 if let Some(p) = previous {
-                    let gap = rects[c].x - (rects[p].x + rects[p].w);
+                    // Écart dans un sens ou dans l'autre : une ligne lue de droite à gauche
+                    // va vers les x décroissants.
+                    let (a, b) = (&rects[p], &rects[c]);
+                    let gap = (b.x - (a.x + a.w)).max(a.x - (b.x + b.w));
                     let spaced = chars[p].is_whitespace() || chars[c].is_whitespace();
                     if !spaced && gap > 0.5 * rects[p].h.max(rects[c].h) {
                         text.push(' ');
@@ -385,6 +463,35 @@ mod tests {
     /// Largeur et hauteur des caractères des tests (Helvetica 10 pt : environ 6 × 12).
     const W: f32 = 6.0;
     const H: f32 = 12.0;
+
+    /// Le texte d'une ligne posée **visuellement** (glyphes de gauche à droite, comme un PDF
+    /// les dessine), lu par `layout_chars` puis `blocks_text`.
+    fn read_visual(visual: &str) -> String {
+        let chars: Vec<char> = visual.chars().collect();
+        let rects: Vec<Rect> = (0..chars.len())
+            .map(|i| Rect {
+                x: 100.0 + i as f32 * W,
+                y: 700.0,
+                w: W,
+                h: H,
+            })
+            .collect();
+        blocks_text(&layout_chars(&rects, &chars), &chars, &rects)
+    }
+
+    /// C3 (audit du Lot 13) : une ligne en hébreu ou en arabe se lit de droite à gauche ; les
+    /// nombres et les mots latins qu'elle contient restent de gauche à droite.
+    #[test]
+    fn right_to_left_lines_are_read_in_logical_order() {
+        // « שלום » (« bonjour ») dessiné tel qu'il s'affiche : ם ו ל ש de gauche à droite.
+        assert_eq!(read_visual("םולש"), "שלום");
+        // « שלום 123 » : le nombre, à gauche à l'écran, vient après et se lit de gauche à droite.
+        assert_eq!(read_visual("123 םולש"), "שלום 123");
+        // Arabe avec un mot latin de deux syllabes au milieu : « مرحبا PDF Mega عالم ».
+        assert_eq!(read_visual("ملاع PDF Mega ابحرم"), "مرحبا PDF Mega عالم");
+        // Une ligne latine ne change pas, même avec un mot hébreu court.
+        assert_eq!(read_visual("Shalom םולש world"), "Shalom םולש world");
+    }
 
     /// Propriété (audit du Lot 13, R9) : pour des rectangles **quelconques** (positions et
     /// tailles aléatoires, valeurs nulles, négatives, infinies ou NaN mêlées), l'ordre de

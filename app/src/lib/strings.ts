@@ -157,6 +157,12 @@ export const fr = {
     `Composants tiers : ${crates} crates Rust, ${npm} paquets npm`,
   aboutNotices:
     'Les textes complets des licences sont livrés avec l’application : THIRD_PARTY_LICENSES.md (composants tiers) et la notice placée à côté de la bibliothèque PDFium.',
+  renderFailed: 'Page impossible à afficher',
+  documentLost: (name: string) =>
+    `« ${name} » a été fermé après une erreur interne. Rouvrez-le pour continuer.`,
+  aboutDiagnostic:
+    'En cas d’erreur, MegaUltraPDF note une ligne dans un journal local (jamais le contenu de vos documents, rien n’est envoyé). Vous pouvez le joindre à un signalement.',
+  openDiagnosticFolder: 'Ouvrir le dossier du journal',
   licenseName: 'Composant',
   licenseVersion: 'Version',
   licenseLicense: 'Licence',
@@ -760,6 +766,12 @@ export const en: Strings = {
     `Third-party components: ${crates} Rust crates, ${npm} npm packages`,
   aboutNotices:
     'The full licence texts ship with the application: THIRD_PARTY_LICENSES.md (third-party components) and the notice next to the PDFium library.',
+  renderFailed: 'This page cannot be displayed',
+  documentLost: (name: string) =>
+    `“${name}” was closed after an internal error. Reopen it to continue.`,
+  aboutDiagnostic:
+    'When something fails, MegaUltraPDF writes one line to a local log (never the content of your documents; nothing is sent). You can attach it to a bug report.',
+  openDiagnosticFolder: 'Open the log folder',
   licenseName: 'Component',
   licenseVersion: 'Version',
   licenseLicense: 'Licence',

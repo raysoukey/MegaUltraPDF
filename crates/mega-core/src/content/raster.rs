@@ -197,6 +197,26 @@ fn channels_of(doc: &LoDocument, space: &Object) -> Option<usize> {
     }
 }
 
+/// Décode le JPEG `data` d'une image que son dictionnaire annonce `width` × `height` ;
+/// `None` si l'en-tête du JPEG annonce d'autres dimensions ou si le décodage échoue.
+///
+/// Le décodeur lit d'abord l'en-tête et vérifie les limites **avant** d'allouer les pixels :
+/// un en-tête qui ment (60 000 × 60 000, soit 10 Go) est refusé sans rien allouer (audit du
+/// Lot 13, R7). Sans ces limites explicites, seule la limite par défaut d'`image` (512 Mo)
+/// protégeait.
+pub(crate) fn decode_jpeg(data: &[u8], width: u32, height: u32) -> Option<image::DynamicImage> {
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(data), image::ImageFormat::Jpeg);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(width);
+    limits.max_image_height = Some(height);
+    // Quatre octets par pixel au plus (CMJN), plus une marge pour les tampons du décodeur.
+    limits.max_alloc = Some(u64::from(width) * u64::from(height) * 4 + (1 << 20));
+    reader.limits(limits);
+    let decoded = reader.decode().ok()?;
+    (decoded.width() == width && decoded.height() == height).then_some(decoded)
+}
+
 /// Décode une image 8 bits en échantillons, ou `None` (format que nous ne savons pas
 /// réécrire fidèlement : l'appelant la retire alors entière).
 fn decode(doc: &LoDocument, stream: &Stream) -> Option<Raster> {
@@ -234,12 +254,7 @@ fn decode(doc: &LoDocument, stream: &Stream) -> Option<Raster> {
     let samples = match filters.as_slice() {
         [] => stream.content.clone(),
         [b"DCTDecode"] if channels != 4 => {
-            let decoded =
-                image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg)
-                    .ok()?;
-            if decoded.width() != width || decoded.height() != height {
-                return None;
-            }
+            let decoded = decode_jpeg(&stream.content, width, height)?;
             if channels == 1 {
                 decoded.to_luma8().into_raw()
             } else {
@@ -395,18 +410,60 @@ fn form_bounds(doc: &LoDocument, id: ObjectId, ctm: &Matrix) -> Option<Rect> {
     })
 }
 
+/// Profondeur d'imbrication maximale analysée (formulaire dans un formulaire, motif dans un
+/// formulaire…). Au-delà, on répond « peint une image » : le caviardage refuse plutôt que de
+/// laisser passer (audit du Lot 13, R3). Les fichiers réels dépassent rarement 10 niveaux.
+const MAX_NESTING: usize = 64;
+
 /// Vrai si les ressources `resources` peignent une image **hors** d'un `Do` direct du flux
 /// examiné : par un motif (tiling pattern), par le masque doux d'un état graphique
 /// (`/ExtGState … /SMask /G`) et, si `xobjects`, par une image ou un formulaire XObject. La
 /// recherche descend dans les formulaires, les motifs et les groupes de masques (ensemble
-/// `seen` contre les cycles) ; une entrée qu'on ne sait pas résoudre compte comme une image :
-/// en matière de caviardage, on refuse plutôt que de laisser passer (relecture du Lot 10).
+/// `seen` contre les cycles, profondeur bornée par [`MAX_NESTING`]) ; une entrée qu'on ne sait
+/// pas résoudre compte comme une image : en matière de caviardage, on refuse plutôt que de
+/// laisser passer (relecture du Lot 10).
+///
+/// \[Apprentissage\] **Pile explicite** : au lieu de s'appeler elle-même pour chaque
+/// formulaire imbriqué (une chaîne de 5 000 formulaires épuisait la pile du thread et fermait
+/// l'application), la fonction range le travail à faire dans un `Vec` (`pending`) et le
+/// reprend dans une boucle `while let Some(…) = pending.pop()`. La mémoire utilisée est alors
+/// celle du tas, et la profondeur se compte et se borne. Même idée que `reading_order::xy_cut`
+/// (correctif 0.12.2).
 fn hidden_images_in(
     doc: &LoDocument,
     resources: &Dictionary,
     seen: &mut BTreeSet<ObjectId>,
     xobjects: bool,
 ) -> bool {
+    let mut pending = vec![(resources.clone(), xobjects, 0usize)];
+    while let Some((resources, xobjects, depth)) = pending.pop() {
+        let Some(streams) = painting_streams(doc, &resources, xobjects) else {
+            return true;
+        };
+        for id in streams {
+            if !seen.insert(id) {
+                continue;
+            }
+            if depth >= MAX_NESTING {
+                return true;
+            }
+            match stream_resources(doc, id, Some(&resources)) {
+                Some(inner) => pending.push((inner, true, depth + 1)),
+                None => return true,
+            }
+        }
+    }
+    false
+}
+
+/// Les flux qui dessinent depuis `resources` (formulaires si `xobjects`, motifs de pavage,
+/// groupes de masques doux), à examiner à leur tour ; `None` dès qu'une image (ou une entrée
+/// illisible) est trouvée.
+fn painting_streams(
+    doc: &LoDocument,
+    resources: &Dictionary,
+    xobjects: bool,
+) -> Option<Vec<ObjectId>> {
     let entries = |key: &[u8]| -> Option<Vec<Object>> {
         match resources.get(key) {
             Err(_) => Some(Vec::new()),
@@ -417,18 +474,13 @@ fn hidden_images_in(
                 .map(|d| d.iter().map(|(_, v)| v.clone()).collect()),
         }
     };
-    let (Some(xobject_list), Some(patterns), Some(states)) = (
-        entries(b"XObject"),
-        entries(b"Pattern"),
-        entries(b"ExtGState"),
-    ) else {
-        return true;
-    };
+    let xobject_list = entries(b"XObject")?;
+    let patterns = entries(b"Pattern")?;
+    let states = entries(b"ExtGState")?;
+    let mut streams = Vec::new();
     if xobjects {
         for value in xobject_list {
-            let Ok(id) = value.as_reference() else {
-                return true;
-            };
+            let id = value.as_reference().ok()?;
             let subtype = doc
                 .get_object(id)
                 .ok()
@@ -437,14 +489,10 @@ fn hidden_images_in(
                 .and_then(|t| doc.dereference(t).ok())
                 .and_then(|(_, t)| t.as_name().ok().map(<[u8]>::to_vec));
             match subtype.as_deref() {
-                Some(b"Form") => {
-                    if stream_paints_images(doc, id, Some(resources), seen) {
-                        return true;
-                    }
-                }
+                Some(b"Form") => streams.push(id),
                 Some(b"PS") => {}
                 // Une image, ou un XObject illisible : refus.
-                _ => return true,
+                _ => return None,
             }
         }
     }
@@ -452,18 +500,14 @@ fn hidden_images_in(
         // Un motif de type 1 (pavage) est un flux qui dessine ; un motif de type 2 (dégradé)
         // est un dictionnaire sans image.
         match doc.dereference(&value) {
-            Ok((Some(id), Object::Stream(_))) => {
-                if stream_paints_images(doc, id, Some(resources), seen) {
-                    return true;
-                }
-            }
+            Ok((Some(id), Object::Stream(_))) => streams.push(id),
             Ok((_, Object::Dictionary(_))) => {}
-            _ => return true,
+            _ => return None,
         }
     }
     for value in states {
         let Ok((_, Object::Dictionary(state))) = doc.dereference(&value) else {
-            return true;
+            return None;
         };
         let Ok(mask) = state.get(b"SMask") else {
             continue;
@@ -471,23 +515,34 @@ fn hidden_images_in(
         match doc.dereference(mask) {
             Ok((_, Object::Name(_))) => {}
             Ok((_, Object::Dictionary(mask))) => {
-                let Ok(group) = mask.get(b"G").and_then(Object::as_reference) else {
-                    return true;
-                };
-                if stream_paints_images(doc, group, Some(resources), seen) {
-                    return true;
-                }
+                streams.push(mask.get(b"G").and_then(Object::as_reference).ok()?);
             }
-            _ => return true,
+            _ => return None,
         }
     }
-    false
+    Some(streams)
+}
+
+/// Les ressources du flux `id` : les siennes, sinon celles de son parent (`parent`, héritage
+/// permis par la norme) ; `None` si le flux est illisible ou sans ressources résolubles.
+fn stream_resources(
+    doc: &LoDocument,
+    id: ObjectId,
+    parent: Option<&Dictionary>,
+) -> Option<Dictionary> {
+    let stream = doc.get_object(id).ok().and_then(|o| o.as_stream().ok())?;
+    match stream.dict.get(b"Resources") {
+        Err(_) => parent.cloned(),
+        Ok(value) => match doc.dereference(value) {
+            Ok((_, Object::Dictionary(d))) => Some(d.clone()),
+            _ => None,
+        },
+    }
 }
 
 /// Vrai si le flux `id` (formulaire XObject, motif, groupe de masque) peint une image, lui ou
 /// ce qu'il appelle (voir [`hidden_images_in`]). Sans `/Resources` propres, un flux utilise
-/// celles de son parent (`parent`, héritage permis par la norme) ; s'il n'y en a pas, on
-/// refuse par prudence.
+/// celles de son parent ; s'il n'y en a pas, on refuse par prudence.
 fn stream_paints_images(
     doc: &LoDocument,
     id: ObjectId,
@@ -497,20 +552,10 @@ fn stream_paints_images(
     if !seen.insert(id) {
         return false;
     }
-    let Some(stream) = doc.get_object(id).ok().and_then(|o| o.as_stream().ok()) else {
-        return true;
-    };
-    let resources = match stream.dict.get(b"Resources") {
-        Err(_) => match parent {
-            Some(parent) => parent.clone(),
-            None => return true,
-        },
-        Ok(value) => match doc.dereference(value) {
-            Ok((_, Object::Dictionary(d))) => d.clone(),
-            _ => return true,
-        },
-    };
-    hidden_images_in(doc, &resources, seen, true)
+    match stream_resources(doc, id, parent) {
+        Some(resources) => hidden_images_in(doc, &resources, seen, true),
+        None => true,
+    }
 }
 
 /// Les six nombres d'un opérateur `cm`.
@@ -557,7 +602,8 @@ pub(crate) fn redact_images(
                 .to_string(),
         ));
     }
-    let content = Content::decode(&doc.get_page_content(page_id)).map_err(structure)?;
+    let content = crate::crypt::page_content(doc, page_id).map_err(structure)?;
+    let content = Content::decode(&content).map_err(structure)?;
 
     let mut report = RasterReport::default();
     let mut ctm = IDENTITY;
@@ -693,6 +739,30 @@ mod tests {
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect { x, y, w, h }
+    }
+
+    /// Un JPEG 8 × 8, et le même dont l'en-tête annonce `side` × `side` pixels.
+    fn jpeg(side: Option<u16>) -> Vec<u8> {
+        let mut out = Vec::new();
+        let pixels = image::RgbImage::from_pixel(8, 8, image::Rgb([10, 200, 10]));
+        image::codecs::jpeg::JpegEncoder::new(&mut out)
+            .encode_image(&pixels)
+            .unwrap();
+        if let Some(side) = side {
+            let sof = out.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+            let [hi, lo] = side.to_be_bytes();
+            out[sof + 5..sof + 9].copy_from_slice(&[hi, lo, hi, lo]);
+        }
+        out
+    }
+
+    /// R7 (audit du Lot 13) : un JPEG est refusé dès son en-tête s'il ne correspond pas aux
+    /// dimensions annoncées par le dictionnaire de l'image, **avant** toute allocation.
+    #[test]
+    fn a_jpeg_larger_than_announced_is_refused_before_decoding() {
+        assert!(decode_jpeg(&jpeg(None), 8, 8).is_some());
+        assert!(decode_jpeg(&jpeg(Some(12_000)), 8, 8).is_none());
+        assert!(decode_jpeg(&jpeg(Some(60_000)), 8, 8).is_none());
     }
 
     #[test]

@@ -61,6 +61,18 @@ pub enum CoreError {
     #[error("Erreur d'accès au fichier")]
     Io(#[from] std::io::Error),
 
+    /// Le fichier dépasse la taille qu'un document peut avoir ([`MAX_FILE_BYTES`]) : refusé
+    /// avant d'être lu (audit du Lot 13, R6).
+    #[error(
+        "Fichier trop volumineux : {} Mo (maximum {} Mo).",
+        bytes / 1_000_000,
+        MAX_FILE_BYTES / 1_000_000
+    )]
+    FileTooLarge {
+        /// Taille du fichier, en octets.
+        bytes: u64,
+    },
+
     /// Le rendu demandé dépasserait la taille d'image maximale autorisée.
     #[error(
         "Rendu trop grand : {width_px} × {height_px} px (maximum {} Mpx). Réduisez l'échelle.",
@@ -93,9 +105,28 @@ pub enum CoreError {
     #[error("Le service PDF est arrêté.")]
     ServiceStopped,
 
+    /// L'opération a échoué de façon inattendue (panique interne). Si elle modifiait un
+    /// document, celui-ci a été fermé par précaution ; les autres restent ouverts (audit du
+    /// Lot 13, R4).
+    #[error(
+        "L'opération a échoué de façon inattendue. Si elle modifiait le document, il a été \
+         fermé par précaution : rouvrez-le pour continuer."
+    )]
+    Aborted,
+
     /// Une spécification de pages (« 1-3,5 ») est mal formée ou hors des pages du document.
     #[error("Plage de pages invalide : {0}")]
     InvalidPageSpec(String),
+
+    /// Une opération confiée à un programme externe (Tesseract) n'a pas abouti dans le délai :
+    /// le programme a été arrêté (audit du Lot 13, R2).
+    #[error("{operation} : délai de {seconds} s dépassé, opération abandonnée.")]
+    Timeout {
+        /// L'opération, en français (« Reconnaissance de texte (page 3) »).
+        operation: String,
+        /// Le délai accordé, en secondes.
+        seconds: u64,
+    },
 
     /// L'opération demandée n'a pas de sens dans l'état actuel du document
     /// (supprimer toutes les pages, enregistrer un document sans chemin…).
@@ -105,6 +136,11 @@ pub enum CoreError {
 
 /// Raccourci pour `Result<T, CoreError>`, comme `io::Result` dans la bibliothèque standard.
 pub type CoreResult<T> = Result<T, CoreError>;
+
+/// Taille maximale d'un fichier PDF ouvert : 2 Gio moins un octet. PDFium reçoit la longueur
+/// d'un document en mémoire dans un entier signé 32 bits (`int`) : au-delà, il ne peut pas le
+/// charger, et lire le fichier en entier ne servirait qu'à épuiser la mémoire.
+pub const MAX_FILE_BYTES: u64 = i32::MAX as u64;
 
 /// Nombre maximal de pixels qu'un rendu peut produire (50 mégapixels, soit 200 Mo en RGBA).
 ///

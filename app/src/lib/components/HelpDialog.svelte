@@ -6,6 +6,7 @@
   import { onMount } from 'svelte';
   import { trapFocus } from '$lib/actions/trapFocus';
   import licenses from '$lib/generated/licenses.json';
+  import { openDiagnosticFolder } from '$lib/api';
   import { shortcutHelp } from '$lib/logic/shortcuts';
   import { t } from '$lib/strings';
 
@@ -120,6 +121,12 @@
             </tbody>
           </table>
         </details>
+        <p>{t.aboutDiagnostic}</p>
+        <p>
+          <button type="button" onclick={() => openDiagnosticFolder().catch(() => {})}
+            >{t.openDiagnosticFolder}</button
+          >
+        </p>
       {/if}
     </div>
 

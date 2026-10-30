@@ -469,7 +469,8 @@ export interface AppError {
     | 'not_found'
     | 'invalid_operation'
     | 'io'
-    | 'internal';
+    | 'internal'
+    | 'aborted';
   message: string;
 }
 
@@ -755,6 +756,16 @@ export interface DefaultAppStatus {
 
 /** Ce que l'action « définir comme lecteur par défaut » a fait (miroir de `DefaultAppAction`). */
 export type DefaultAppAction = 'opened_settings' | 'set' | 'instructions' | 'unsupported';
+
+/** Pourquoi l'image de page `url` n'a pas pu s'afficher ; `null` si l'échec était passager. */
+export async function renderFailure(url: string): Promise<string | null> {
+  return invoke<string | null>('render_failure', { url });
+}
+
+/** Ouvre le dossier du journal de diagnostic local (Lot 13). */
+export async function openDiagnosticFolder(): Promise<void> {
+  return invoke<void>('open_diagnostic_folder');
+}
 
 /** Qui ouvre les PDF sur ce système. */
 export async function defaultAppStatus(): Promise<DefaultAppStatus> {

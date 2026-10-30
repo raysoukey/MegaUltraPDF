@@ -15,6 +15,7 @@ mod cache;
 mod queue;
 
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
@@ -77,6 +78,14 @@ pub struct RenderRequest {
 /// \[Apprentissage\] Une `enum` par message est le cœur du patron : le `match` de l'acteur
 /// est exhaustif, le compilateur signale tout message oublié.
 enum Request {
+    /// Requête de test qui touche le document `id` puis panique (R4, Lot 13).
+    #[cfg(test)]
+    Panic {
+        id: DocId,
+        /// Vrai : la requête modifiait le document (accès `get_mut`) ; faux : simple lecture.
+        mutating: bool,
+        reply: SyncSender<CoreResult<()>>,
+    },
     OpenPath {
         path: PathBuf,
         password: Option<String>,
@@ -363,7 +372,9 @@ impl ServiceHandle {
         self.tx
             .send(make(reply_tx))
             .map_err(|_| CoreError::ServiceStopped)?;
-        reply_rx.recv().map_err(|_| CoreError::ServiceStopped)?
+        // Canal de réponse fermé sans réponse : la requête a paniqué dans l'acteur (qui, lui,
+        // continue : voir `Actor::step`).
+        reply_rx.recv().map_err(|_| CoreError::Aborted)?
     }
 
     /// Ouvre un fichier.
@@ -738,9 +749,45 @@ impl ServiceHandle {
     }
 }
 
+/// Les documents ouverts, avec la trace de ceux que la requête en cours a pu **modifier**
+/// (accès `get_mut`, ouverture) : si elle panique, ce sont eux qu'on ferme (audit du Lot 13,
+/// R4). Une simple lecture (`get` : rendu, texte, résumé) ne ferme rien : le document n'a pas
+/// changé, et ses modifications non enregistrées seraient perdues pour rien.
+#[derive(Default)]
+struct Docs {
+    map: HashMap<DocId, Entry>,
+    touched: Vec<DocId>,
+}
+
+impl Docs {
+    fn get(&self, id: &DocId) -> Option<&Entry> {
+        self.map.get(id)
+    }
+
+    fn get_mut(&mut self, id: &DocId) -> Option<&mut Entry> {
+        self.touched.push(*id);
+        self.map.get_mut(id)
+    }
+
+    /// Accès modifiable **sans** trace : pour la seule génération d'un rendu, un compteur
+    /// qui ne touche pas à l'état PDFium du document.
+    fn get_mut_untracked(&mut self, id: &DocId) -> Option<&mut Entry> {
+        self.map.get_mut(id)
+    }
+
+    fn insert(&mut self, id: DocId, entry: Entry) {
+        self.touched.push(id);
+        self.map.insert(id, entry);
+    }
+
+    fn remove(&mut self, id: &DocId) -> Option<Entry> {
+        self.map.remove(id)
+    }
+}
+
 /// L'état privé du thread acteur.
 struct Actor {
-    docs: HashMap<DocId, Entry>,
+    docs: Docs,
     next_id: DocId,
     cache: PngCache,
     queue: PriorityQueue<Request>,
@@ -749,7 +796,7 @@ struct Actor {
 impl Actor {
     fn new(cache_budget: usize) -> Actor {
         Actor {
-            docs: HashMap::new(),
+            docs: Docs::default(),
             next_id: 0,
             cache: PngCache::new(cache_budget),
             queue: PriorityQueue::default(),
@@ -777,15 +824,51 @@ impl Actor {
             self.queue.push(req.priority(), req);
         }
         if let Some(req) = self.queue.pop() {
-            self.handle(req);
+            self.docs.touched.clear();
+            // \[Apprentissage\] **`catch_unwind`** arrête la remontée d'une panique (un bug,
+            // un `[i]` hors limites…) à cette frontière : sans lui, le thread de l'acteur
+            // mourrait et toutes les opérations suivantes échoueraient jusqu'au redémarrage.
+            // `AssertUnwindSafe` affirme qu'on ne réutilisera pas un état à moitié modifié :
+            // c'est vrai parce que les documents touchés sont fermés juste après.
+            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| self.handle(req)));
+            if outcome.is_err() {
+                self.close_touched_documents();
+            }
         }
         true
+    }
+
+    /// Après une panique : ferme les documents que la requête a touchés (leur état PDFium est
+    /// douteux) et oublie leurs rendus en cache. L'appelant reçoit `CoreError::Aborted`.
+    fn close_touched_documents(&mut self) {
+        let touched = std::mem::take(&mut self.docs.touched);
+        for id in touched {
+            if self.docs.remove(&id).is_some() {
+                self.cache.invalidate_doc(id);
+                eprintln!("document {id} fermé après une erreur interne");
+            }
+        }
     }
 
     fn handle(&mut self, req: Request) {
         // `let _ = reply.send(..)` : si l'appelant n'attend plus (handle détruit, délai
         // dépassé), la réponse est simplement perdue ; ce n'est pas une erreur de l'acteur.
         match req {
+            #[cfg(test)]
+            #[allow(clippy::panic)]
+            Request::Panic {
+                id,
+                mutating,
+                reply,
+            } => {
+                if mutating {
+                    let _ = self.docs.get_mut(&id);
+                } else {
+                    let _ = self.docs.get(&id);
+                }
+                drop(reply);
+                panic!("panique de test (document {id})");
+            }
             Request::OpenPath {
                 path,
                 password,
@@ -1085,7 +1168,7 @@ impl Actor {
     fn render(&mut self, req: RenderRequest) -> CoreResult<Arc<Vec<u8>>> {
         let entry = self
             .docs
-            .get_mut(&req.doc)
+            .get_mut_untracked(&req.doc)
             .ok_or(CoreError::NotFound { id: req.doc })?;
         // Le frontend est l'autorité sur la génération : plus ancienne → annulée ;
         // plus récente que ce que l'acteur connaît → on se met à jour.
@@ -1120,7 +1203,7 @@ impl Actor {
         let entry = self.docs.get_mut(&id).ok_or(CoreError::NotFound { id })?;
         f(&mut entry.doc)?;
         self.cache.invalidate_doc(id);
-        let entry = &self.docs[&id];
+        let entry = self.docs.get(&id).ok_or(CoreError::NotFound { id })?;
         Ok((summary_of(id, entry)?, entry.doc.edit_state()))
     }
 
@@ -1164,6 +1247,51 @@ fn search_all(doc: &Document, query: &str, options: &SearchOptions) -> CoreResul
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// R4 (audit du Lot 13) : une panique pendant une requête ne tue pas l'acteur. Le
+    /// document touché est fermé par précaution (son état PDFium est douteux), l'appelant
+    /// reçoit une erreur claire, et les autres documents restent ouverts.
+    #[test]
+    fn a_panic_closes_only_the_document_it_touched() {
+        let service = PdfService::spawn();
+        let open = |title: &str| {
+            service
+                .open_bytes(crate::testing::sample_pdf(1, title), None)
+                .unwrap()
+                .id
+        };
+        let (victim, other) = (open("victime"), open("autre"));
+        let outcome = service.call(|reply| Request::Panic {
+            id: victim,
+            mutating: true,
+            reply,
+        });
+        assert!(matches!(outcome, Err(CoreError::Aborted)), "{outcome:?}");
+        assert!(matches!(
+            service.summary(victim),
+            Err(CoreError::NotFound { .. })
+        ));
+        assert!(service.summary(other).is_ok(), "l'acteur vit toujours");
+    }
+
+    /// Relecture de la PR A : une panique pendant une simple **lecture** (rendu, texte,
+    /// résumé) ne ferme pas le document : rien n'y a été modifié, et ses modifications non
+    /// enregistrées seraient perdues pour rien.
+    #[test]
+    fn a_panic_while_reading_keeps_the_document_open() {
+        let service = PdfService::spawn();
+        let id = service
+            .open_bytes(crate::testing::sample_pdf(1, "lu"), None)
+            .unwrap()
+            .id;
+        let outcome = service.call(|reply| Request::Panic {
+            id,
+            mutating: false,
+            reply,
+        });
+        assert!(matches!(outcome, Err(CoreError::Aborted)), "{outcome:?}");
+        assert!(service.summary(id).is_ok(), "document resté ouvert");
+    }
 
     /// A17 : ordre de service déterministe (sans `sleep`) : une vignette puis une page
     /// visible arrivent pendant que l'acteur est occupé ; au tour suivant, la visible passe

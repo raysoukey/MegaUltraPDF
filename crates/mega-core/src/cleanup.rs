@@ -50,23 +50,37 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     doc.renumber_objects();
     let out = session.finish()?;
     // Ceinture de sécurité : la réécriture `lopdf` remplace le fichier de l'utilisateur ; si
-    // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages, on écrit les
-    // octets PDFium tels quels.
-    if !rewrite_is_sane(pages_before, &out, password) {
-        return Ok(bytes.to_vec());
-    }
-    let reread = crate::crypt::LopdfSession::load(&out, password).map(|s| page_contents(&s.doc));
-    if reread.ok().as_ref() != Some(&contents_before) {
+    // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages et les mêmes
+    // contenus, on écrit les octets PDFium tels quels. Une seule relecture pour les deux
+    // contrôles (audit du Lot 13, R6 : trois chargements par enregistrement auparavant).
+    let reread = reload_if_sane(pages_before, &out, password).map(|s| page_contents(&s.doc));
+    if reread.as_ref() != Some(&contents_before) {
         return Ok(bytes.to_vec());
     }
     Ok(out)
 }
 
-/// Contenu décodé de chaque page, dans l'ordre des pages.
+/// Octets **bruts** (encore compressés, déjà déchiffrés) des flux de contenu de chaque page,
+/// dans l'ordre des pages.
+///
+/// Le nettoyage ne recompresse ni ne réécrit aucun flux de contenu : leurs octets bruts
+/// doivent se retrouver à l'identique dans la réécriture. Les comparer sans les décompresser
+/// ne coûte que la taille du fichier, même devant une bombe de décompression répartie sur
+/// plusieurs pages, et laisse le nettoyage s'appliquer à ce fichier (relecture de la PR A du
+/// Lot 13 ; auparavant, le contenu décodé de chaque page était gardé deux fois en mémoire).
 fn page_contents(doc: &Document) -> Vec<Vec<u8>> {
     doc.get_pages()
         .into_values()
-        .map(|id| doc.get_page_content(id))
+        .map(|page| {
+            let mut raw = Vec::new();
+            for id in doc.get_page_contents(page) {
+                if let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) {
+                    raw.extend_from_slice(&stream.content);
+                }
+                raw.push(b'\n');
+            }
+            raw
+        })
         .collect()
 }
 
@@ -161,13 +175,18 @@ pub(crate) fn prune(doc: &mut Document) -> usize {
 /// Vrai si `out` se relit (et, s'il est chiffré, se déchiffre avec `password`) comme un PDF
 /// non vide ayant encore `pages_before` pages.
 pub(crate) fn rewrite_is_sane(pages_before: usize, out: &[u8], password: Option<&str>) -> bool {
-    match crate::crypt::LopdfSession::load(out, password) {
-        Ok(reloaded) => {
-            reloaded.doc.get_pages().len() == pages_before
-                && reloaded.doc.trailer.get(b"Root").is_ok()
-        }
-        Err(_) => false,
-    }
+    reload_if_sane(pages_before, out, password).is_some()
+}
+
+/// `out` relu (et déchiffré), s'il passe le contrôle de [`rewrite_is_sane`].
+fn reload_if_sane(
+    pages_before: usize,
+    out: &[u8],
+    password: Option<&str>,
+) -> Option<crate::crypt::LopdfSession> {
+    let reloaded = crate::crypt::LopdfSession::load_exact(out, password).ok()?;
+    (reloaded.doc.get_pages().len() == pages_before && reloaded.doc.trailer.get(b"Root").is_ok())
+        .then_some(reloaded)
 }
 
 /// Nettoie chaque annotation d'une page. PDFium écrit une annotation fraîchement créée
@@ -566,9 +585,7 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
     let n = ap.as_dict().ok()?.get(b"N").ok()?;
     let (_, stream) = doc.dereference(n).ok()?;
     let stream = stream.as_stream().ok()?;
-    let data = stream
-        .decompressed_content()
-        .unwrap_or_else(|_| stream.content.clone());
+    let data = crate::crypt::stream_bytes(stream)?;
     let content = Content::decode(&data).ok()?;
     let mut strokes: Vec<Vec<f32>> = Vec::new();
     let mut current: Vec<f32> = Vec::new();
@@ -674,6 +691,12 @@ mod tests {
             "fichier tronqué"
         );
         assert!(!rewrite_is_sane(0, b"pas un pdf", None));
+        // Relecture de la PR A du Lot 13 : une réécriture sans `/Root` n'est pas saine, même
+        // si la lecture réparatrice de `crypt::load_limited` saurait retrouver le catalogue.
+        let mut rootless = bytes.clone();
+        let k = rootless.windows(5).rposition(|w| w == b"/Root").unwrap();
+        rootless[k..k + 5].copy_from_slice(b"/Roox");
+        assert!(!rewrite_is_sane(3, &rootless, None));
     }
 }
 

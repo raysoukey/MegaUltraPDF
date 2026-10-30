@@ -168,13 +168,7 @@ impl Document {
             self.file_bytes()
         };
         // Un fichier à mot de passe utilisateur se lit avec ce mot de passe (C16).
-        let doc = match self.password() {
-            Some(p) => {
-                lopdf::Document::load_mem_with_options(bytes, lopdf::LoadOptions::with_password(p))
-            }
-            None => lopdf::Document::load_mem(bytes),
-        }
-        .ok()?;
+        let doc = crate::crypt::load_limited(bytes, self.password()).ok()?;
         let info = doc.trailer.get(b"Info").ok()?;
         let (_, info) = doc.dereference(info).ok()?;
         let raw = info.as_dict().ok()?.get(b"ModDate").ok()?;
@@ -330,9 +324,9 @@ fn edit_xmp(doc: &mut lopdf::Document, edit: impl FnOnce(String) -> String) {
     else {
         return;
     };
-    let data = stream
-        .decompressed_content()
-        .unwrap_or_else(|_| stream.content.clone());
+    let Some(data) = crate::crypt::stream_bytes(stream) else {
+        return;
+    };
     let Ok(text) = String::from_utf8(data) else {
         return;
     };

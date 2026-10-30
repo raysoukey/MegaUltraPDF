@@ -36,6 +36,8 @@ pub enum ErrorKind {
     Io,
     /// Défaillance interne (PDFium absente, verrou indisponible…).
     Internal,
+    /// Une opération a paniqué : le document qu'elle modifiait a pu être fermé (Lot 13).
+    Aborted,
 }
 
 impl AppError {
@@ -56,18 +58,27 @@ impl From<CoreError> for AppError {
             CoreError::InvalidPdf(_) => ErrorKind::InvalidPdf,
             CoreError::PageOutOfRange { .. } => ErrorKind::NotFound,
             CoreError::Io(_) => ErrorKind::Io,
-            CoreError::RenderTooLarge { .. } => ErrorKind::InvalidPdf,
-            CoreError::NotFound { .. } => ErrorKind::NotFound,
-            CoreError::InvalidPageSpec(_) | CoreError::InvalidOperation(_) => {
-                ErrorKind::InvalidOperation
+            CoreError::RenderTooLarge { .. } | CoreError::FileTooLarge { .. } => {
+                ErrorKind::InvalidPdf
             }
+            CoreError::NotFound { .. } => ErrorKind::NotFound,
+            CoreError::InvalidPageSpec(_)
+            | CoreError::InvalidOperation(_)
+            | CoreError::Timeout { .. } => ErrorKind::InvalidOperation,
             CoreError::Cancelled => ErrorKind::Internal,
             CoreError::LibraryNotFound { .. }
             | CoreError::Pdfium(_)
             | CoreError::ServiceStopped => ErrorKind::Internal,
+            CoreError::Aborted => ErrorKind::Aborted,
         };
         // Message complet, causes incluses (ex. « Erreur d'accès au fichier : Accès refusé »).
-        AppError::new(kind, mega_core::error::display_chain(&e))
+        let error = AppError::new(kind, mega_core::error::display_chain(&e));
+        // Toute erreur du cœur passe par ici avant d'atteindre l'interface : c'est le seul
+        // endroit où la noter dans le journal local (Lot 13).
+        if !matches!(e, CoreError::Cancelled) {
+            crate::diagnostic::record(&error);
+        }
+        error
     }
 }
 

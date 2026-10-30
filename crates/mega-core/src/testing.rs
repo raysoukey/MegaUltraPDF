@@ -15,6 +15,9 @@ use pdfium_render::prelude::{
 
 use crate::engine;
 
+pub mod fuzz;
+pub mod hostile;
+
 /// Un PDF sans page, dont la seule information est le titre dans `/Info`.
 ///
 /// \[Apprentissage\] Un fichier PDF est une suite d'objets numérotés (`1 0 obj … endobj`),

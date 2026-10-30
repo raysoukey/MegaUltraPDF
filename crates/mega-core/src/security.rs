@@ -194,7 +194,7 @@ impl Document {
         } else {
             self.file_bytes()
         };
-        let Ok(doc) = lopdf::Document::load_mem(bytes) else {
+        let Ok(doc) = crate::crypt::load_limited(bytes, None) else {
             return denied;
         };
         // Mot de passe utilisateur vide : lopdf a déjà déchiffré et retiré `/Encrypt` du
@@ -251,7 +251,7 @@ impl Document {
         // La passe d'enregistrement (`/InkList`, clé privée de PDFium, orphelins) doit avoir
         // lieu **avant** le chiffrement : ensuite, elle s'abstient sur un fichier chiffré.
         let bytes = crate::cleanup::before_save(&self.to_bytes()?, self.password())?;
-        let mut doc = lopdf::Document::load_mem(&bytes).map_err(|e| {
+        let mut doc = crate::crypt::load_limited(&bytes, None).map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;
         if doc.is_encrypted() || doc.was_encrypted() {
@@ -319,8 +319,7 @@ impl Document {
                 return Err(CoreError::WrongPassword);
             }
         }
-        let options = lopdf::LoadOptions::with_password(&password);
-        let mut doc = match lopdf::Document::load_mem_with_options(&bytes, options) {
+        let mut doc = match crate::crypt::load_limited(&bytes, Some(&password)) {
             Ok(doc) => doc,
             Err(_) => return Err(CoreError::WrongPassword),
         };

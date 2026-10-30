@@ -77,6 +77,10 @@ impl Document {
     /// descripteur ouvert, on peut donc le réécrire au même endroit plus tard.
     pub fn open(path: impl AsRef<Path>, password: Option<&str>) -> CoreResult<Document> {
         let path = path.as_ref();
+        let size = std::fs::metadata(path)?.len();
+        if size > crate::error::MAX_FILE_BYTES {
+            return Err(CoreError::FileTooLarge { bytes: size });
+        }
         let bytes = std::fs::read(path)?;
         let mut doc = Self::from_bytes(bytes, password)?;
         doc.path = Some(path.to_path_buf());
@@ -85,6 +89,10 @@ impl Document {
 
     /// Charge un PDF depuis des octets déjà en mémoire.
     pub fn from_bytes(bytes: Vec<u8>, password: Option<&str>) -> CoreResult<Document> {
+        let size = bytes.len() as u64;
+        if size > crate::error::MAX_FILE_BYTES {
+            return Err(CoreError::FileTooLarge { bytes: size });
+        }
         let file_bytes = bytes.clone();
         let guard = engine::guard();
         let inner = match engine::load_bytes(&guard, bytes, password) {

@@ -310,7 +310,7 @@ impl Document {
         // PDFium ne lit que la `/MediaBox` propre à la page : l'héritée vient de `lopdf`,
         // lue avant la phase PDFium (le verrou n'est pas réentrant).
         let inherited: BTreeMap<u16, Rect> = {
-            let doc = LoDocument::load_mem(&self.to_bytes()?).map_err(structure)?;
+            let doc = crate::crypt::load_limited(&self.to_bytes()?, None).map_err(structure)?;
             let ids = doc.get_pages();
             pages
                 .iter()
@@ -726,10 +726,7 @@ fn append_content(
         doc.get_object(*id)
             .ok()
             .and_then(|o| o.as_stream().ok())
-            .map(|s| {
-                s.decompressed_content()
-                    .unwrap_or_else(|_| s.content.clone())
-            })
+            .and_then(crate::crypt::stream_bytes)
             .map(|c| c.trim_ascii().to_vec())
             .unwrap_or_default()
     };

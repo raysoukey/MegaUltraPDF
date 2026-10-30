@@ -97,6 +97,16 @@ pub enum CoreError {
     #[error("Plage de pages invalide : {0}")]
     InvalidPageSpec(String),
 
+    /// Une opération confiée à un programme externe (Tesseract) n'a pas abouti dans le délai :
+    /// le programme a été arrêté (audit du Lot 13, R2).
+    #[error("{operation} : délai de {seconds} s dépassé, opération abandonnée.")]
+    Timeout {
+        /// L'opération, en français (« Reconnaissance de texte (page 3) »).
+        operation: String,
+        /// Le délai accordé, en secondes.
+        seconds: u64,
+    },
+
     /// L'opération demandée n'a pas de sens dans l'état actuel du document
     /// (supprimer toutes les pages, enregistrer un document sans chemin…).
     #[error("Opération impossible : {0}")]

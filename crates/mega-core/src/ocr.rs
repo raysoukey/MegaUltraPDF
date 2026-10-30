@@ -13,9 +13,11 @@
 //! pas compilé. Voir la fiche `features-cargo-et-dependances`.
 
 use std::ffi::OsString;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::RwLock;
+use std::time::{Duration, Instant};
 
 use crate::document::Document;
 use crate::error::{CoreError, CoreResult};
@@ -24,6 +26,72 @@ use crate::overlay::InvisibleWord;
 
 /// Résolution du rendu envoyé à Tesseract : 300 dpi, sa résolution de travail recommandée.
 pub const OCR_DPI: f32 = 300.0;
+
+/// Délai accordé à Tesseract pour reconnaître **une** page (5 minutes ; une page A4 à 300 dpi
+/// prend quelques secondes). Au-delà, le processus est tué : un Tesseract bloqué figerait
+/// sinon l'acteur PDFium, donc toute l'application (audit du Lot 13, R2).
+pub const OCR_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Délai accordé à `tesseract --list-langs`.
+const LIST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Lance `cmd` et attend sa fin au plus `timeout` ; `Ok(None)` si le délai est dépassé (le
+/// processus est alors tué).
+///
+/// \[Apprentissage\] **Lire pendant qu'on attend** : un processus qui écrit plus que le tampon
+/// d'un tube (64 Ko environ) reste bloqué tant que personne ne lit. On lit donc sa sortie
+/// standard et sa sortie d'erreur dans deux threads (`std::thread::spawn`), pendant que le
+/// thread courant surveille la fin du processus avec `try_wait` (qui ne bloque pas). Sans
+/// délai, `Command::output()` attendrait pour toujours un programme bloqué.
+fn output_within(cmd: &mut Command, timeout: Duration) -> std::io::Result<Option<Output>> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            if let Some(mut pipe) = pipe {
+                // Une erreur de lecture laisse simplement une sortie incomplète.
+                let _ = pipe.read_to_end(&mut buffer);
+            }
+            buffer
+        })
+    };
+    let stdout = drain(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let stderr = drain(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            // Le processus a pu finir entre-temps : l'échec de `kill` est sans conséquence.
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = stdout.join().unwrap_or_default();
+    let stderr = stderr.join().unwrap_or_default();
+    Ok(status.map(|status| Output {
+        status,
+        stdout,
+        stderr,
+    }))
+}
 
 /// Variable d'environnement qui désigne l'exécutable `tesseract`.
 pub const TESSERACT_ENV: &str = "MEGA_TESSERACT";
@@ -262,10 +330,12 @@ fn unavailable(exe: &Path, detail: impl std::fmt::Display) -> CoreError {
 /// Langues installées pour Tesseract (`--list-langs`), sans `osd` (détection
 /// d'orientation, pas une langue).
 pub fn tesseract_languages(exe: &Path) -> CoreResult<Vec<String>> {
-    let out = tesseract_command(exe)
-        .arg("--list-langs")
-        .output()
-        .map_err(|e| unavailable(exe, e))?;
+    let out = output_within(tesseract_command(exe).arg("--list-langs"), LIST_TIMEOUT)
+        .map_err(|e| unavailable(exe, e))?
+        .ok_or_else(|| CoreError::Timeout {
+            operation: "Liste des langues de Tesseract".to_string(),
+            seconds: LIST_TIMEOUT.as_secs(),
+        })?;
     if !out.status.success() {
         return Err(unavailable(
             exe,
@@ -389,16 +459,20 @@ impl Document {
             image::ExtendedColorType::Rgba8,
         )
         .map_err(|e| CoreError::InvalidOperation(format!("image pour l'OCR : {e}")))?;
-        let out = tesseract_command(exe)
-            .arg(png.path())
+        let mut cmd = tesseract_command(exe);
+        cmd.arg(png.path())
             .arg("stdout")
             .arg("-l")
             .arg(languages.join("+"))
             .arg("--dpi")
             .arg(format!("{OCR_DPI}"))
-            .arg("tsv")
-            .output()
-            .map_err(|e| unavailable(exe, e))?;
+            .arg("tsv");
+        let out = output_within(&mut cmd, OCR_TIMEOUT)
+            .map_err(|e| unavailable(exe, e))?
+            .ok_or_else(|| CoreError::Timeout {
+                operation: format!("Reconnaissance de texte (page {})", u32::from(page) + 1),
+                seconds: OCR_TIMEOUT.as_secs(),
+            })?;
         if !out.status.success() {
             return Err(unavailable(
                 exe,
@@ -414,5 +488,57 @@ impl Document {
             size.height_pt,
         );
         self.add_invisible_words(page, &words)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    /// Une commande qui dure environ `seconds` secondes sans rien écrire.
+    fn sleeper(seconds: u32) -> Command {
+        if cfg!(windows) {
+            let mut cmd = Command::new("ping");
+            cmd.args(["-n", &(seconds + 1).to_string(), "127.0.0.1"]);
+            cmd
+        } else {
+            let mut cmd = Command::new("sleep");
+            cmd.arg(seconds.to_string());
+            cmd
+        }
+    }
+
+    /// Une commande qui écrit `bytes` octets sur sa sortie (plus que le tampon d'un tube).
+    fn talker(bytes: usize) -> Command {
+        if cfg!(windows) {
+            let mut cmd = Command::new("powershell");
+            cmd.args(["-NoProfile", "-Command", &format!("'x' * {bytes}")]);
+            cmd
+        } else {
+            let mut cmd = Command::new("head");
+            cmd.args(["-c", &bytes.to_string(), "/dev/zero"]);
+            cmd
+        }
+    }
+
+    /// R2 (audit du Lot 13) : un processus qui ne rend pas la main est tué au délai, au lieu
+    /// de figer l'acteur PDFium (et toute l'application) indéfiniment.
+    #[test]
+    fn a_process_that_hangs_is_killed_at_the_deadline() {
+        let start = std::time::Instant::now();
+        let out = output_within(&mut sleeper(30), std::time::Duration::from_millis(500)).unwrap();
+        assert!(out.is_none(), "délai dépassé : pas de sortie");
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    /// Une sortie plus grande que le tampon d'un tube (64 Ko) ne bloque pas le processus.
+    #[test]
+    fn a_large_output_is_read_while_waiting() {
+        let out = output_within(&mut talker(300_000), std::time::Duration::from_secs(60))
+            .unwrap()
+            .expect("terminé à temps");
+        assert!(out.status.success());
+        assert!(out.stdout.len() >= 300_000);
     }
 }

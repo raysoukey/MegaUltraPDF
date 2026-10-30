@@ -58,9 +58,9 @@ impl From<CoreError> for AppError {
             CoreError::Io(_) => ErrorKind::Io,
             CoreError::RenderTooLarge { .. } => ErrorKind::InvalidPdf,
             CoreError::NotFound { .. } => ErrorKind::NotFound,
-            CoreError::InvalidPageSpec(_) | CoreError::InvalidOperation(_) => {
-                ErrorKind::InvalidOperation
-            }
+            CoreError::InvalidPageSpec(_)
+            | CoreError::InvalidOperation(_)
+            | CoreError::Timeout { .. } => ErrorKind::InvalidOperation,
             CoreError::Cancelled => ErrorKind::Internal,
             CoreError::LibraryNotFound { .. }
             | CoreError::Pdfium(_)

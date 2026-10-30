@@ -2,7 +2,7 @@
 <script lang="ts">
   import type { TextBox } from '$lib/api';
   import { cssPointToPdf, pdfRectToCss } from '$lib/logic/geometry';
-  import { charIndexAt, selectionRects } from '$lib/logic/selection';
+  import { charIndexAt, selectionRects, wordAt } from '$lib/logic/selection';
   import { ensureTextLayer, setSelection, type OpenDoc } from '$lib/state/documents.svelte';
 
   let { doc, index }: { doc: OpenDoc; index: number } = $props();
@@ -64,12 +64,7 @@
     const p = cssPointToPdf(e.clientX - r.left, e.clientY - r.top, page, doc.scale, doc.rotation);
     const i = charIndexAt(boxes, p.x, p.y);
     if (i < 0) return;
-    // Mot : on s'étend tant que les caractères ne sont pas des espaces.
-    const isWord = (c: string) => !/\s/.test(c);
-    let from = i;
-    let to = i;
-    while (from > 0 && isWord(boxes[from - 1].ch) && isWord(boxes[from].ch)) from--;
-    while (to < boxes.length - 1 && isWord(boxes[to + 1].ch) && isWord(boxes[to].ch)) to++;
+    const [from, to] = wordAt(boxes, i);
     setSelection(doc, { page: index, from, to });
   }
 

@@ -1,0 +1,68 @@
+[
+  {
+    "wait": 2500
+  },
+  {
+    "drag": ".page .text-layer",
+    "fromFrac": [
+      0.1227,
+      0.1401
+    ],
+    "toFrac": [
+      0.4706,
+      0.1758
+    ]
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "(() => { const s = [...document.querySelectorAll('.page .sel')]; return (s.length === 3 && s[0].offsetTop < s[1].offsetTop && s[1].offsetTop < s[2].offsetTop) || 'ERREUR ' + JSON.stringify([...document.querySelectorAll('.page .sel')].map((e) => [e.offsetLeft, e.offsetTop, e.offsetWidth])); })()",
+    "label": "paragraphe dessiné dans le désordre : un glisser de la ligne 1 à la ligne 3 surligne exactement 3 lignes, de haut en bas"
+  },
+  {
+    "shot": "01-paragraphe.png"
+  },
+  {
+    "drag": ".page .text-layer",
+    "fromFrac": [
+      0.1227,
+      0.3658
+    ],
+    "toFrac": [
+      0.4706,
+      0.4014
+    ]
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "(() => { const s = [...document.querySelectorAll('.page .sel')]; const w = document.querySelector('.page .text-layer').offsetWidth; return (s.length === 3 && s.every((e) => e.offsetLeft + e.offsetWidth < w * 0.5)) || 'ERREUR ' + JSON.stringify([...document.querySelectorAll('.page .sel')].map((e) => [e.offsetLeft, e.offsetTop, e.offsetWidth])); })()",
+    "label": "colonne gauche : glisser au-delà de la fin des lignes ne saute pas dans la colonne droite"
+  },
+  {
+    "shot": "02-colonne.png"
+  },
+  {
+    "drag": ".page .text-layer",
+    "fromFrac": [
+      0.1529,
+      0.2352
+    ],
+    "toFrac": [
+      0.5546,
+      0.2352
+    ]
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "(() => { const s = [...document.querySelectorAll('.page .sel')]; return s.length === 1 || 'ERREUR ' + JSON.stringify([...document.querySelectorAll('.page .sel')].map((e) => [e.offsetLeft, e.offsetTop, e.offsetWidth])); })()",
+    "label": "liste : « Utilisateur : ALICE » se sélectionne d'un seul tenant, ligne par ligne"
+  },
+  {
+    "shot": "03-liste.png"
+  }
+]

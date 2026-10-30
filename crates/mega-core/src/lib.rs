@@ -60,6 +60,7 @@ pub mod overlay;
 pub mod pages;
 pub mod pagespec;
 pub mod properties;
+pub mod reading_order;
 pub mod render;
 pub mod security;
 pub mod service;

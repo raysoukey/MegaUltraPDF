@@ -120,6 +120,10 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let rotated = dir.join("rotated.pdf");
     std::fs::write(&rotated, mega_core::testing::rotated_pdf())?;
     println!("écrit : {}", rotated.display());
+    // Texte dessiné dans le désordre : la sélection doit suivre l'ordre de lecture (0.12.2).
+    let out_of_order = dir.join("out-of-order.pdf");
+    std::fs::write(&out_of_order, mega_core::testing::out_of_order_pdf())?;
+    println!("écrit : {}", out_of_order.display());
     let attachments = dir.join("attachments.pdf");
     std::fs::write(&attachments, mega_core::testing::attachments_pdf())?;
     println!("écrit : {}", attachments.display());

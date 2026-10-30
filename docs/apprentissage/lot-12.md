@@ -75,6 +75,16 @@ fabrique un type qui n'accepte que les 12 noms existants (`app/src/lib/logic/ico
   scénarios arrêtaient eux-mêmes l'application à la fin : d'où les nouvelles étapes
   `requestClose` / `expectClosed` et le contrôle « le processus s'est terminé seul ».
 
+- **Correctif 0.12.2 : la sélection de texte sautait.** PDFium donne les caractères dans
+  l'ordre où le fichier les **dessine** ; dans beaucoup de PDF réels, ce n'est pas l'ordre de
+  lecture. `crates/mega-core/src/reading_order.rs` recalcule l'ordre à partir des seuls
+  rectangles : tri par hauteur puis balayage pour former les lignes (`group_lines`), suites
+  dessinées d'affilée (`order_line`), puis **découpage récursif** en colonnes et en paragraphes
+  (`xy_cut`). Les seuils sont des multiples de la **hauteur médiane** des caractères, pour
+  marcher à toutes les tailles de texte. Côté interface, `charIndexAt` vise d'abord la ligne la
+  plus proche (`app/src/lib/logic/selection.ts`). Le scénario `selection` échoue sur la 0.12.1
+  et passe sur la 0.12.2.
+
 ## Exercices de lecture
 
 1. `xtask/src/brand.rs`, `runs` : pourquoi faut-il **recoller** deux suites séparées par un

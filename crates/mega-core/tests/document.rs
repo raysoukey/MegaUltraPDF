@@ -177,6 +177,91 @@ fn text_boxes_read_page_label() {
     assert!(boxes.iter().all(|b| b.rect.h > 0.0 && b.rect.w >= 0.0));
 }
 
+/// Texte attendu de `testing::out_of_order_pdf()`, dans l'ordre de lecture (correctif 0.12.2).
+const READING_ORDER: &str = "Le 3 mars 2026\n\n\
+Premiere ligne avec un mot GRAS au milieu\n\
+Deuxieme ligne du paragraphe\n\
+Troisieme ligne du paragraphe\n\n\
+Utilisateur : ALICE\n\
+Entreprise : B42\n\
+Ville : Quebec\n\
+Pays : Canada\n\
+Telephone : 555-0100\n\n\
+Gauche ligne un du texte\nGauche ligne deux du texte\nGauche ligne trois du texte\n\
+Gauche ligne quatre du texte\nGauche ligne cinq du texte\n\n\
+Droite ligne un du texte\nDroite ligne deux du texte\nDroite ligne trois du texte\n\
+Droite ligne quatre du texte\nDroite ligne cinq du texte";
+
+/// Correctif 0.12.2 : la couche texte suit l'ordre de lecture, pas l'ordre de dessin du fichier
+/// (la sélection, une plage d'index, ramassait sinon des morceaux de toute la page).
+#[test]
+fn text_boxes_follow_reading_order() {
+    let doc = Document::from_bytes(mega_core::testing::out_of_order_pdf(), None).unwrap();
+    let text: String = doc.text_boxes(0).unwrap().iter().map(|b| b.ch).collect();
+    assert!(text.starts_with("Le 3 mars 2026"), "{text}");
+    // PDFium supprime l'espace de tête de « au milieu » (elle suit l'espace finale de « mot ») :
+    // l'ordre compte ici ; la copie et `page_text` remettent l'espace d'après le blanc mesuré.
+    assert!(text.contains("un mot GRAS"), "{text}");
+    assert!(text.contains("au milieuDeuxieme"), "{text}");
+    assert!(text.contains("Utilisateur :ALICEEntreprise :B42"), "{text}");
+    assert!(text.contains("Telephone :555-0100Gauche"), "{text}");
+    assert!(text.contains("cinq du texteDroite ligne un"), "{text}");
+}
+
+#[test]
+fn page_text_follows_reading_order() {
+    let doc = Document::from_bytes(mega_core::testing::out_of_order_pdf(), None).unwrap();
+    assert_eq!(doc.page_text(0).unwrap(), READING_ORDER);
+}
+
+/// PDFium ajoute des sauts de ligne (`\r\n`) sans emprise : ils ne servent ni à la sélection
+/// ni à la copie (qui recalcule les lignes) et faussaient le choix du caractère sous la souris.
+#[test]
+fn text_boxes_drop_generated_line_breaks() {
+    let doc = Document::from_bytes(mega_core::testing::out_of_order_pdf(), None).unwrap();
+    let boxes = doc.text_boxes(0).unwrap();
+    assert!(!boxes.is_empty());
+    assert!(boxes.iter().all(|b| b.ch != '\r' && b.ch != '\n'));
+    assert!(boxes.iter().all(|b| b.rect.w > 0.0 && b.rect.h > 0.0));
+}
+
+/// Relecture (I5) : un bandeau vertical garde l'ordre de ses caractères au lieu d'être coupé
+/// en morceaux de lignes horizontales.
+#[test]
+fn rotated_text_keeps_its_drawing_order() {
+    let doc = Document::from_bytes(mega_core::testing::sidebar_pdf(), None).unwrap();
+    let text = doc.page_text(0).unwrap();
+    assert!(text.contains("Paragraphe horizontal"), "{text}");
+    assert!(text.contains("arXiv:2310.0001"), "{text}");
+    let boxes: String = doc.text_boxes(0).unwrap().iter().map(|b| b.ch).collect();
+    assert!(boxes.contains("arXiv:2310.0001"), "{boxes}");
+}
+
+/// Relecture (I4, M4, M5) : chaque caractère porte son numéro de ligne et de bloc dans l'ordre
+/// de lecture, pour que l'interface vise par bloc et copie comme l'export.
+#[test]
+fn text_boxes_carry_line_and_block_numbers() {
+    let doc = Document::from_bytes(mega_core::testing::out_of_order_pdf(), None).unwrap();
+    let boxes = doc.text_boxes(0).unwrap();
+    assert!(
+        boxes
+            .windows(2)
+            .all(|w| w[0].line <= w[1].line && w[0].block <= w[1].block)
+    );
+    let text: String = boxes.iter().map(|b| b.ch).collect();
+    let at = |needle: &str| {
+        text.find(needle)
+            .map(|k| text[..k].chars().count())
+            .unwrap()
+    };
+    // « Utilisateur : » et « ALICE » : même ligne ; la date est le premier bloc, seule.
+    assert_eq!(boxes[at("Utilisateur")].line, boxes[at("ALICE")].line);
+    assert_eq!(boxes[0].block, 0);
+    assert_eq!(boxes[at("Premiere")].block, 1);
+    let blocks = boxes.last().unwrap().block + 1;
+    assert_eq!(blocks, 5, "date, paragraphe, liste, deux colonnes");
+}
+
 #[test]
 fn text_boxes_empty_on_blank_page() {
     let doc = Document::from_bytes(mega_core::testing::blank_pdf(200.0, 200.0), None).unwrap();

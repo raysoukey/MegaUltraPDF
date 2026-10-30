@@ -40,6 +40,10 @@ export interface DocumentSummary {
 export interface TextBox {
   ch: string;
   rect: Rect;
+  /** Numéro de ligne dans l'ordre de lecture (miroir de `TextBox::line`). */
+  line: number;
+  /** Numéro de bloc (paragraphe, colonne…) dans l'ordre de lecture. */
+  block: number;
 }
 
 /** Une occurrence de recherche (miroir de `SearchHit`). */

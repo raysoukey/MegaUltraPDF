@@ -144,7 +144,10 @@ fn gen_hostile_fixtures(dir: &Path) -> anyhow::Result<()> {
         println!("écrit : {}", path.display());
     }
     let linearized = dir.join("linearise.pdf");
-    let simple = dir.parent().map(|d| d.join("simple.pdf")).unwrap_or_default();
+    let simple = dir
+        .parent()
+        .map(|d| d.join("simple.pdf"))
+        .unwrap_or_default();
     match std::process::Command::new(qpdf_exe())
         .arg("--linearize")
         .arg("--deterministic-id")

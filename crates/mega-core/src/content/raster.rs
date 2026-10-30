@@ -197,6 +197,26 @@ fn channels_of(doc: &LoDocument, space: &Object) -> Option<usize> {
     }
 }
 
+/// Décode le JPEG `data` d'une image que son dictionnaire annonce `width` × `height` ;
+/// `None` si l'en-tête du JPEG annonce d'autres dimensions ou si le décodage échoue.
+///
+/// Le décodeur lit d'abord l'en-tête et vérifie les limites **avant** d'allouer les pixels :
+/// un en-tête qui ment (60 000 × 60 000, soit 10 Go) est refusé sans rien allouer (audit du
+/// Lot 13, R7). Sans ces limites explicites, seule la limite par défaut d'`image` (512 Mo)
+/// protégeait.
+pub(crate) fn decode_jpeg(data: &[u8], width: u32, height: u32) -> Option<image::DynamicImage> {
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(data), image::ImageFormat::Jpeg);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(width);
+    limits.max_image_height = Some(height);
+    // Quatre octets par pixel au plus (CMJN), plus une marge pour les tampons du décodeur.
+    limits.max_alloc = Some(u64::from(width) * u64::from(height) * 4 + (1 << 20));
+    reader.limits(limits);
+    let decoded = reader.decode().ok()?;
+    (decoded.width() == width && decoded.height() == height).then_some(decoded)
+}
+
 /// Décode une image 8 bits en échantillons, ou `None` (format que nous ne savons pas
 /// réécrire fidèlement : l'appelant la retire alors entière).
 fn decode(doc: &LoDocument, stream: &Stream) -> Option<Raster> {
@@ -234,12 +254,7 @@ fn decode(doc: &LoDocument, stream: &Stream) -> Option<Raster> {
     let samples = match filters.as_slice() {
         [] => stream.content.clone(),
         [b"DCTDecode"] if channels != 4 => {
-            let decoded =
-                image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg)
-                    .ok()?;
-            if decoded.width() != width || decoded.height() != height {
-                return None;
-            }
+            let decoded = decode_jpeg(&stream.content, width, height)?;
             if channels == 1 {
                 decoded.to_luma8().into_raw()
             } else {
@@ -724,6 +739,30 @@ mod tests {
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect { x, y, w, h }
+    }
+
+    /// Un JPEG 8 × 8, et le même dont l'en-tête annonce `side` × `side` pixels.
+    fn jpeg(side: Option<u16>) -> Vec<u8> {
+        let mut out = Vec::new();
+        let pixels = image::RgbImage::from_pixel(8, 8, image::Rgb([10, 200, 10]));
+        image::codecs::jpeg::JpegEncoder::new(&mut out)
+            .encode_image(&pixels)
+            .unwrap();
+        if let Some(side) = side {
+            let sof = out.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+            let [hi, lo] = side.to_be_bytes();
+            out[sof + 5..sof + 9].copy_from_slice(&[hi, lo, hi, lo]);
+        }
+        out
+    }
+
+    /// R7 (audit du Lot 13) : un JPEG est refusé dès son en-tête s'il ne correspond pas aux
+    /// dimensions annoncées par le dictionnaire de l'image, **avant** toute allocation.
+    #[test]
+    fn a_jpeg_larger_than_announced_is_refused_before_decoding() {
+        assert!(decode_jpeg(&jpeg(None), 8, 8).is_some());
+        assert!(decode_jpeg(&jpeg(Some(12_000)), 8, 8).is_none());
+        assert!(decode_jpeg(&jpeg(Some(60_000)), 8, 8).is_none());
     }
 
     #[test]

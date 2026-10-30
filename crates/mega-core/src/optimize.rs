@@ -145,9 +145,7 @@ fn decode(stream: &Stream, c: &Candidate) -> Option<DynamicImage> {
     };
     let expected = c.width as usize * c.height as usize * channels;
     match c.filter {
-        Filter::Dct => {
-            image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg).ok()
-        }
+        Filter::Dct => crate::content::raster::decode_jpeg(&stream.content, c.width, c.height),
         Filter::None | Filter::Flate => {
             let raw = if c.filter == Filter::None {
                 stream.content.clone()

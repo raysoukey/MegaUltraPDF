@@ -181,13 +181,17 @@ fn deeply_nested_xobjects_do_not_overflow_the_stack() {
     );
 }
 
-/// R1 : la passe d'enregistrement ne décompresse pas un flux au-delà de la limite (256 Mio par
-/// flux) : devant la bombe, elle écrit les octets tels quels au lieu de les réécrire.
+/// R1 (et relecture de la PR A) : la passe d'enregistrement ne décompresse **aucun** flux.
+/// Elle vérifie sa réécriture sur les octets bruts des contenus : la bombe est nettoyée et
+/// réécrite comme un autre fichier (le nettoyage protège le caviardage), sans être gonflée.
 #[test]
-fn the_save_pass_does_not_inflate_a_decompression_bomb() {
+fn the_save_pass_cleans_a_decompression_bomb_without_inflating_it() {
     let bytes = corpus("bombe-flate.pdf");
     let out = mega_core::cleanup::before_save(&bytes, None).unwrap();
-    assert!(out == bytes, "la bombe a été décompressée puis réécrite");
+    assert!(out != bytes, "nettoyage abandonné devant la bombe");
+    assert!(out.len() < 2 * bytes.len(), "{} octets", out.len());
+    let reopened = mega_core::Document::from_bytes(out, None).unwrap();
+    assert_eq!(reopened.page_count(), 1);
 }
 
 /// R6 : un fichier de plus de 2 Gio (au-delà de ce que PDFium peut charger) est refusé

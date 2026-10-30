@@ -36,11 +36,7 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
     // Le nettoyage ne touche à aucun flux de contenu : on en garde l'empreinte pour vérifier
     // la relecture (un rechiffrement faux brouillerait le contenu sans changer les pages).
-    // Un contenu de page qui dépasse la limite de décompression (bombe) : le fichier est
-    // écrit tel que PDFium l'a produit, sans le décompresser (audit du Lot 13, R1).
-    let Some(contents_before) = page_contents(doc) else {
-        return Ok(bytes.to_vec());
-    };
+    let contents_before = page_contents(doc);
     for page_id in &pages {
         clean_page_annotations(doc, *page_id)?;
         identify_annotations(doc, *page_id)?;
@@ -57,19 +53,34 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages et les mêmes
     // contenus, on écrit les octets PDFium tels quels. Une seule relecture pour les deux
     // contrôles (audit du Lot 13, R6 : trois chargements par enregistrement auparavant).
-    let reread = reload_if_sane(pages_before, &out, password).and_then(|s| page_contents(&s.doc));
+    let reread = reload_if_sane(pages_before, &out, password).map(|s| page_contents(&s.doc));
     if reread.as_ref() != Some(&contents_before) {
         return Ok(bytes.to_vec());
     }
     Ok(out)
 }
 
-/// Contenu décodé de chaque page, dans l'ordre des pages ; `None` si une page dépasse la
-/// limite de décompression.
-fn page_contents(doc: &Document) -> Option<Vec<Vec<u8>>> {
+/// Octets **bruts** (encore compressés, déjà déchiffrés) des flux de contenu de chaque page,
+/// dans l'ordre des pages.
+///
+/// Le nettoyage ne recompresse ni ne réécrit aucun flux de contenu : leurs octets bruts
+/// doivent se retrouver à l'identique dans la réécriture. Les comparer sans les décompresser
+/// ne coûte que la taille du fichier, même devant une bombe de décompression répartie sur
+/// plusieurs pages, et laisse le nettoyage s'appliquer à ce fichier (relecture de la PR A du
+/// Lot 13 ; auparavant, le contenu décodé de chaque page était gardé deux fois en mémoire).
+fn page_contents(doc: &Document) -> Vec<Vec<u8>> {
     doc.get_pages()
         .into_values()
-        .map(|id| crate::crypt::page_content(doc, id).ok())
+        .map(|page| {
+            let mut raw = Vec::new();
+            for id in doc.get_page_contents(page) {
+                if let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) {
+                    raw.extend_from_slice(&stream.content);
+                }
+                raw.push(b'\n');
+            }
+            raw
+        })
         .collect()
 }
 

@@ -115,7 +115,13 @@ fn kill_tree(child: &mut std::process::Child) {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let _ = Command::new("taskkill")
+        // Par son chemin système, jamais par son seul nom (pas de programme homonyme pris
+        // dans le `PATH` ou à côté de l'application).
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let taskkill = PathBuf::from(system_root)
+            .join("System32")
+            .join("taskkill.exe");
+        let _ = Command::new(taskkill)
             .args(["/T", "/F", "/PID", &pid])
             .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
@@ -124,11 +130,18 @@ fn kill_tree(child: &mut std::process::Child) {
     }
     #[cfg(unix)]
     {
-        let _ = Command::new("kill")
-            .args(["-KILL", "--", &format!("-{pid}")])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        // Par son chemin système, jamais par son seul nom.
+        if let Some(kill) = ["/bin/kill", "/usr/bin/kill"]
+            .iter()
+            .map(Path::new)
+            .find(|p| p.is_file())
+        {
+            let _ = Command::new(kill)
+                .args(["-KILL", "--", &format!("-{pid}")])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
     }
     #[cfg(not(any(windows, unix)))]
     let _ = pid;

@@ -37,12 +37,7 @@ pub(crate) const MAX_DECOMPRESSED: usize = 256 * 1024 * 1024;
 /// est retrouvé parmi les objets (audit du Lot 13, R8). Sans cela, PDFium affichait le
 /// document mais nos passes `lopdf` n'y voyaient ni formulaire ni signature.
 pub(crate) fn load_limited(bytes: &[u8], password: Option<&str>) -> lopdf::Result<LoDocument> {
-    let options = LoadOptions {
-        password: password.map(str::to_string),
-        max_decompressed_size: Some(MAX_DECOMPRESSED),
-        ..LoadOptions::default()
-    };
-    let mut doc = LoDocument::load_mem_with_options(bytes, options)?;
+    let mut doc = load_exact(bytes, password)?;
     if doc.trailer.get(b"Root").is_err()
         && let Some(catalog) = find_catalog(&doc)
     {
@@ -51,21 +46,39 @@ pub(crate) fn load_limited(bytes: &[u8], password: Option<&str>) -> lopdf::Resul
     Ok(doc)
 }
 
-/// Le dernier objet `/Type /Catalog` du document (le plus récent, s'il y a eu des mises à jour
-/// incrémentales : les numéros d'objets croissent rarement à rebours).
+/// Comme [`load_limited`], **sans** réparer la remorque : pour les contrôles qui jugent une
+/// réécriture (`cleanup::rewrite_is_sane`). Une sortie sans `/Root` doit y être refusée, pas
+/// rattrapée en mémoire (relecture de la PR A du Lot 13).
+pub(crate) fn load_exact(bytes: &[u8], password: Option<&str>) -> lopdf::Result<LoDocument> {
+    let options = LoadOptions {
+        password: password.map(str::to_string),
+        max_decompressed_size: Some(MAX_DECOMPRESSED),
+        ..LoadOptions::default()
+    };
+    LoDocument::load_mem_with_options(bytes, options)
+}
+
+/// Le catalogue d'un fichier dont la remorque l'a perdu : parmi les objets `/Type /Catalog`,
+/// ceux dont l'arbre `/Pages` se résout en dictionnaire passent d'abord (un catalogue orphelin
+/// laissé par une fusion maladroite n'en a souvent pas), puis le plus récent (numéro d'objet
+/// le plus grand).
 fn find_catalog(doc: &LoDocument) -> Option<ObjectId> {
+    let has_pages = |dict: &lopdf::Dictionary| {
+        dict.get(b"Pages")
+            .ok()
+            .and_then(|p| doc.dereference(p).ok())
+            .is_some_and(|(_, p)| p.as_dict().is_ok())
+    };
     doc.objects
         .iter()
-        .filter(|(_, object)| {
-            object
-                .as_dict()
-                .ok()
-                .and_then(|d| d.get(b"Type").ok())
-                .and_then(|t| t.as_name().ok())
-                == Some(b"Catalog".as_slice())
+        .filter_map(|(id, object)| {
+            let dict = object.as_dict().ok()?;
+            let is_catalog = dict.get(b"Type").ok().and_then(|t| t.as_name().ok())
+                == Some(b"Catalog".as_slice());
+            is_catalog.then(|| (has_pages(dict), *id))
         })
-        .map(|(id, _)| *id)
         .max()
+        .map(|(_, id)| id)
 }
 
 /// Contenu décodé de la page `page_id` (flux concaténés), plafonné à [`MAX_DECOMPRESSED`] :
@@ -149,7 +162,16 @@ impl LopdfSession {
     /// Refuse un document resté chiffré : mot de passe faux, ou chiffrement que lopdf ne sait
     /// pas lire (filtre inconnu).
     pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> CoreResult<Self> {
-        let mut doc = load_limited(bytes, password).map_err(|e| {
+        Self::from_loaded(load_limited(bytes, password))
+    }
+
+    /// Comme [`LopdfSession::load`], sans réparer la remorque (voir [`load_exact`]).
+    pub(crate) fn load_exact(bytes: &[u8], password: Option<&str>) -> CoreResult<Self> {
+        Self::from_loaded(load_exact(bytes, password))
+    }
+
+    fn from_loaded(loaded: lopdf::Result<LoDocument>) -> CoreResult<Self> {
+        let mut doc = loaded.map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;
         if doc.is_encrypted() {

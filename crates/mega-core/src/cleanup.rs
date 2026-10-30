@@ -184,7 +184,7 @@ fn reload_if_sane(
     out: &[u8],
     password: Option<&str>,
 ) -> Option<crate::crypt::LopdfSession> {
-    let reloaded = crate::crypt::LopdfSession::load(out, password).ok()?;
+    let reloaded = crate::crypt::LopdfSession::load_exact(out, password).ok()?;
     (reloaded.doc.get_pages().len() == pages_before && reloaded.doc.trailer.get(b"Root").is_ok())
         .then_some(reloaded)
 }
@@ -691,6 +691,12 @@ mod tests {
             "fichier tronqué"
         );
         assert!(!rewrite_is_sane(0, b"pas un pdf", None));
+        // Relecture de la PR A du Lot 13 : une réécriture sans `/Root` n'est pas saine, même
+        // si la lecture réparatrice de `crypt::load_limited` saurait retrouver le catalogue.
+        let mut rootless = bytes.clone();
+        let k = rootless.windows(5).rposition(|w| w == b"/Root").unwrap();
+        rootless[k..k + 5].copy_from_slice(b"/Roox");
+        assert!(!rewrite_is_sane(3, &rootless, None));
     }
 }
 

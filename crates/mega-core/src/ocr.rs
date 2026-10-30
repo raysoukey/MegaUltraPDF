@@ -43,7 +43,18 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(15);
 /// standard et sa sortie d'erreur dans deux threads (`std::thread::spawn`), pendant que le
 /// thread courant surveille la fin du processus avec `try_wait` (qui ne bloque pas). Sans
 /// délai, `Command::output()` attendrait pour toujours un programme bloqué.
+///
+/// Au délai, c'est **tout l'arbre** de processus qui est arrêté (voir [`kill_tree`]), et l'on
+/// n'attend plus les threads de lecture : si un petit-enfant garde encore les tubes ouverts,
+/// ils finiront seuls, sans bloquer l'appelant (relecture de la PR A du Lot 13).
 fn output_within(cmd: &mut Command, timeout: Duration) -> std::io::Result<Option<Output>> {
+    // Unix : le programme devient chef de son propre groupe de processus, pour pouvoir tuer
+    // d'un coup ses descendants (un script qui lance le vrai Tesseract, par exemple).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -77,10 +88,10 @@ fn output_within(cmd: &mut Command, timeout: Duration) -> std::io::Result<Option
             break Some(status);
         }
         if Instant::now() >= deadline {
-            // Le processus a pu finir entre-temps : l'échec de `kill` est sans conséquence.
-            let _ = child.kill();
-            let _ = child.wait();
-            break None;
+            kill_tree(&mut child);
+            // Les threads de lecture ne sont pas attendus (un petit-enfant survivant pourrait
+            // garder les tubes ouverts) : ils se terminent quand le dernier tube se ferme.
+            return Ok(None);
         }
         std::thread::sleep(Duration::from_millis(20));
     };
@@ -91,6 +102,38 @@ fn output_within(cmd: &mut Command, timeout: Duration) -> std::io::Result<Option
         stdout,
         stderr,
     }))
+}
+
+/// Arrête `child` **et ses descendants**. Un shim (Scoop, Chocolatey) ou un script `.bat`
+/// lance le vrai Tesseract comme petit-enfant : tuer le seul enfant le laisserait tourner.
+/// Sous Windows, `taskkill /T` (arbre) par liste d'arguments, jamais par un shell ; sous Unix,
+/// `kill` vise le groupe de processus créé au lancement. Les échecs sont sans conséquence (le
+/// processus a pu finir entre-temps) : on termine par `kill` et `wait` sur l'enfant direct.
+fn kill_tree(child: &mut std::process::Child) {
+    let pid = child.id().to_string();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(any(windows, unix)))]
+    let _ = pid;
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Variable d'environnement qui désigne l'exécutable `tesseract`.
@@ -530,6 +573,30 @@ mod tests {
         let out = output_within(&mut sleeper(30), std::time::Duration::from_millis(500)).unwrap();
         assert!(out.is_none(), "délai dépassé : pas de sortie");
         assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    /// Relecture de la PR A : Tesseract lancé par un **intermédiaire** (shim de Scoop ou de
+    /// Chocolatey, script `.bat`) : le vrai programme est un petit-enfant qui garde les tubes
+    /// ouverts. Le délai doit tenir quand même.
+    #[test]
+    fn a_hung_grandchild_does_not_outlive_the_deadline() {
+        let mut wrapper = if cfg!(windows) {
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", "ping -n 30 127.0.0.1"]);
+            cmd
+        } else {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "sleep 30; true"]);
+            cmd
+        };
+        let start = std::time::Instant::now();
+        let out = output_within(&mut wrapper, std::time::Duration::from_millis(500)).unwrap();
+        assert!(out.is_none());
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "attendu {:?}",
+            start.elapsed()
+        );
     }
 
     /// Une sortie plus grande que le tampon d'un tube (64 Ko) ne bloque pas le processus.

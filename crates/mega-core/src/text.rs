@@ -178,12 +178,19 @@ fn page_blocks(drawn: &[DrawnChar]) -> Vec<crate::reading_order::Block> {
         w: 0.0,
         h: 0.0,
     };
-    let horizontal: Vec<Rect> = drawn
+    let chars: Vec<char> = drawn.iter().map(|d| d.ch).collect();
+    let mut horizontal: Vec<Rect> = drawn
         .iter()
         .map(|d| if d.horizontal { d.rect } else { hidden })
         .collect();
-    let chars: Vec<char> = drawn.iter().map(|d| d.ch).collect();
+    // Colonnes d'écriture verticale (CJK) : retirées du découpage en lignes horizontales, lues
+    // à part dans leur ordre de dessin (audit du Lot 13, C4).
+    let vertical = crate::reading_order::vertical_runs(&horizontal, &chars);
+    for &i in vertical.iter().flatten() {
+        horizontal[i] = hidden;
+    }
     let mut blocks = crate::reading_order::layout_chars(&horizontal, &chars);
+    blocks.extend(vertical.into_iter().map(|run| vec![run]));
     let mut run: Vec<usize> = Vec::new();
     let mut run_angle = 0.0;
     for (i, d) in drawn.iter().enumerate() {
@@ -203,4 +210,49 @@ fn page_blocks(drawn: &[DrawnChar]) -> Vec<crate::reading_order::Block> {
         blocks.push(vec![run]);
     }
     blocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drawn(ch: char, x: f32, y: f32) -> DrawnChar {
+        DrawnChar {
+            ch,
+            rect: Rect {
+                x,
+                y,
+                w: 12.0,
+                h: 12.0,
+            },
+            horizontal: true,
+            angle: 0.0,
+        }
+    }
+
+    /// C4 (audit du Lot 13) : une colonne verticale japonaise reste **un** bloc d'une ligne, lu
+    /// de haut en bas, au lieu d'une ligne par caractère ; le texte horizontal ne change pas.
+    #[test]
+    fn a_vertical_cjk_column_is_one_block_read_top_down() {
+        let mut page: Vec<DrawnChar> = "縦書きです"
+            .chars()
+            .enumerate()
+            .map(|(k, c)| drawn(c, 500.0, 700.0 - 13.0 * k as f32))
+            .collect();
+        page.extend(
+            "Titre"
+                .chars()
+                .enumerate()
+                .map(|(k, c)| drawn(c, 100.0 + 7.0 * k as f32, 760.0)),
+        );
+        let blocks = page_blocks(&page);
+        let lines: Vec<String> = blocks
+            .iter()
+            .flatten()
+            .map(|line| line.iter().map(|&i| page[i].ch).collect())
+            .collect();
+        assert!(lines.contains(&"縦書きです".to_string()), "{lines:?}");
+        assert!(lines.contains(&"Titre".to_string()), "{lines:?}");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+    }
 }

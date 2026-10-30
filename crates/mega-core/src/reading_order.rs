@@ -78,6 +78,53 @@ pub fn layout_chars(rects: &[Rect], chars: &[char]) -> Vec<Block> {
     blocks
 }
 
+/// Vrai pour un idéogramme ou un caractère des écritures chinoise, japonaise ou coréenne
+/// (dont la ponctuation et les formes pleine chasse), les seules qui s'écrivent aussi en
+/// colonnes verticales.
+fn is_cjk(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x3000..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FFFF
+    )
+}
+
+/// Les colonnes d'**écriture verticale** de la page (audit du Lot 13, C4) : suites d'au moins
+/// deux caractères CJK dessinés d'affilée, chacun **sous** le précédent et à peu près à la
+/// même abscisse. Découpées en lignes horizontales, elles donneraient une ligne d'un caractère
+/// par rangée ; on les lit à part, dans leur ordre de dessin (de haut en bas, colonne par
+/// colonne), comme le texte tourné. Des lettres latines empilées (une colonne de chiffres d'un
+/// tableau) ne sont pas concernées.
+pub fn vertical_runs(rects: &[Rect], chars: &[char]) -> Vec<Vec<usize>> {
+    let below = |a: &Rect, b: &Rect| {
+        let size = a.w.max(b.w).max(a.h).max(b.h);
+        let same_column = ((a.x + a.w / 2.0) - (b.x + b.w / 2.0)).abs() < 0.5 * size;
+        let gap = a.y - (b.y + b.h);
+        same_column && gap > -0.3 * size && gap < 0.5 * size
+    };
+    let mut runs = Vec::new();
+    let mut run: Vec<usize> = Vec::new();
+    for i in 0..rects.len().min(chars.len()) {
+        let fits = is_cjk(chars[i])
+            && usable(&rects[i])
+            && run.last().is_some_and(|&p| below(&rects[p], &rects[i]));
+        if fits {
+            run.push(i);
+            continue;
+        }
+        if run.len() >= 2 {
+            runs.push(std::mem::take(&mut run));
+        }
+        run.clear();
+        if is_cjk(chars[i]) && usable(&rects[i]) {
+            run.push(i);
+        }
+    }
+    if run.len() >= 2 {
+        runs.push(run);
+    }
+    runs
+}
+
 /// Sens d'un caractère pour la lecture (version simplifiée de l'algorithme bidirectionnel
 /// d'Unicode, UAX #9).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -491,6 +538,27 @@ mod tests {
         assert_eq!(read_visual("ملاع PDF Mega ابحرم"), "مرحبا PDF Mega عالم");
         // Une ligne latine ne change pas, même avec un mot hébreu court.
         assert_eq!(read_visual("Shalom םולש world"), "Shalom םולש world");
+    }
+
+    /// C4 (audit du Lot 13) : une colonne d'écriture verticale (caractères CJK empilés, dessinés
+    /// de haut en bas) forme une suite ; une ligne CJK horizontale n'en forme pas.
+    #[test]
+    fn stacked_cjk_characters_form_a_vertical_run() {
+        let square = |x: f32, y: f32| Rect {
+            x,
+            y,
+            w: 12.0,
+            h: 12.0,
+        };
+        let chars: Vec<char> = "縦書きです横書きです".chars().collect();
+        let mut rects: Vec<Rect> = (0..5)
+            .map(|k| square(500.0, 700.0 - 13.0 * k as f32))
+            .collect();
+        rects.extend((0..5).map(|k| square(100.0 + 12.0 * k as f32, 500.0)));
+        assert_eq!(vertical_runs(&rects, &chars), vec![vec![0, 1, 2, 3, 4]]);
+        // Des lettres latines empilées (une colonne de chiffres d'un tableau) ne comptent pas.
+        let digits: Vec<char> = "12345".chars().collect();
+        assert!(vertical_runs(&rects[..5], &digits).is_empty());
     }
 
     /// Propriété (audit du Lot 13, R9) : pour des rectangles **quelconques** (positions et

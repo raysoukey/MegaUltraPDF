@@ -93,6 +93,14 @@ pub enum CoreError {
     #[error("Le service PDF est arrêté.")]
     ServiceStopped,
 
+    /// L'opération a échoué de façon inattendue (panique interne) : le document concerné a été
+    /// fermé par précaution, les autres restent ouverts (audit du Lot 13, R4).
+    #[error(
+        "L'opération a échoué de façon inattendue ; le document concerné a été fermé par \
+         précaution. Rouvrez-le pour continuer."
+    )]
+    Aborted,
+
     /// Une spécification de pages (« 1-3,5 ») est mal formée ou hors des pages du document.
     #[error("Plage de pages invalide : {0}")]
     InvalidPageSpec(String),

@@ -64,7 +64,8 @@ impl From<CoreError> for AppError {
             CoreError::Cancelled => ErrorKind::Internal,
             CoreError::LibraryNotFound { .. }
             | CoreError::Pdfium(_)
-            | CoreError::ServiceStopped => ErrorKind::Internal,
+            | CoreError::ServiceStopped
+            | CoreError::Aborted => ErrorKind::Internal,
         };
         // Message complet, causes incluses (ex. « Erreur d'accès au fichier : Accès refusé »).
         AppError::new(kind, mega_core::error::display_chain(&e))

@@ -39,16 +39,16 @@ ailleurs), **M** moyenne (fonction fausse ou inutilisable sur une classe de fich
 
 | # | G | Risque | Preuve (0.12.2) | Correction | Statut |
 |---|---|---|---|---|---|
-| C1 | É | Aucun contrôle que nos sorties s'ouvrent ailleurs | ni qpdf, ni pdfinfo, ni mutool dans les tests ou la CI | `qpdf --check` sur la sortie de chaque édition, obligatoire en CI | PR B |
-| C2 | É | Signature d'un fichier à xref hybride ou à révisions multiples : mise à jour incrémentale calculée sur la vue de lopdf | `digital_signature/pdf.rs:894-913` | Vue lopdf comparée à PDFium, réécriture ou refus ; fixtures dédiées | PR B |
-| C3 | M | Texte de droite à gauche (hébreu, arabe) copié à l'envers | `reading_order.rs:142-162` | Sens de lecture par ligne | PR B |
-| C4 | M | Écriture verticale (CJK) découpée en lignes d'un caractère | `text.rs:174-204` (seul le texte tourné est traité) | Suites verticales gardées dans l'ordre de dessin | PR B |
-| C5 | M | La recherche suit l'ordre de PDFium, la sélection l'ordre de lecture | `text.rs:150-154` | Recherche dans le texte en ordre de lecture | PR B |
-| C6 | M | Déclaration PDF/A ni signalée ni protégée après modification | `optimize.rs:291` seulement | Détection, test de conservation, avertissement | PR B |
-| C7 | F | Caractères sans Unicode (Type3, CID sans `/ToUnicode`) écartés : trous dans la sélection | `text.rs:114` | Gardés en `U+FFFD` | PR B |
-| C8 | F | RC4-40 et AES-256 R5 jamais testés | `tests/encrypted.rs` | Fixtures qpdf | PR B |
-| C9 | F | Fichier chiffré par certificat (`/Adobe.PubSec`) : message de mot de passe trompeur | — | Erreur typée « chiffrement non pris en charge » | PR B |
-| C10 | F | Mots de passe limités à U+00FF | `security.rs:8-10` | SASLprep + UTF-8 (R6) | PR B |
+| C1 | É | Aucun contrôle que nos sorties s'ouvrent ailleurs | ni qpdf, ni pdfinfo, ni mutool dans les tests ou la CI | `qpdf --check` sur la sortie de chaque édition, obligatoire en CI | ✅ corrigé (PR B) |
+| C2 | É | Signature d'un fichier à xref hybride ou à révisions multiples : mise à jour incrémentale calculée sur la vue de lopdf | `digital_signature/pdf.rs:894-913` | Vue lopdf comparée à PDFium, réécriture ou refus ; fixtures dédiées | ✅ corrigé (PR B) : 2 défauts trouvés |
+| C3 | M | Texte de droite à gauche (hébreu, arabe) copié à l'envers | `reading_order.rs:142-162` | Sens de lecture par ligne | ✅ corrigé (PR B) |
+| C4 | M | Écriture verticale (CJK) découpée en lignes d'un caractère | `text.rs:174-204` (seul le texte tourné est traité) | Suites verticales gardées dans l'ordre de dessin | ✅ corrigé (PR B) |
+| C5 | M | La recherche suit l'ordre de PDFium, la sélection l'ordre de lecture | `text.rs:150-154` | Recherche dans le texte en ordre de lecture | ✅ corrigé (PR B) |
+| C6 | M | Déclaration PDF/A ni signalée ni protégée après modification | `optimize.rs:291` seulement | Détection, test de conservation, avertissement | ✅ corrigé (PR B) |
+| C7 | F | Caractères sans Unicode (Type3, CID sans `/ToUnicode`) écartés : trous dans la sélection | `text.rs:114` | Gardés en `U+FFFD` | ⚠️ réévalué : glyphes gardés, texte faux (limite, ADR-0018) |
+| C8 | F | RC4-40 et AES-256 R5 jamais testés | `tests/encrypted.rs` | Fixtures qpdf | ✅ testé (PR B) |
+| C9 | F | Fichier chiffré par certificat (`/Adobe.PubSec`) : message de mot de passe trompeur | — | Erreur typée « chiffrement non pris en charge » | ✅ corrigé (PR B) |
+| C10 | F | Mots de passe limités à U+00FF | `security.rs:8-10` | SASLprep + UTF-8 (R6) | ✅ corrigé (PR B) |
 
 ## Plateforme et interface
 
@@ -73,9 +73,22 @@ ailleurs), **M** moyenne (fonction fausse ou inutilisable sur une classe de fich
 - Un cas trouvé par sonde : remorque sans `/Root` d'un fichier signé, signature absente de
   la liste (R8, corrigé).
 
+## Mesures de la PR B
+
+- `tests/conformance.rs` : les 29 variantes d'édition, la couche OCR, la signature et les
+  fichiers abîmés réécrits passent `qpdf --check` sans avertissement. Deux défauts réels
+  trouvés et corrigés en signant (xref décalée : aucune page vue par lopdf ; préfixe
+  parasite : positions fausses dans la mise à jour incrémentale).
+- `tests/encryption_compat.rs` : RC4-40, AES-128, AES-256 R5, R6 Unicode ; certificat refusé
+  clairement ; mot de passe Unicode accepté à la protection.
+- C7 réévalué : PDFium ne retire pas les glyphes sans Unicode, il prend leur code comme
+  caractère (texte faux à la copie, sélection continue).
+
 ## Limites assumées
 
 - Sous Windows, les ACL explicites et les flux de données alternatifs d'un fichier remplacé
   sont perdus au renommage atomique ; les garder exigerait `ReplaceFileW`, donc du code
   `unsafe`, interdit dans ce projet (voir ADR-0007).
 - Un plantage **natif** de PDFium ferme le processus : il n'y a pas d'isolation par processus.
+- Glyphes d'une police CID sans `/ToUnicode` : texte faux à la copie (ADR-0018).
+- Colonnes d'une page de droite à gauche lues de gauche à droite (ADR-0018).

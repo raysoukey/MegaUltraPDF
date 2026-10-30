@@ -172,6 +172,13 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   Corpus `fixtures/robustesse/` (`gen-fixtures`, qpdf via `MEGA_QPDF` pour le linéarisé),
   `cargo xtask fuzz`. Pas de `fetch` dans l'interface (test `no-network`) : un détail venu du
   protocole `mega://` passe par une commande (`render_failure`).
+- Compatibilité (Lot 13, ADR-0018) : `tests/conformance.rs` passe chaque sortie à `qpdf --check`
+  (commandes en JSON comme l'interface ; CI : `MEGA_REQUIRE_QPDF=1`, local : `MEGA_QPDF`) ; toute
+  nouvelle variante d'`EditCommand` y entre. Signer : réécrire d'abord si lopdf ne voit pas le
+  fichier comme PDFium (pages, `/Root`, préfixe avant `%PDF-`). Mot de passe : invariant par
+  SASLprep (PDFium ne le normalise pas). La recherche passe par `text_boxes` (ordre de lecture),
+  jamais par la recherche de PDFium. `reading_order::layout_chars` (droite à gauche) et
+  `vertical_runs` (CJK vertical). `DocumentProperties::pdfa` : déclaration, pas vérification.
 - Fermeture (correctif 0.12.1) : avec un `onCloseRequested` dans l'interface, Tauri ne ferme plus la
   fenêtre lui-même, l'API JS appelle `window.destroy()` : la capacité **`core:window:allow-destroy`**
   est obligatoire (test `window-close.test.ts`), sinon la fenêtre ne se ferme jamais. Les scénarios

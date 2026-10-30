@@ -185,7 +185,7 @@ fn fuzz(args: &[String]) -> anyhow::Result<()> {
         let original = &originals[(s % originals.len() as u64) as usize];
         let bytes = mega_core::testing::fuzz::mutate(original, s);
         opened += u64::from(mega_core::testing::fuzz::exercise(bytes));
-        if (s - seed + 1) % 1000 == 0 {
+        if (s - seed + 1).is_multiple_of(1000) {
             println!("{} cas…", s - seed + 1);
         }
     }

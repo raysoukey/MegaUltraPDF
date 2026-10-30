@@ -419,3 +419,22 @@ fn search_follows_reading_order() {
     assert!(find("alice", true).is_empty(), "avec casse");
     assert_eq!(find("ligne", false).len(), 13);
 }
+
+/// C7 (audit du Lot 13) : des glyphes sans équivalent Unicode (police CID sans `/ToUnicode`)
+/// **gardent leur place** dans la couche de texte : la sélection ne saute pas par-dessus.
+/// L'audit craignait qu'ils soient écartés ; en fait PDFium prend leur code comme caractère
+/// (ici « ģіމ »). Les remplacer par `U+FFFD` demanderait `FPDFText_HasUnicodeMapError`, que
+/// pdfium-render 0.9.4 n'expose pas (limite documentée dans l'ADR-0018).
+#[test]
+fn glyphs_without_unicode_keep_their_place() {
+    let doc =
+        Document::from_bytes(mega_core::testing::hostile::cid_without_unicode_pdf(), None).unwrap();
+    let boxes = doc.text_boxes(0).unwrap();
+    let text: String = boxes.iter().map(|b| b.ch).collect();
+    assert!(text.starts_with("Visible"), "{text:?}");
+    assert_eq!(boxes.len(), "Visible".len() + 3, "{text:?}");
+    assert!(
+        boxes[7..].iter().all(|b| b.line != boxes[0].line),
+        "{text:?}"
+    );
+}

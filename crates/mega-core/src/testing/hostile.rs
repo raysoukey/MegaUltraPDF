@@ -324,6 +324,38 @@ pub fn pubsec_pdf() -> Vec<u8> {
     .0
 }
 
+/// Une page dont le texte « Visible » (Helvetica) est suivi de trois glyphes d'une police
+/// **CID sans `/ToUnicode`** (Identity-H, codes 0x0123, 0x0456, 0x0789) : aucune table ne dit
+/// quels caractères ils représentent. Produit par des pilotes d'impression et d'anciens
+/// logiciels de PAO.
+pub fn cid_without_unicode_pdf() -> Vec<u8> {
+    let mut objects = text_page_objects("Visible", "0 0 595 842");
+    objects[2] = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+                   /Resources << /Font << /F1 5 0 R /C1 6 0 R >> >> /Contents 4 0 R >>"
+        .to_vec();
+    objects[3] = stream(
+        b"",
+        b"BT /F1 24 Tf 72 700 Td (Visible) Tj ET BT /C1 24 Tf 72 650 Td <012304560789> Tj ET",
+    );
+    objects.push(
+        b"<< /Type /Font /Subtype /Type0 /BaseFont /Inconnue /Encoding /Identity-H \
+          /DescendantFonts [7 0 R] >>"
+            .to_vec(),
+    );
+    objects.push(
+        b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Inconnue \
+          /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> \
+          /FontDescriptor 8 0 R /DW 600 /CIDToGIDMap /Identity >>"
+            .to_vec(),
+    );
+    objects.push(
+        b"<< /Type /FontDescriptor /FontName /Inconnue /Flags 4 /FontBBox [0 -200 1000 900] \
+          /ItalicAngle 0 /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 >>"
+            .to_vec(),
+    );
+    assemble("%PDF-1.7", &objects, 0, "").0
+}
+
 /// Tout le corpus généré ici, sous les noms de fichier de `fixtures/robustesse/`. Le fichier
 /// linéarisé est produit à part par qpdf (`cargo xtask gen-fixtures`).
 pub fn corpus() -> Vec<(&'static str, Vec<u8>)> {

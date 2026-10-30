@@ -386,6 +386,39 @@ mod tests {
     const W: f32 = 6.0;
     const H: f32 = 12.0;
 
+    /// Propriété (audit du Lot 13, R9) : pour des rectangles **quelconques** (positions et
+    /// tailles aléatoires, valeurs nulles, négatives, infinies ou NaN mêlées), l'ordre de
+    /// lecture contient chaque caractère utilisable exactement une fois, sans paniquer.
+    #[test]
+    fn every_usable_box_appears_exactly_once_whatever_the_input() {
+        use crate::testing::fuzz::XorShift;
+        for seed in 0..300u64 {
+            let mut rng = XorShift::new(seed);
+            let count = rng.below(400);
+            let value = |rng: &mut XorShift| -> f32 {
+                match rng.below(20) {
+                    0 => f32::NAN,
+                    1 => f32::INFINITY,
+                    2 => -3.0,
+                    3 => 0.0,
+                    _ => (rng.below(60_000) as f32) / 100.0,
+                }
+            };
+            let rects: Vec<Rect> = (0..count)
+                .map(|_| Rect {
+                    x: value(&mut rng) * 2.0,
+                    y: value(&mut rng) * 2.0,
+                    w: value(&mut rng) / 20.0,
+                    h: value(&mut rng) / 20.0,
+                })
+                .collect();
+            let mut seen: Vec<usize> = layout(&rects).into_iter().flatten().flatten().collect();
+            seen.sort_unstable();
+            let expected: Vec<usize> = (0..count).filter(|&i| usable(&rects[i])).collect();
+            assert_eq!(seen, expected, "graine {seed}");
+        }
+    }
+
     /// Une « page » synthétique : des mots posés (texte, x, y du bas), dans l'ordre de dessin.
     /// Rend les caractères et leurs rectangles, un caractère par lettre (espaces compris).
     fn page(words: &[(&str, f32, f32)]) -> (Vec<char>, Vec<Rect>) {

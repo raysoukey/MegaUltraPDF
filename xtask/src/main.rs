@@ -25,6 +25,7 @@ Commandes :
   stage-pdfium [--target <triple>]   Copie PDFium et sa licence dans app/src-tauri/resources/pdfium/
   licenses                           Inventaire des licences tierces (licenses.json, THIRD_PARTY_LICENSES.md)
   brand                              Icônes d'actions, logo et bannière à partir de assets/brand/
+  fuzz [--iterations N] [--seed S]   Fichiers abîmés au hasard (graines S..S+N) : aucune panique
 ";
 
 fn main() -> anyhow::Result<()> {
@@ -37,6 +38,7 @@ fn main() -> anyhow::Result<()> {
         Some("stage-pdfium") => stage_pdfium(&args[1..]),
         Some("licenses") => licenses::generate(&workspace_root()),
         Some("brand") => brand::generate(&workspace_root()),
+        Some("fuzz") => fuzz(&args[1..]),
         Some(other) => bail!("commande inconnue : {other}\n\n{USAGE}"),
         None => {
             print!("{USAGE}");
@@ -132,6 +134,67 @@ fn gen_fixtures() -> anyhow::Result<()> {
     std::fs::write(&mosaic, mega_core::testing::image_mosaic_pdf())?;
     println!("écrit : {}", mosaic.display());
     gen_hostile_fixtures(&dir.join("robustesse"))
+}
+
+/// Campagne de fuzzing (Lot 13) : `iterations` variantes abîmées des fixtures, graines
+/// `seed..seed + iterations`. La graine du cas en cours est écrite dans
+/// `target/fuzz-graine.txt` **avant** son lancement : si le processus s'arrête net (plantage
+/// natif de PDFium), on sait quel cas rejouer (`--seed G --iterations 1`).
+fn fuzz(args: &[String]) -> anyhow::Result<()> {
+    let mut iterations: u64 = 1000;
+    let mut seed: u64 = 0;
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        let value = rest.next().context("valeur manquante après l'option")?;
+        match flag.as_str() {
+            "--iterations" => iterations = value.parse()?,
+            "--seed" => seed = value.parse()?,
+            other => bail!("option inconnue pour fuzz : {other}\n\n{USAGE}"),
+        }
+    }
+    let root = workspace_root();
+    // Les fichiers lents par construction (bombe, 5 000 formulaires) sont écartés.
+    let mut originals = Vec::new();
+    for dir in [
+        root.join("fixtures"),
+        root.join("fixtures").join("robustesse"),
+    ] {
+        let mut names: Vec<PathBuf> = std::fs::read_dir(&dir)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "pdf"))
+            .filter(|p| {
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+                !matches!(
+                    name.as_deref(),
+                    Some("bombe-flate.pdf" | "xobjects-profonds.pdf")
+                )
+            })
+            .collect();
+        names.sort();
+        for path in names {
+            originals.push(std::fs::read(&path)?);
+        }
+    }
+    anyhow::ensure!(!originals.is_empty(), "aucune fixture PDF trouvée");
+    let marker = root.join("target").join("fuzz-graine.txt");
+    std::fs::create_dir_all(root.join("target"))?;
+    let start = std::time::Instant::now();
+    let mut opened = 0u64;
+    for s in seed..seed.saturating_add(iterations) {
+        std::fs::write(&marker, s.to_string())?;
+        let original = &originals[(s % originals.len() as u64) as usize];
+        let bytes = mega_core::testing::fuzz::mutate(original, s);
+        opened += u64::from(mega_core::testing::fuzz::exercise(bytes));
+        if (s - seed + 1) % 1000 == 0 {
+            println!("{} cas…", s - seed + 1);
+        }
+    }
+    println!(
+        "{iterations} cas (graines {seed}..{}), {opened} fichiers ouverts, aucune panique, {:.0} s",
+        seed.saturating_add(iterations),
+        start.elapsed().as_secs_f64()
+    );
+    Ok(())
 }
 
 /// Écrit le corpus de PDF malformés ou hostiles (Lot 13) dans `fixtures/robustesse/`, et, si

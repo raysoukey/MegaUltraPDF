@@ -17,9 +17,45 @@
 //! dans [`LopdfSession::finish`]. Un seul propriétaire à la fois, jamais de copie oubliée.
 
 use lopdf::encryption::EncryptionState;
-use lopdf::{Document as LoDocument, LoadOptions};
+use lopdf::{Document as LoDocument, LoadOptions, ObjectId, Stream};
 
 use crate::error::{CoreError, CoreResult};
+
+/// Taille décompressée maximale d'un flux lu par `lopdf` (256 Mio), et du contenu complet
+/// d'une page (audit du Lot 13, R1).
+///
+/// Un flux compressé peut tenir en quelques centaines de Ko et se décompresser en
+/// gigaoctets (« bombe de décompression ») : sans limite, la simple passe d'enregistrement
+/// épuiserait la mémoire. Aucun document réel n'approche ce plafond pour un seul flux.
+pub(crate) const MAX_DECOMPRESSED: usize = 256 * 1024 * 1024;
+
+/// Charge `bytes` avec `lopdf` (déchiffré avec `password` s'il est donné), sans qu'aucun flux
+/// d'objets ou de références ne se décompresse au-delà de [`MAX_DECOMPRESSED`]. **Toute**
+/// lecture `lopdf` du crate passe par ici, jamais par `Document::load_mem` directement.
+pub(crate) fn load_limited(bytes: &[u8], password: Option<&str>) -> lopdf::Result<LoDocument> {
+    let options = LoadOptions {
+        password: password.map(str::to_string),
+        max_decompressed_size: Some(MAX_DECOMPRESSED),
+        ..LoadOptions::default()
+    };
+    LoDocument::load_mem_with_options(bytes, options)
+}
+
+/// Contenu décodé de la page `page_id` (flux concaténés), plafonné à [`MAX_DECOMPRESSED`] :
+/// remplace `get_page_content`, qui décompresse sans limite.
+pub(crate) fn page_content(doc: &LoDocument, page_id: ObjectId) -> lopdf::Result<Vec<u8>> {
+    doc.get_page_content_with_limit(page_id, MAX_DECOMPRESSED)
+}
+
+/// Octets décodés d'un flux, ou ses octets bruts s'il n'est pas compressé (ou si son filtre
+/// est inconnu) ; `None` s'il dépasserait [`MAX_DECOMPRESSED`] une fois décompressé.
+pub(crate) fn stream_bytes(stream: &Stream) -> Option<Vec<u8>> {
+    match stream.decompressed_content_with_limit(MAX_DECOMPRESSED) {
+        Ok(data) => Some(data),
+        Err(lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded { .. })) => None,
+        Err(_) => Some(stream.content.clone()),
+    }
+}
 
 /// Refuse un chiffrement que lopdf ne rechiffrerait pas à l'identique (relecture du Lot 10) :
 /// un filtre `/StmF` ou `/StrF` qui n'est pas une entrée de `/CF` (le nom réservé `Identity`,
@@ -86,11 +122,7 @@ impl LopdfSession {
     /// Refuse un document resté chiffré : mot de passe faux, ou chiffrement que lopdf ne sait
     /// pas lire (filtre inconnu).
     pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> CoreResult<Self> {
-        let options = match password {
-            Some(p) => LoadOptions::with_password(p),
-            None => LoadOptions::default(),
-        };
-        let mut doc = LoDocument::load_mem_with_options(bytes, options).map_err(|e| {
+        let mut doc = load_limited(bytes, password).map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;
         if doc.is_encrypted() {

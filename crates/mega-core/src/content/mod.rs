@@ -213,7 +213,9 @@ pub(crate) fn check_regeneration_safe(
     {
         return Err(refuse("du texte en police Type 3"));
     }
-    let content = doc.get_page_content(page_id);
+    let Ok(content) = crate::crypt::page_content(&doc, page_id) else {
+        return Err(refuse("un contenu trop volumineux une fois décompressé"));
+    };
     let Ok(ops) = lopdf::content::Content::decode(&content) else {
         return Err(refuse("un contenu que l'on ne sait pas analyser"));
     };

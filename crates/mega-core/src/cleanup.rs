@@ -36,7 +36,11 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
     // Le nettoyage ne touche à aucun flux de contenu : on en garde l'empreinte pour vérifier
     // la relecture (un rechiffrement faux brouillerait le contenu sans changer les pages).
-    let contents_before = page_contents(doc);
+    // Un contenu de page qui dépasse la limite de décompression (bombe) : le fichier est
+    // écrit tel que PDFium l'a produit, sans le décompresser (audit du Lot 13, R1).
+    let Some(contents_before) = page_contents(doc) else {
+        return Ok(bytes.to_vec());
+    };
     for page_id in &pages {
         clean_page_annotations(doc, *page_id)?;
         identify_annotations(doc, *page_id)?;
@@ -55,18 +59,21 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     if !rewrite_is_sane(pages_before, &out, password) {
         return Ok(bytes.to_vec());
     }
-    let reread = crate::crypt::LopdfSession::load(&out, password).map(|s| page_contents(&s.doc));
-    if reread.ok().as_ref() != Some(&contents_before) {
+    let reread = crate::crypt::LopdfSession::load(&out, password)
+        .ok()
+        .and_then(|s| page_contents(&s.doc));
+    if reread.as_ref() != Some(&contents_before) {
         return Ok(bytes.to_vec());
     }
     Ok(out)
 }
 
-/// Contenu décodé de chaque page, dans l'ordre des pages.
-fn page_contents(doc: &Document) -> Vec<Vec<u8>> {
+/// Contenu décodé de chaque page, dans l'ordre des pages ; `None` si une page dépasse la
+/// limite de décompression.
+fn page_contents(doc: &Document) -> Option<Vec<Vec<u8>>> {
     doc.get_pages()
         .into_values()
-        .map(|id| doc.get_page_content(id))
+        .map(|id| crate::crypt::page_content(doc, id).ok())
         .collect()
 }
 
@@ -566,9 +573,7 @@ fn ink_points(doc: &Document, dict: &Dictionary) -> Option<Vec<Object>> {
     let n = ap.as_dict().ok()?.get(b"N").ok()?;
     let (_, stream) = doc.dereference(n).ok()?;
     let stream = stream.as_stream().ok()?;
-    let data = stream
-        .decompressed_content()
-        .unwrap_or_else(|_| stream.content.clone());
+    let data = crate::crypt::stream_bytes(stream)?;
     let content = Content::decode(&data).ok()?;
     let mut strokes: Vec<Vec<f32>> = Vec::new();
     let mut current: Vec<f32> = Vec::new();

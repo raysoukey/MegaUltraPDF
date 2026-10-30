@@ -7,10 +7,10 @@
 //! refusé, **avec une erreur typée** ; il n'a jamais le droit de faire paniquer, figer ou
 //! fermer l'application.
 
+use mega_core::Color;
 use mega_core::edit::EditCommand;
 use mega_core::optimize::OptimizeOptions;
 use mega_core::overlay::Watermark;
-use mega_core::Color;
 use mega_core::{CoreError, Document, Rect, SearchOptions};
 
 fn corpus(name: &str) -> Vec<u8> {
@@ -46,7 +46,10 @@ fn exercise(mut doc: Document) -> String {
         // Hors du texte (x = 72) : le texte doit survivre jusqu'à la relecture.
         page: 0,
         rect: Rect {
-            x: 350.0, y: 50.0, w: 200.0, h: 200.0
+            x: 350.0,
+            y: 50.0,
+            w: 200.0,
+            h: 200.0,
         },
     });
     let _ = doc.optimize(&OptimizeOptions::default());
@@ -176,4 +179,13 @@ fn deeply_nested_xobjects_do_not_overflow_the_stack() {
         matches!(outcome, Err(CoreError::InvalidOperation(_))),
         "{outcome:?}"
     );
+}
+
+/// R1 : la passe d'enregistrement ne décompresse pas un flux au-delà de la limite (256 Mio par
+/// flux) : devant la bombe, elle écrit les octets tels quels au lieu de les réécrire.
+#[test]
+fn the_save_pass_does_not_inflate_a_decompression_bomb() {
+    let bytes = corpus("bombe-flate.pdf");
+    let out = mega_core::cleanup::before_save(&bytes, None).unwrap();
+    assert!(out == bytes, "la bombe a été décompressée puis réécrite");
 }

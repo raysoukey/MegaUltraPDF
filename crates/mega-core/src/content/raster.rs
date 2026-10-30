@@ -587,7 +587,8 @@ pub(crate) fn redact_images(
                 .to_string(),
         ));
     }
-    let content = Content::decode(&doc.get_page_content(page_id)).map_err(structure)?;
+    let content = crate::crypt::page_content(doc, page_id).map_err(structure)?;
+    let content = Content::decode(&content).map_err(structure)?;
 
     let mut report = RasterReport::default();
     let mut ctm = IDENTITY;

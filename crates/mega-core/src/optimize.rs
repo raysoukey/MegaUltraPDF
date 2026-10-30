@@ -242,7 +242,7 @@ impl Document {
             ));
         }
         let bytes = self.to_bytes()?;
-        let mut doc = lopdf::Document::load_mem(&bytes).map_err(|e| {
+        let mut doc = crate::crypt::load_limited(&bytes, None).map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;
         if doc.is_encrypted() || doc.was_encrypted() {

@@ -379,11 +379,7 @@ fn signatures_with(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<Signa
     if !bytes.windows(10).any(|w| w == b"/ByteRange") {
         return Ok(Vec::new());
     }
-    let doc = match password {
-        Some(p) => LoDocument::load_mem_with_options(bytes, lopdf::LoadOptions::with_password(p)),
-        None => LoDocument::load_mem(bytes),
-    }
-    .map_err(structure)?;
+    let doc = crate::crypt::load_limited(bytes, password).map_err(structure)?;
     let mut digests = DigestCache::new();
     let mut list: Vec<SignatureInfo> = signature_fields(&doc)
         .iter()
@@ -593,7 +589,7 @@ pub(crate) fn sign_bytes(
     now: i64,
     visible: Option<&appearance::Placement>,
 ) -> CoreResult<Vec<u8>> {
-    let prev = LoDocument::load_mem(base).map_err(structure)?;
+    let prev = crate::crypt::load_limited(base, None).map_err(structure)?;
     refuse_unsignable(&prev)?;
     let root_id = prev
         .trailer
@@ -899,7 +895,7 @@ impl Document {
         // Table de références reconstruite par `lopdf` : une mise à jour incrémentale serait
         // sans `/Prev`. On réécrit d'abord le fichier, sauf s'il porte déjà des signatures
         // (elles seraient invalidées).
-        let needs_rewrite = match LoDocument::load_mem(&base) {
+        let needs_rewrite = match crate::crypt::load_limited(&base, None) {
             Ok(doc) => doc.xref_recovery.is_some(),
             Err(_) => true,
         };

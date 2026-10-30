@@ -63,3 +63,5 @@ p12-keystore = { version = "0.4.1", optional = true }
 
 [dev-dependencies]
 mega-core = { path = ".", features = ["testing", "ocr", "signature"] }
+# Lot 13 : les tests de conformité écrivent les commandes en JSON, comme l'interface.
+serde_json.workspace = true

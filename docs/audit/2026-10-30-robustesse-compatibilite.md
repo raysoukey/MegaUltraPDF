@@ -24,16 +24,16 @@ ailleurs), **M** moyenne (fonction fausse ou inutilisable sur une classe de fich
 
 | # | G | Risque | Preuve (0.12.2) | Correction | Statut |
 |---|---|---|---|---|---|
-| R1 | É | Bombe de décompression : un flux minuscule qui se décompresse en gigaoctets, lu sans limite à chaque enregistrement et par le contenu, le caviardage, les métadonnées | `cleanup.rs:69`, `content/mod.rs:216`, `raster.rs:560`, `cleanup.rs:570`, `overlay.rs:730`, `properties.rs:334` ; aucune `LoadOptions::max_decompressed_size` | Lecture lopdf unique `crypt::load_limited`, `get_page_content_with_limit`, limite par flux | PR A |
-| R2 | É | Un `tesseract` bloqué fige l'acteur unique : plus aucun rendu ni document | `ocr.rs:400` (`.output()` sans délai) | Délai par page, processus tué, erreur typée | PR A |
-| R3 | M | Chaîne profonde de XObjects imbriqués : débordement de pile, l'application se ferme | `content/raster.rs:404` ↔ `:491`, récursion sans profondeur maximale | Pile explicite, profondeur bornée, réponse prudente | PR A |
-| R4 | M | Une panique dans l'acteur l'arrête pour de bon : tout renvoie « service arrêté » jusqu'au redémarrage | `service/mod.rs:341-366`, pas de `catch_unwind` | `catch_unwind` par message, document fautif fermé | PR A |
-| R5 | M | Erreur de rendu invisible : page blanche sans explication | `PageView.svelte:53` | Cadre d'erreur avec message | PR A |
-| R6 | M | Aucune limite de taille de fichier ; trois chargements lopdf par enregistrement | `document.rs:81`, `cleanup.rs:29/164/58` | Refus au-delà de 2 Gio, un chargement de vérification au lieu de deux | PR A |
-| R7 | M | JPEG décodé avant le contrôle de ses dimensions | `raster.rs:237`, `optimize.rs:150` | `image::Limits` avant décodage | PR A |
-| R8 | F | Fichier endommagé (xref cassée) : liste des signatures en erreur, permissions « refusées » en silence | `digital_signature/pdf.rs:383`, `security.rs:197`, `properties.rs:173` | État « structure endommagée », repli sur PDFium | PR A |
-| R9 | F | Aucun test de fichier malformé ni de fuzzing | `fixtures/` : 16 PDF valides | Corpus `fixtures/robustesse/`, `cargo xtask fuzz`, tests de propriétés | PR A |
-| R10 | F | Aucun journal pour comprendre une panne chez l'utilisateur | pas de journal ; `eprintln!` seulement (`service/mod.rs:345`) | Journal local plafonné, sans contenu de document | PR A |
+| R1 | É | Bombe de décompression : un flux minuscule qui se décompresse en gigaoctets, lu sans limite à chaque enregistrement et par le contenu, le caviardage, les métadonnées | `cleanup.rs:69`, `content/mod.rs:216`, `raster.rs:560`, `cleanup.rs:570`, `overlay.rs:730`, `properties.rs:334` ; aucune `LoadOptions::max_decompressed_size` | Lecture lopdf unique `crypt::load_limited`, `get_page_content_with_limit`, limite par flux | ✅ corrigé (PR A) |
+| R2 | É | Un `tesseract` bloqué fige l'acteur unique : plus aucun rendu ni document | `ocr.rs:400` (`.output()` sans délai) | Délai par page, processus tué, erreur typée | ✅ corrigé (PR A) |
+| R3 | M | Chaîne profonde de XObjects imbriqués : débordement de pile, l'application se ferme | `content/raster.rs:404` ↔ `:491`, récursion sans profondeur maximale | Pile explicite, profondeur bornée, réponse prudente | ✅ corrigé (PR A) |
+| R4 | M | Une panique dans l'acteur l'arrête pour de bon : tout renvoie « service arrêté » jusqu'au redémarrage | `service/mod.rs:341-366`, pas de `catch_unwind` | `catch_unwind` par message, document fautif fermé | ✅ corrigé (PR A) |
+| R5 | M | Erreur de rendu invisible : page blanche sans explication | `PageView.svelte:53` | Cadre d'erreur avec message | ✅ corrigé (PR A) |
+| R6 | M | Aucune limite de taille de fichier ; trois chargements lopdf par enregistrement | `document.rs:81`, `cleanup.rs:29/164/58` | Refus au-delà de 2 Gio, un chargement de vérification au lieu de deux | ✅ corrigé (PR A) |
+| R7 | M | JPEG décodé avant le contrôle de ses dimensions | `raster.rs:237`, `optimize.rs:150` | `image::Limits` avant décodage | ✅ corrigé (PR A) |
+| R8 | F | Fichier endommagé (xref cassée) : liste des signatures en erreur, permissions « refusées » en silence | `digital_signature/pdf.rs:383`, `security.rs:197`, `properties.rs:173` | État « structure endommagée », repli sur PDFium | ✅ corrigé (PR A) |
+| R9 | F | Aucun test de fichier malformé ni de fuzzing | `fixtures/` : 16 PDF valides | Corpus `fixtures/robustesse/`, `cargo xtask fuzz`, tests de propriétés | ✅ corrigé (PR A) |
+| R10 | F | Aucun journal pour comprendre une panne chez l'utilisateur | pas de journal ; `eprintln!` seulement (`service/mod.rs:345`) | Journal local plafonné, sans contenu de document | ✅ corrigé (PR A) |
 
 ## Compatibilité des fichiers PDF
 
@@ -61,6 +61,17 @@ ailleurs), **M** moyenne (fonction fausse ou inutilisable sur une classe de fich
 | P5 | F | Échec du presse-papiers silencieux | `+page.svelte:198` | Repli et message | PR C |
 | P6 | F | Chemins non UTF-8, longs ou accentués non testés | `commands.rs:181/595` | `PathBuf` côté Rust, tests | PR C |
 | P7 | F | `.deb` sans dépendances explicites | `tauri.conf.json` | `depends`, `recommends: tesseract-ocr` | PR C |
+
+## Mesures de la PR A
+
+- `tests/robustness.rs` : les 13 fichiers du corpus `fixtures/robustesse/` passent la chaîne
+  complète (ouvrir, rendre, texte, recherche, filigrane, caviardage, optimisation,
+  enregistrement, relecture). Avant correction, `xobjects-profonds.pdf` tuait le processus
+  (`STATUS_STACK_OVERFLOW`) et la bombe était décompressée à chaque enregistrement.
+- `cargo xtask fuzz --iterations 20000` (graines 0 à 19 999, fixtures et corpus) : 7 774
+  fichiers abîmés encore ouverts par PDFium, **aucune panique ni plantage**, 146 s.
+- Un cas trouvé par sonde : remorque sans `/Root` d'un fichier signé, signature absente de
+  la liste (R8, corrigé).
 
 ## Limites assumées
 

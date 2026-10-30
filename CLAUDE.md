@@ -162,6 +162,16 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   texte tourné garde son ordre de dessin. Chaque `TextBox` porte `line` et `block` : l'interface vise et
   copie avec eux, jamais avec la géométrie ni l'ordre brut de PDFium. Le contrôle après caviardage utilise
   `drawn_chars` (non filtré). Fixture : `fixtures/out-of-order.pdf`, scénario `selection`.
+- Robustesse (Lot 13, ADR-0017) : **toute** lecture `lopdf` passe par `crypt::load_limited`, tout
+  contenu de page par `crypt::page_content`, tout flux décodé par `crypt::stream_bytes` (plafond
+  256 Mio, bombes de décompression) : jamais `load_mem` ni `get_page_content` nus. Aucune récursion
+  sur une structure venue du fichier (pile explicite + profondeur bornée). JPEG : `decode_jpeg`
+  (limites avant décodage). Programme externe : `ocr::output_within` (délai, sorties lues en
+  parallèle). L'acteur rattrape les paniques (`catch_unwind`) et ferme les documents touchés :
+  garder `panic = "unwind"`. Journal local `diagnostic.rs` : tout message passe par `sanitize`.
+  Corpus `fixtures/robustesse/` (`gen-fixtures`, qpdf via `MEGA_QPDF` pour le linéarisé),
+  `cargo xtask fuzz`. Pas de `fetch` dans l'interface (test `no-network`) : un détail venu du
+  protocole `mega://` passe par une commande (`render_failure`).
 - Fermeture (correctif 0.12.1) : avec un `onCloseRequested` dans l'interface, Tauri ne ferme plus la
   fenêtre lui-même, l'API JS appelle `window.destroy()` : la capacité **`core:window:allow-destroy`**
   est obligatoire (test `window-close.test.ts`), sinon la fenêtre ne se ferme jamais. Les scénarios

@@ -174,7 +174,21 @@ pub fn respond(service: &ServiceHandle, path: &str, query: Option<&str>) -> Resp
             text_response(StatusCode::NOT_FOUND, "page inconnue")
         }
         Err(CoreError::Cancelled) => text_response(StatusCode::CONFLICT, "génération périmée"),
-        Err(e) => text_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        // Même message que les commandes (causes comprises), et noté au journal (Lot 13).
+        Err(e) => text_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &crate::error::AppError::from(e).message,
+        ),
+    }
+}
+
+/// Message d'un rendu refusé, à afficher à la place de la page (audit du Lot 13, R5) ; `None`
+/// si le rendu a réussi ou si l'échec est normal et passager : 409 (génération périmée, une
+/// nouvelle image arrive) ou 404 (onglet fermé entre-temps).
+pub fn failure_message(response: &Response<Vec<u8>>) -> Option<String> {
+    match response.status() {
+        StatusCode::OK | StatusCode::CONFLICT | StatusCode::NOT_FOUND => None,
+        _ => Some(String::from_utf8_lossy(response.body()).trim().to_string()),
     }
 }
 
@@ -200,6 +214,34 @@ mod tests {
             .unwrap()
             .id;
         (service, id)
+    }
+
+    /// R5 (audit du Lot 13) : un rendu refusé (ici une page de 14 400 pt à l'échelle 1, plus de
+    /// 50 Mpx) donne un message à afficher ; un rendu réussi ou périmé n'en donne aucun.
+    #[test]
+    fn a_refused_render_explains_itself() {
+        let service = PdfService::spawn();
+        let huge = service
+            .open_bytes(mega_core::testing::blank_pdf(14_400.0, 14_400.0), None)
+            .unwrap()
+            .id;
+        let refused = failure_message(&respond(&service, &format!("page/{huge}/0"), None));
+        assert!(
+            refused
+                .as_deref()
+                .is_some_and(|m| m.contains("Rendu trop grand")),
+            "{refused:?}"
+        );
+        let (service, id) = service_with_one_doc();
+        assert_eq!(
+            failure_message(&respond(&service, &format!("page/{id}/0"), None)),
+            None
+        );
+        let _ = service.set_generation(id, 3);
+        assert_eq!(
+            failure_message(&respond(&service, &format!("page/{id}/0"), Some("gen=1"))),
+            None
+        );
     }
 
     #[test]

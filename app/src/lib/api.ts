@@ -757,6 +757,11 @@ export interface DefaultAppStatus {
 export type DefaultAppAction = 'opened_settings' | 'set' | 'instructions' | 'unsupported';
 
 /** Qui ouvre les PDF sur ce système. */
+/** Pourquoi l'image de page `url` n'a pas pu s'afficher ; `null` si l'échec était passager. */
+export async function renderFailure(url: string): Promise<string | null> {
+  return invoke<string | null>('render_failure', { url });
+}
+
 /** Ouvre le dossier du journal de diagnostic local (Lot 13). */
 export async function openDiagnosticFolder(): Promise<void> {
   return invoke<void>('open_diagnostic_folder');

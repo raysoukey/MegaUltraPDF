@@ -170,6 +170,7 @@ pub fn run() {
             commands::startup_files,
             commands::default_app_status,
             commands::open_diagnostic_folder,
+            commands::render_failure,
             commands::make_default_app,
             commands::apply_edit,
             commands::undo_edit,

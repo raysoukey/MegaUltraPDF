@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import type { Priority } from '$lib/api';
+  import { renderFailure, type Priority } from '$lib/api';
   import { pdfRectToCss } from '$lib/logic/geometry';
   import { pageUrl } from '$lib/pageUrl';
   import { type OpenDoc } from '$lib/state/documents.svelte';
@@ -39,6 +39,8 @@
   // nouvelle soit chargée : pas de clignotement pendant un zoom.
   let shown = $state<string | null>(null);
   let loading = $state(true);
+  // Message d'un rendu refusé (Lot 13, R5) : `null` tant que tout va bien.
+  let failure = $state<string | null>(null);
 
   $effect(() => {
     const url = wanted;
@@ -49,9 +51,19 @@
       if (cancelled) return;
       shown = url;
       loading = false;
+      failure = null;
     };
     img.onerror = () => {
-      if (!cancelled) loading = false; // 409 (génération périmée) ou autre : on garde l'ancienne
+      if (cancelled) return;
+      loading = false;
+      // Une balise `<img>` ne dit pas pourquoi elle a échoué : on demande la raison au
+      // backend (seulement en cas d'échec). Échec passager (génération périmée, onglet
+      // fermé) : `null`, on garde l'image précédente.
+      renderFailure(url)
+        .catch(() => '')
+        .then((message) => {
+          if (!cancelled) failure = message;
+        });
     };
     // Petit délai avant de demander l'image : pendant un défilement rapide, les pages
     // simplement traversées sont démontées avant l'échéance et ne coûtent aucun rendu.
@@ -88,6 +100,12 @@
   {#if shown}
     <img src={shown} alt={t.pageOf(index + 1, doc.summary.page_count)} draggable="false" />
   {/if}
+  {#if failure !== null}
+    <div class="failure" role="alert">
+      <p>{t.renderFailed}</p>
+      {#if failure}<p class="detail">{failure}</p>{/if}
+    </div>
+  {/if}
   {#each searchRects as r, i (i)}
     <div
       class="hit"
@@ -114,6 +132,24 @@
     box-shadow: var(--page-shadow);
     overflow: hidden;
     user-select: none;
+  }
+  .failure {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1rem;
+    text-align: center;
+    color: #5a1d1d;
+    background: #fdf0f0;
+    border: 2px dashed #c25b5b;
+  }
+  .failure .detail {
+    font-size: 0.85em;
+    max-width: 40ch;
   }
   .page.loading::after {
     content: '';

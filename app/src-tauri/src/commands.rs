@@ -512,6 +512,29 @@ pub async fn split_plan(
     blocking(handle, move |h| h.split_plan(id, mode)).await
 }
 
+/// Pourquoi l'image de la page `url` (une URL `mega://` construite par `pageUrl`) n'a pas pu
+/// s'afficher : une balise `<img>` ne donne ni le code ni le message de son échec. Rejoue la
+/// demande et rend le message du refus, ou `None` si l'échec était passager (Lot 13, R5).
+#[tauri::command]
+pub async fn render_failure(
+    service: State<'_, ServiceHandle>,
+    url: String,
+) -> Result<Option<String>, AppError> {
+    let uri: tauri::http::Uri = url
+        .parse()
+        .map_err(|e| AppError::new(ErrorKind::InvalidOperation, format!("URL invalide : {e}")))?;
+    let handle = service.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::protocol::failure_message(&crate::protocol::respond(
+            &handle,
+            uri.path(),
+            uri.query(),
+        ))
+    })
+    .await
+    .map_err(|e| AppError::new(ErrorKind::Internal, format!("tâche interrompue : {e}")))
+}
+
 /// Ouvre dans le gestionnaire de fichiers le dossier du journal de diagnostic (Aide ▸ À
 /// propos, Lot 13), créé au besoin. Le chemin ne vient pas de l'interface : rien d'autre ne
 /// peut être ouvert par cette commande.

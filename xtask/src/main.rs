@@ -133,6 +133,10 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let mosaic = dir.join("image-mosaic.pdf");
     std::fs::write(&mosaic, mega_core::testing::image_mosaic_pdf())?;
     println!("écrit : {}", mosaic.display());
+    // Déclaration PDF/A (Lot 13) : affichée dans les Propriétés, avertie à l'enregistrement.
+    let pdfa = dir.join("pdfa.pdf");
+    std::fs::write(&pdfa, mega_core::testing::pdfa_pdf())?;
+    println!("écrit : {}", pdfa.display());
     gen_hostile_fixtures(&dir.join("robustesse"))?;
     gen_encrypted_fixtures(&dir)
 }

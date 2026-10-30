@@ -1,0 +1,45 @@
+[
+  {
+    "wait": 1500
+  },
+  {
+    "key": "i",
+    "ctrl": true
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "(() => { const d = document.querySelector('[role=dialog]'); return (d && d.innerText.includes('Conformité déclarée') && d.innerText.includes('PDF/A-2B')) || 'ERREUR ' + (d ? d.innerText.slice(0, 400) : 'pas de dialogue'); })()",
+    "label": "les Propriétés affichent la conformité PDF/A déclarée"
+  },
+  {
+    "shot": "01-proprietes-pdfa.png"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "click": "button[title^='Pivoter à droite']"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "key": "s",
+    "ctrl": true
+  },
+  {
+    "wait": 2500
+  },
+  {
+    "assert": "(() => { const n = document.querySelector('.toast'); return (n && n.textContent.includes('PDF/A-2B') && n.textContent.includes('plus garantie')) || 'ERREUR ' + (n ? n.textContent : 'aucun avis'); })()",
+    "label": "enregistrer un PDF/A modifié prévient que la conformité n'est plus garantie"
+  },
+  {
+    "shot": "02-avis-pdfa.png"
+  }
+]

@@ -11,8 +11,9 @@ use crate::geometry::Rect;
 
 /// Un caractère de la page avec son rectangle (points PDF, origine bas-gauche).
 ///
-/// L'ordre des `TextBox` est l'ordre de lecture déterminé par PDFium : le frontend s'en
-/// sert pour la sélection (plage d'index) et la copie.
+/// L'ordre des `TextBox` est l'ordre de lecture **calculé** par `reading_order::layout` (lignes,
+/// colonnes, paragraphes), et non l'ordre de dessin du fichier que donne PDFium : le frontend
+/// s'en sert pour la sélection (plage d'index) et la copie (correctif 0.12.2, ADR-0016).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextBox {
     /// Le caractère.
@@ -42,6 +43,30 @@ pub struct SearchHit {
 impl Document {
     /// Tous les caractères de la page `index`, dans l'ordre de lecture.
     pub fn text_boxes(&self, index: u16) -> CoreResult<Vec<TextBox>> {
+        let boxes = self.drawn_boxes(index)?;
+        let rects: Vec<Rect> = boxes.iter().map(|b| b.rect).collect();
+        Ok(crate::reading_order::layout(&rects)
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|&i| boxes[i].clone())
+            .collect())
+    }
+
+    /// Tout le texte de la page `index`, dans l'ordre de lecture (export texte) : le même que
+    /// celui de la sélection et de la copie.
+    pub fn page_text(&self, index: u16) -> CoreResult<String> {
+        let boxes = self.drawn_boxes(index)?;
+        let chars: Vec<char> = boxes.iter().map(|b| b.ch).collect();
+        let rects: Vec<Rect> = boxes.iter().map(|b| b.rect).collect();
+        let blocks = crate::reading_order::layout(&rects);
+        Ok(crate::reading_order::blocks_text(&blocks, &chars, &rects))
+    }
+
+    /// Les caractères de la page dans l'ordre où le fichier les dessine, en espace affiché.
+    /// Les sauts de ligne ajoutés par PDFium (`\r`, `\n`) et les caractères sans emprise
+    /// sont écartés : l'ordre de lecture recalcule les lignes lui-même.
+    fn drawn_boxes(&self, index: u16) -> CoreResult<Vec<TextBox>> {
         let _guard = engine::guard();
         let page = self
             .inner()
@@ -55,22 +80,13 @@ impl Document {
             let (Some(ch), Ok(bounds)) = (c.unicode_char(), c.loose_bounds()) else {
                 continue;
             };
-            boxes.push(TextBox {
-                ch,
-                rect: frame.from_user_space(Rect::from_pdf(bounds)),
-            });
+            let rect = frame.from_user_space(Rect::from_pdf(bounds));
+            if ch == '\r' || ch == '\n' || rect.w <= 0.0 || rect.h <= 0.0 {
+                continue;
+            }
+            boxes.push(TextBox { ch, rect });
         }
         Ok(boxes)
-    }
-
-    /// Tout le texte de la page `index`, dans l'ordre de lecture de PDFium (export texte).
-    pub fn page_text(&self, index: u16) -> CoreResult<String> {
-        let _guard = engine::guard();
-        let page = self
-            .inner()
-            .pages()
-            .get(self.checked_index_unlocked(index)?)?;
-        Ok(page.text()?.all())
     }
 
     /// Cherche `query` dans la page `index`. Une requête vide ne trouve rien.

@@ -148,7 +148,9 @@ fn page_numbers_follow_template() {
     // En-tête à droite, numérotation commençant à 5.
     doc.add_page_numbers(&numbering("p. {n}", Corner::TopRight, 5))
         .unwrap();
-    assert_eq!(page_text(&doc, 0), "Page1p.5");
+    // L'en-tête est en haut de la page : en ordre de lecture (correctif 0.12.2), il vient avant
+    // le corps, même s'il est dessiné après.
+    assert_eq!(page_text(&doc, 0), "p.5Page1");
     let boxes = doc.text_boxes(0).unwrap();
     let p = boxes.iter().find(|b| b.ch == 'p').expect("le p. en tête");
     assert!(p.rect.y > 800.0 && p.rect.x > 540.0, "{:?}", p.rect);

@@ -1172,6 +1172,75 @@ pub fn inherited_media_box_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Une page dont le texte est **dessiné dans le désordre** (correctif 0.12.2), comme dans les
+/// PDF réels où la sélection sautait : lignes d'un paragraphe dessinées 3, 1, 2 ; mot en gras
+/// dessiné à la fin du flux au milieu de sa ligne ; liste « libellé : valeur » dont les valeurs
+/// sont dessinées après tous les libellés ; deux colonnes de 5 lignes dessinées en alternance ;
+/// date alignée à droite dessinée en dernier. Courier : chaque caractère fait 7,2 pt de large
+/// (0,6 × 12), ce qui place la suite d'une ligne exactement après un fragment.
+pub fn out_of_order_pdf() -> Vec<u8> {
+    let draw = |font: &str, x: f64, y: f64, text: &str| {
+        format!("BT /{font} 12 Tf {x:.2} {y:.2} Td ({text}) Tj ET\n")
+    };
+    let char_w = 7.2;
+    let mut content = String::new();
+    content.push_str(&draw("Cour", 72.0, 690.0, "Troisieme ligne du paragraphe"));
+    content.push_str(&draw("Cour", 72.0, 720.0, "Premiere ligne avec un mot "));
+    content.push_str(&draw("Cour", 72.0 + 31.0 * char_w, 720.0, " au milieu"));
+    content.push_str(&draw("Cour", 72.0, 705.0, "Deuxieme ligne du paragraphe"));
+    let labels = ["Utilisateur :", "Entreprise :", "Ville :"];
+    let values = ["ALICE", "B42", "Quebec"];
+    for (k, label) in labels.iter().enumerate() {
+        content.push_str(&draw("Cour", 90.0, 640.0 - 15.0 * k as f64, label));
+    }
+    for (k, value) in values.iter().enumerate() {
+        content.push_str(&draw("Cour", 300.0, 640.0 - 15.0 * k as f64, value));
+    }
+    let left = [
+        "Gauche un",
+        "Gauche deux",
+        "Gauche trois",
+        "Gauche quatre",
+        "Gauche cinq",
+    ];
+    let right = [
+        "Droite un",
+        "Droite deux",
+        "Droite trois",
+        "Droite quatre",
+        "Droite cinq",
+    ];
+    for k in 0..5 {
+        let y = 560.0 - 15.0 * k as f64;
+        content.push_str(&draw("Cour", 72.0, y, left[k]));
+        content.push_str(&draw("Cour", 320.0, y, right[k]));
+    }
+    content.push_str(&draw("CourB", 72.0 + 27.0 * char_w, 720.0, "GRAS"));
+    content.push_str(&draw("Cour", 420.0, 780.0, "Le 3 mars 2026"));
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /Font << /Cour 4 0 R /CourB 5 0 R >> >> /Contents 6 0 R >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}endstream",
+            content.len()
+        ),
+    ];
+    assemble_pdf(
+        &objects,
+        &format!(
+            "<< /Title {} /Producer (MegaUltraPDF tests) >>",
+            pdf_text_string("Texte dans le désordre")
+        ),
+    )
+}
+
 /// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,
 /// avec une table `xref` aux positions exactes.
 fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {

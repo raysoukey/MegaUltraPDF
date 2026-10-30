@@ -211,3 +211,16 @@ fn a_file_over_two_gibibytes_is_refused_before_reading() {
         "lu en entier"
     );
 }
+
+/// R8 : remorque abîmée (sans `/Root`) d'un fichier signé. PDFium retrouve le catalogue en
+/// parcourant le fichier ; la lecture `lopdf` doit faire de même, sinon la signature
+/// disparaît de la liste sans un mot.
+#[test]
+fn a_signature_survives_a_trailer_without_root() {
+    let path = format!("{}/../../fixtures/signed.pdf", env!("CARGO_MANIFEST_DIR"));
+    let mut bytes = std::fs::read(path).unwrap();
+    let k = bytes.windows(5).rposition(|w| w == b"/Root").unwrap();
+    bytes[k..k + 5].copy_from_slice(b"/Roox");
+    let doc = Document::from_bytes(bytes, None).expect("PDFium retrouve le catalogue");
+    assert_eq!(doc.signatures().unwrap().len(), 1);
+}

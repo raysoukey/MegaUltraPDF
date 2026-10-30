@@ -17,7 +17,7 @@
 //! dans [`LopdfSession::finish`]. Un seul propriétaire à la fois, jamais de copie oubliée.
 
 use lopdf::encryption::EncryptionState;
-use lopdf::{Document as LoDocument, LoadOptions, ObjectId, Stream};
+use lopdf::{Document as LoDocument, LoadOptions, Object, ObjectId, Stream};
 
 use crate::error::{CoreError, CoreResult};
 
@@ -32,13 +32,40 @@ pub(crate) const MAX_DECOMPRESSED: usize = 256 * 1024 * 1024;
 /// Charge `bytes` avec `lopdf` (déchiffré avec `password` s'il est donné), sans qu'aucun flux
 /// d'objets ou de références ne se décompresse au-delà de [`MAX_DECOMPRESSED`]. **Toute**
 /// lecture `lopdf` du crate passe par ici, jamais par `Document::load_mem` directement.
+///
+/// Une remorque sans `/Root` (fichier abîmé) est réparée comme le fait PDFium : le catalogue
+/// est retrouvé parmi les objets (audit du Lot 13, R8). Sans cela, PDFium affichait le
+/// document mais nos passes `lopdf` n'y voyaient ni formulaire ni signature.
 pub(crate) fn load_limited(bytes: &[u8], password: Option<&str>) -> lopdf::Result<LoDocument> {
     let options = LoadOptions {
         password: password.map(str::to_string),
         max_decompressed_size: Some(MAX_DECOMPRESSED),
         ..LoadOptions::default()
     };
-    LoDocument::load_mem_with_options(bytes, options)
+    let mut doc = LoDocument::load_mem_with_options(bytes, options)?;
+    if doc.trailer.get(b"Root").is_err()
+        && let Some(catalog) = find_catalog(&doc)
+    {
+        doc.trailer.set("Root", Object::Reference(catalog));
+    }
+    Ok(doc)
+}
+
+/// Le dernier objet `/Type /Catalog` du document (le plus récent, s'il y a eu des mises à jour
+/// incrémentales : les numéros d'objets croissent rarement à rebours).
+fn find_catalog(doc: &LoDocument) -> Option<ObjectId> {
+    doc.objects
+        .iter()
+        .filter(|(_, object)| {
+            object
+                .as_dict()
+                .ok()
+                .and_then(|d| d.get(b"Type").ok())
+                .and_then(|t| t.as_name().ok())
+                == Some(b"Catalog".as_slice())
+        })
+        .map(|(id, _)| *id)
+        .max()
 }
 
 /// Contenu décodé de la page `page_id` (flux concaténés), plafonné à [`MAX_DECOMPRESSED`] :

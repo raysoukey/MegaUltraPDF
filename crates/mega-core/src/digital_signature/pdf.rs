@@ -893,8 +893,8 @@ impl Document {
             self.file_bytes().to_vec()
         };
         // Table de références reconstruite par `lopdf` (une mise à jour incrémentale serait
-        // sans `/Prev`), ou fichier que `lopdf` ne lit pas comme PDFium : autre nombre de pages,
-        // pas de catalogue. Une table de références décalée, par exemple, se lit « sans
+        // sans `/Prev`), ou fichier que `lopdf` ne lit pas comme PDFium : aucune page, pas de
+        // catalogue. Une table de références décalée, par exemple, se lit « sans
         // erreur » mais sans aucune page ; et des octets parasites avant `%PDF-` décalent les
         // positions qu'écrirait la mise à jour (audit du Lot 13, C2). On réécrit d'abord le
         // fichier, sauf s'il porte déjà des signatures (elles seraient invalidées).
@@ -904,7 +904,11 @@ impl Document {
                 !base.starts_with(b"%PDF-")
                     || doc.xref_recovery.is_some()
                     || doc.trailer.get(b"Root").is_err()
-                    || doc.get_pages().len() != pages
+                    // Aucune page vue alors que PDFium en voit : la lecture de lopdf est fausse.
+                    // (Un simple écart de compte, lui, peut venir d'un arbre `/Pages` sans
+                    // `/Type` que lopdf compte mal : il ne justifie pas de refuser un fichier
+                    // déjà signé.)
+                    || (doc.get_pages().is_empty() && pages > 0)
             }
             Err(_) => true,
         };

@@ -273,8 +273,11 @@ impl Document {
 }
 
 /// Vrai si le fichier déclare un chiffrement par certificat (`/Filter /Adobe.PubSec`,
-/// § 7.6.5). Un simple balayage des octets suffit : on ne l'appelle que si PDFium a déjà
-/// refusé le fichier, pour choisir le message.
+/// § 7.6.5) **et aucun** chiffrement standard par mot de passe. Un simple balayage des octets
+/// suffit : on ne l'appelle que si PDFium a déjà refusé le fichier, pour choisir le message.
+/// Un fichier à mot de passe qui mentionne `/Adobe.PubSec` (ancienne révision, commentaire)
+/// reste un fichier à mot de passe (relecture de la PR B du Lot 13).
 fn uses_certificate_encryption(bytes: &[u8]) -> bool {
-    bytes.windows(13).any(|w| w == b"/Adobe.PubSec")
+    let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    contains(b"/Adobe.PubSec") && !contains(b"/Standard")
 }

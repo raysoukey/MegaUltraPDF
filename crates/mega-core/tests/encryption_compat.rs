@@ -124,3 +124,17 @@ fn a_certificate_encrypted_file_is_refused_with_a_clear_error() {
         );
     }
 }
+
+/// Relecture de la PR B : un fichier à chiffrement **standard** qui contient la chaîne
+/// `/Adobe.PubSec` (une ancienne révision, un commentaire) reste un fichier à mot de passe :
+/// une faute de frappe donne « mot de passe incorrect », pas « chiffré par certificat ».
+#[test]
+fn a_standard_encrypted_file_mentioning_pubsec_still_asks_for_a_password() {
+    let mut bytes = fixture("aes128.pdf");
+    bytes.extend_from_slice(b"% /Adobe.PubSec\n");
+    assert!(matches!(
+        Document::from_bytes(bytes.clone(), Some("faux")),
+        Err(CoreError::WrongPassword)
+    ));
+    assert!(Document::from_bytes(bytes, Some("u")).is_ok());
+}

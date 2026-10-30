@@ -86,7 +86,7 @@ fn check_password(what: &str, password: &str) -> CoreResult<()> {
     if !unchanged {
         return Err(CoreError::InvalidOperation(format!(
             "le mot de passe {what} contient un caractère que la norme réécrit ou interdit \
-             (caractère de contrôle, espace insécable, exposant, ligature…)"
+             (caractère de contrôle, espace insécable, exposant, ligature, mélange de sens d'écriture…)"
         )));
     }
     Ok(())

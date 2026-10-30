@@ -303,6 +303,27 @@ pub fn jpeg_bomb_pdf() -> Vec<u8> {
     assemble("%PDF-1.7", &objects, 0, "").0
 }
 
+/// Un document chiffré **par certificat** (`/Filter /Adobe.PubSec`, § 7.6.5) : seul le
+/// détenteur de la clé privée d'un destinataire peut l'ouvrir ; aucun mot de passe ne sert.
+/// L'application doit le dire, au lieu de demander un mot de passe en boucle. Le contenu
+/// n'est pas réellement chiffré : seul compte le dictionnaire `/Encrypt`.
+pub fn pubsec_pdf() -> Vec<u8> {
+    let mut objects = text_page_objects("Certificat", "0 0 595 842");
+    objects.push(
+        b"<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s5 /V 4 /Length 128 \
+          /CF << /DefaultCryptFilter << /CFM /AESV2 /AuthEvent /DocOpen \
+          /Recipients [<3082000130>] >> >> /StmF /DefaultCryptFilter /StrF /DefaultCryptFilter >>"
+            .to_vec(),
+    );
+    assemble(
+        "%PDF-1.7",
+        &objects,
+        0,
+        "/Encrypt 6 0 R /ID [<0123456789ABCDEF0123456789ABCDEF> <0123456789ABCDEF0123456789ABCDEF>]",
+    )
+    .0
+}
+
 /// Tout le corpus généré ici, sous les noms de fichier de `fixtures/robustesse/`. Le fichier
 /// linéarisé est produit à part par qpdf (`cargo xtask gen-fixtures`).
 pub fn corpus() -> Vec<(&'static str, Vec<u8>)> {

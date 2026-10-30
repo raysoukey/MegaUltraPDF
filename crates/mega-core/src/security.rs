@@ -6,8 +6,8 @@
 //! on la tire de `rand::rng()`, un générateur alimenté par le système (`getrandom`). Un
 //! mot de passe, lui, n'est pas une clé : la norme dérive la clé par des hachages salés
 //! (algorithme 8/9), ce que fait `lopdf`. Les deux mots de passe sont des **chaînes** que
-//! l'on convertit en octets UTF-8 ; on se limite ici aux caractères ≤ U+00FF pour éviter
-//! les subtilités de normalisation (SASLprep) que la révision 6 exige au-delà.
+//! l'on convertit en octets UTF-8 après normalisation SASLprep (révision 6) ; voir
+//! `check_password` pour les mots de passe acceptés.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -67,23 +67,26 @@ fn invalid(msg: &str) -> CoreError {
     CoreError::InvalidOperation(msg.to_string())
 }
 
-/// Vérifie un mot de passe : longueur en octets, et seulement des caractères que SASLprep
-/// (appliqué par lopdf en révision 6, pas par PDFium) laisse inchangés : ASCII imprimable
-/// (U+0020-U+007E) et lettres Latin-1 (U+00C0-U+00FF). Une espace insécable, un trait d'union
-/// conditionnel, « ² » ou « µ » seraient réécrits d'un côté et pas de l'autre : le fichier ne
-/// se rouvrirait plus.
+/// Vérifie un mot de passe : longueur en octets, et invariance par **SASLprep** (RFC 4013).
+///
+/// La révision 6 normalise le mot de passe par SASLprep avant d'en dériver la clé ; `lopdf`
+/// le fait en chiffrant, PDFium ne le fait pas en ouvrant. Un mot de passe que SASLprep
+/// modifie (espace insécable, « ² », ligature « ﬁ ») serait donc chiffré sous une forme et
+/// essayé sous une autre : le fichier ne se rouvrirait plus. Tous les autres sont acceptés,
+/// lettres de n'importe quelle écriture comprises (audit du Lot 13, C10 ; la limite était
+/// U+00FF). Le message ne cite jamais le caractère fautif : il pourrait finir dans le
+/// journal de diagnostic.
 fn check_password(what: &str, password: &str) -> CoreResult<()> {
     if password.len() > MAX_PASSWORD_BYTES {
         return Err(CoreError::InvalidOperation(format!(
             "le mot de passe {what} dépasse {MAX_PASSWORD_BYTES} octets"
         )));
     }
-    if let Some(c) = password
-        .chars()
-        .find(|c| !matches!(*c, '\u{20}'..='\u{7E}' | '\u{C0}'..='\u{FF}'))
-    {
+    let unchanged = stringprep::saslprep(password).is_ok_and(|prepared| prepared == password);
+    if !unchanged {
         return Err(CoreError::InvalidOperation(format!(
-            "le mot de passe {what} contient un caractère non pris en charge : « {c} »"
+            "le mot de passe {what} contient un caractère que la norme réécrit ou interdit \
+             (caractère de contrôle, espace insécable, exposant, ligature…)"
         )));
     }
     Ok(())

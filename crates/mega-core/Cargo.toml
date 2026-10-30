@@ -41,6 +41,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 lopdf = "0.46.0"
 # Clé de fichier AES-256 de la protection par mot de passe (Lot 6) ; déjà dans l'arbre via lopdf.
 rand = "0.10"
+# Mots de passe Unicode (Lot 13) : SASLprep (RFC 4013), que lopdf applique en révision 6 mais
+# pas PDFium à l'ouverture ; on n'accepte qu'un mot de passe qu'il laisse inchangé. Déjà dans
+# l'arbre via lopdf (même version).
+stringprep = "0.1.5"
 # Police Unicode incorporée (Lot 10) : lecture des tables `cmap`, `hmtx`, `head` de DejaVu Sans
 # (pur Rust, sans allocation ni code `unsafe` exposé ; fonctions avancées désactivées).
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }

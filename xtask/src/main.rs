@@ -133,7 +133,83 @@ fn gen_fixtures() -> anyhow::Result<()> {
     let mosaic = dir.join("image-mosaic.pdf");
     std::fs::write(&mosaic, mega_core::testing::image_mosaic_pdf())?;
     println!("écrit : {}", mosaic.display());
-    gen_hostile_fixtures(&dir.join("robustesse"))
+    gen_hostile_fixtures(&dir.join("robustesse"))?;
+    gen_encrypted_fixtures(&dir)
+}
+
+/// Chiffrements que l'audit du Lot 13 a trouvés non testés, produits par qpdf à partir de
+/// `simple.pdf` dans `fixtures/chiffrement/` (mot de passe utilisateur `u`, propriétaire `o`,
+/// sauf le mot de passe Unicode). qpdf tire des clés au hasard : les fichiers changent à chaque
+/// régénération, on ne les régénère donc que s'ils manquent.
+fn gen_encrypted_fixtures(fixtures: &Path) -> anyhow::Result<()> {
+    let dir = fixtures.join("chiffrement");
+    std::fs::create_dir_all(&dir)?;
+    let simple = fixtures.join("simple.pdf");
+    let cases: [(&str, &[&str]); 4] = [
+        (
+            "rc4-40.pdf",
+            &[
+                "--allow-weak-crypto",
+                "--encrypt",
+                "--user-password=u",
+                "--owner-password=o",
+                "--bits=40",
+                "--",
+            ],
+        ),
+        (
+            "aes128.pdf",
+            &[
+                "--encrypt",
+                "--user-password=u",
+                "--owner-password=o",
+                "--bits=128",
+                "--use-aes=y",
+                "--",
+            ],
+        ),
+        (
+            "aes256-r5.pdf",
+            &[
+                "--encrypt",
+                "--user-password=u",
+                "--owner-password=o",
+                "--bits=256",
+                "--force-R5",
+                "--",
+            ],
+        ),
+        // Mot de passe accentué et chinois : R6 le passe par SASLprep puis UTF-8 (§7.6.4.3.3).
+        (
+            "mot-de-passe-unicode.pdf",
+            &[
+                "--encrypt",
+                "--user-password=été密码",
+                "--owner-password=o",
+                "--bits=256",
+                "--",
+            ],
+        ),
+    ];
+    for (name, args) in cases {
+        let out = dir.join(name);
+        if out.exists() {
+            continue;
+        }
+        match std::process::Command::new(qpdf_exe())
+            .args(args)
+            .arg(&simple)
+            .arg(&out)
+            .status()
+        {
+            Ok(status) if status.success() => println!("écrit : {}", out.display()),
+            _ => println!("qpdf introuvable : {} non produit", out.display()),
+        }
+    }
+    let pubsec = dir.join("certificat.pdf");
+    std::fs::write(&pubsec, mega_core::testing::hostile::pubsec_pdf())?;
+    println!("écrit : {}", pubsec.display());
+    Ok(())
 }
 
 /// Campagne de fuzzing (Lot 13) : `iterations` variantes abîmées des fixtures, graines

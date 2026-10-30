@@ -42,6 +42,12 @@ pub enum CoreError {
     #[error("Ce fichier n'est pas un PDF valide ({0}).")]
     InvalidPdf(String),
 
+    /// Le document est chiffré d'une façon qu'aucun mot de passe n'ouvre (par certificat,
+    /// `/Adobe.PubSec`) : le dire plutôt que demander un mot de passe en boucle (audit du
+    /// Lot 13, C9).
+    #[error("Ce document est chiffré {0} : MegaUltraPDF ne sait pas l'ouvrir.")]
+    UnsupportedEncryption(String),
+
     /// Un index de page dépasse le nombre de pages du document.
     #[error("Page {index} hors limites (le document a {count} pages).")]
     PageOutOfRange {

@@ -757,6 +757,11 @@ export interface DefaultAppStatus {
 export type DefaultAppAction = 'opened_settings' | 'set' | 'instructions' | 'unsupported';
 
 /** Qui ouvre les PDF sur ce système. */
+/** Ouvre le dossier du journal de diagnostic local (Lot 13). */
+export async function openDiagnosticFolder(): Promise<void> {
+  return invoke<void>('open_diagnostic_folder');
+}
+
 export async function defaultAppStatus(): Promise<DefaultAppStatus> {
   return invoke<DefaultAppStatus>('default_app_status');
 }

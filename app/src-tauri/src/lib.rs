@@ -21,6 +21,7 @@
 
 mod commands;
 mod default_app;
+mod diagnostic;
 mod error;
 mod protocol;
 
@@ -122,6 +123,14 @@ pub fn run() {
         relay_second_instance(app, &argv, &cwd);
     }));
     let builder = builder
+        // Journal de diagnostic local (Lot 13) : dans le dossier de journaux de l'application.
+        .setup(|app| {
+            use tauri::Manager;
+            if let Ok(dir) = app.path().app_log_dir() {
+                diagnostic::init(dir);
+            }
+            Ok(())
+        })
         // Un seul acteur PDFium pour toute l'application ; le handle est clonable.
         .manage(PdfService::spawn())
         .manage(PendingPaths::default())
@@ -160,6 +169,7 @@ pub fn run() {
             commands::file_size,
             commands::startup_files,
             commands::default_app_status,
+            commands::open_diagnostic_folder,
             commands::make_default_app,
             commands::apply_edit,
             commands::undo_edit,

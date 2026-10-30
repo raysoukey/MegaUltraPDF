@@ -70,7 +70,13 @@ impl From<CoreError> for AppError {
             | CoreError::Aborted => ErrorKind::Internal,
         };
         // Message complet, causes incluses (ex. « Erreur d'accès au fichier : Accès refusé »).
-        AppError::new(kind, mega_core::error::display_chain(&e))
+        let error = AppError::new(kind, mega_core::error::display_chain(&e));
+        // Toute erreur du cœur passe par ici avant d'atteindre l'interface : c'est le seul
+        // endroit où la noter dans le journal local (Lot 13).
+        if !matches!(e, CoreError::Cancelled) {
+            crate::diagnostic::record(&error);
+        }
+        error
     }
 }
 

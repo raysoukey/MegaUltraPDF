@@ -512,6 +512,21 @@ pub async fn split_plan(
     blocking(handle, move |h| h.split_plan(id, mode)).await
 }
 
+/// Ouvre dans le gestionnaire de fichiers le dossier du journal de diagnostic (Aide ▸ À
+/// propos, Lot 13), créé au besoin. Le chemin ne vient pas de l'interface : rien d'autre ne
+/// peut être ouvert par cette commande.
+#[tauri::command]
+pub async fn open_diagnostic_folder(app: tauri::AppHandle) -> Result<(), AppError> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = crate::diagnostic::dir()
+        .ok_or_else(|| AppError::new(ErrorKind::Internal, "journal de diagnostic indisponible"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| AppError::new(ErrorKind::Io, format!("Erreur d'accès au dossier : {e}")))?;
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| AppError::new(ErrorKind::Internal, format!("ouverture du dossier : {e}")))
+}
+
 /// Taille d'un fichier en octets (pour le dialogue des propriétés).
 #[tauri::command]
 pub async fn file_size(path: String) -> Result<u64, AppError> {

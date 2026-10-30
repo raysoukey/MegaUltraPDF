@@ -5,7 +5,9 @@
 //! l'acteur, programme externe arrêté), il ne reste aucune trace pour comprendre ce qui s'est
 //! passé. Ce module écrit une ligne par erreur dans `diagnostic.log`, dans le dossier de
 //! journaux de l'application (`app_log_dir`) : horodatage, catégorie, message. Jamais le
-//! contenu d'un document ni son texte ; rien n'est envoyé nulle part (pas de télémétrie).
+//! contenu d'un document ni son texte : un message d'erreur qui cite une saisie (texte entre
+//! guillemets) ou un chemin est masqué par [`sanitize`] avant d'être écrit. Rien n'est envoyé
+//! nulle part (pas de télémétrie).
 //! L'utilisateur ouvre le dossier depuis Aide ▸ À propos et joint le fichier à un signalement
 //! s'il le souhaite.
 //!
@@ -20,6 +22,9 @@ use crate::error::{AppError, ErrorKind};
 
 /// Taille maximale du journal courant (1 Mo) ; avec l'ancien, au plus 2 Mo sur le disque.
 pub const MAX_LOG_BYTES: u64 = 1_000_000;
+
+/// Longueur maximale d'un message dans le journal, en caractères.
+pub const MAX_MESSAGE_CHARS: usize = 300;
 
 /// Nom du journal courant.
 const LOG_NAME: &str = "diagnostic.log";
@@ -58,6 +63,15 @@ impl DiagnosticLog {
         let _ = self.append(line);
     }
 
+    /// Comme [`DiagnosticLog::write`], mais abandonne si une écriture est déjà en cours : le
+    /// crochet de panique ne doit jamais attendre un verrou (une panique pendant une écriture
+    /// le bloquerait pour toujours).
+    fn try_write(&self, line: &str) {
+        if let Ok(_guard) = self.lock.try_lock() {
+            let _ = self.append(line);
+        }
+    }
+
     fn append(&self, line: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
         let path = self.dir.join(LOG_NAME);
@@ -87,7 +101,18 @@ pub fn init(dir: PathBuf) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if let Some(log) = LOG.get() {
-            log.write(&format!("panique : {info}"));
+            // L'emplacement dans notre code, et le message masqué comme les autres.
+            let location = info
+                .location()
+                .map(|l| format!("{}:{}", l.file(), l.line()))
+                .unwrap_or_default();
+            let payload = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_default();
+            log.try_write(&format!("panique ({location}) : {}", sanitize(&payload)));
         }
         previous(info);
     }));
@@ -112,7 +137,61 @@ pub fn record(error: &AppError) {
     if let Some(log) = LOG.get()
         && worth_logging(error.kind)
     {
-        log.write(&format!("{:?} : {}", error.kind, error.message));
+        log.write(&format!("{:?} : {}", error.kind, sanitize(&error.message)));
+    }
+}
+
+/// Le message `message` sans ce qui pourrait venir de l'utilisateur : chaque passage entre
+/// guillemets (« », " ", ou ' ' ouvrant après une espace, pour épargner les apostrophes de
+/// « d'accès ») devient `«…»`, chaque mot qui contient `/` ou `\` (un chemin) devient
+/// `«chemin»`, et le tout est coupé à [`MAX_MESSAGE_CHARS`] caractères.
+pub fn sanitize(message: &str) -> String {
+    let mut out = String::new();
+    let mut chars = message.chars().peekable();
+    let mut previous = ' ';
+    while let Some(c) = chars.next() {
+        let closing = match c {
+            '«' => Some('»'),
+            '"' => Some('"'),
+            '\'' if previous.is_whitespace() || previous == '(' => Some('\''),
+            _ => None,
+        };
+        match closing {
+            Some(end) if chars.clone().any(|n| n == end) => {
+                for n in chars.by_ref() {
+                    if n == end {
+                        break;
+                    }
+                }
+                out.push_str("«…»");
+                previous = '»';
+            }
+            _ => {
+                out.push(c);
+                previous = c;
+            }
+        }
+    }
+    let masked: Vec<String> = out
+        .split(' ')
+        .map(|word| {
+            if !word.contains(['/', '\\']) {
+                return word.to_string();
+            }
+            let core = word.trim_start_matches(['(', '[', '{']);
+            let lead = &word[..word.len() - core.len()];
+            let core_end = core.trim_end_matches([')', ']', '}', ',', ';', ':', '.']);
+            let tail = &core[core_end.len()..];
+            format!("{lead}«chemin»{tail}")
+        })
+        .collect();
+    let text = masked.join(" ");
+    if text.chars().count() > MAX_MESSAGE_CHARS {
+        let mut cut: String = text.chars().take(MAX_MESSAGE_CHARS).collect();
+        cut.push('…');
+        cut
+    } else {
+        text
     }
 }
 
@@ -193,6 +272,30 @@ mod tests {
         let text = std::fs::read_to_string(dir.join(LOG_NAME)).unwrap();
         assert_eq!(text.lines().count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Relecture de sécurité : un message d'erreur peut citer ce que l'utilisateur a saisi
+    /// (un caractère de mot de passe, un texte refusé) ou un chemin ; le journal n'en garde
+    /// que la forme.
+    #[test]
+    fn quoted_text_and_paths_are_masked() {
+        assert_eq!(
+            sanitize("le mot de passe contient un caractère non pris en charge : « é »"),
+            "le mot de passe contient un caractère non pris en charge : «…»"
+        );
+        assert_eq!(
+            sanitize(r#"texte "secret" refusé, police 'Perso'"#),
+            "texte «…» refusé, police «…»"
+        );
+        assert_eq!(
+            sanitize(r"Tesseract introuvable (C:\Users\moi\tesseract.exe) : échec"),
+            "Tesseract introuvable («chemin») : échec"
+        );
+        assert_eq!(
+            sanitize("lecture de /home/moi/Documents/lettre.pdf impossible"),
+            "lecture de «chemin» impossible"
+        );
+        assert!(sanitize(&"x".repeat(1000)).chars().count() <= MAX_MESSAGE_CHARS + 1);
     }
 
     #[test]

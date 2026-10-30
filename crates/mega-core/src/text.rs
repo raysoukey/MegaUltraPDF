@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Couche de texte d'une page (caractères positionnés) et recherche.
 
-use pdfium_render::prelude::{PdfSearchDirection, PdfSearchOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
@@ -133,6 +132,12 @@ impl Document {
     }
 
     /// Cherche `query` dans la page `index`. Une requête vide ne trouve rien.
+    ///
+    /// La recherche parcourt le texte **dans l'ordre de lecture** ([`Document::text_boxes`]),
+    /// comme la sélection et la copie : un mot dessiné à part, une valeur dessinée après son
+    /// libellé ou une expression qui passe à la ligne sont trouvés (audit du Lot 13, C5 ; la
+    /// recherche de PDFium suivait l'ordre de dessin). Un changement de ligne compte comme une
+    /// espace, et plusieurs espaces comme une seule.
     pub fn search_page(
         &self,
         index: u16,
@@ -142,29 +147,107 @@ impl Document {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let _guard = engine::guard();
-        let page = self
-            .inner()
-            .pages()
-            .get(self.checked_index_unlocked(index)?)?;
-        let text = page.text()?;
-        let pdf_options = PdfSearchOptions::new()
-            .match_case(options.match_case)
-            .match_whole_word(options.whole_word);
-        let search = text.search(query, &pdf_options)?;
-        let frame = crate::geometry::frame_of(&page);
-        let hits = search
-            .iter(PdfSearchDirection::SearchForward)
-            .map(|segments| SearchHit {
-                page: index,
-                rects: segments
-                    .iter()
-                    .map(|s| frame.from_user_space(Rect::from_pdf(s.bounds())))
-                    .collect(),
-            })
-            .collect();
-        Ok(hits)
+        let boxes = self.text_boxes(index)?;
+        Ok(find_in_boxes(&boxes, query, options)
+            .into_iter()
+            .map(|rects| SearchHit { page: index, rects })
+            .collect())
     }
+}
+
+/// Un caractère du texte cherché, et la boîte d'où il vient (`None` : espace ajoutée entre
+/// deux lignes ou deux mots sans caractère d'espace).
+type Searchable = (char, Option<usize>);
+
+/// `c` comparable : minuscule si la casse est ignorée, toute espace devient `' '`.
+fn fold(c: char, match_case: bool) -> char {
+    if c.is_whitespace() {
+        ' '
+    } else if match_case {
+        c
+    } else {
+        c.to_lowercase().next().unwrap_or(c)
+    }
+}
+
+/// Le texte des boîtes tel que la recherche le voit : un changement de ligne, ou un grand
+/// blanc sans caractère d'espace (un libellé et sa valeur), donne une espace ; plusieurs
+/// espaces de suite n'en font qu'une (mêmes règles que `reading_order::blocks_text`).
+fn searchable(boxes: &[TextBox], match_case: bool) -> Vec<Searchable> {
+    let mut out: Vec<Searchable> = Vec::with_capacity(boxes.len());
+    for (i, b) in boxes.iter().enumerate() {
+        if let Some(p) = i.checked_sub(1).map(|p| &boxes[p]) {
+            let (a, r) = (&p.rect, &b.rect);
+            let gap = (r.x - (a.x + a.w)).max(a.x - (r.x + r.w));
+            let separated = p.line != b.line || gap > 0.5 * a.h.max(r.h);
+            if separated && out.last().is_some_and(|(c, _)| *c != ' ') {
+                out.push((' ', None));
+            }
+        }
+        let c = fold(b.ch, match_case);
+        if c == ' ' && out.last().is_some_and(|(last, _)| *last == ' ') {
+            continue;
+        }
+        out.push((c, Some(i)));
+    }
+    out
+}
+
+/// Les occurrences de `query` dans les boîtes, chacune en rectangles (un par ligne touchée).
+/// Fonction pure, sans PDFium.
+fn find_in_boxes(boxes: &[TextBox], query: &str, options: &SearchOptions) -> Vec<Vec<Rect>> {
+    let mut needle: Vec<char> = Vec::new();
+    for c in query.trim().chars().map(|c| fold(c, options.match_case)) {
+        if !(c == ' ' && needle.last() == Some(&' ')) {
+            needle.push(c);
+        }
+    }
+    let hay = searchable(boxes, options.match_case);
+    let is_word = |k: usize| hay.get(k).is_some_and(|(c, _)| c.is_alphanumeric());
+    let mut hits = Vec::new();
+    let mut start = 0;
+    while !needle.is_empty() && start + needle.len() <= hay.len() {
+        let end = start + needle.len();
+        let matches = hay[start..end]
+            .iter()
+            .zip(&needle)
+            .all(|((c, _), n)| c == n);
+        let whole = !options.whole_word || (!(start > 0 && is_word(start - 1)) && !is_word(end));
+        if matches && whole {
+            hits.push(line_rects(
+                boxes,
+                hay[start..end].iter().filter_map(|(_, i)| *i),
+            ));
+            start = end;
+        } else {
+            start += 1;
+        }
+    }
+    hits
+}
+
+/// Rectangles qui couvrent les boîtes `indices` : un par ligne (union des boîtes).
+fn line_rects(boxes: &[TextBox], indices: impl Iterator<Item = usize>) -> Vec<Rect> {
+    let mut rects: Vec<Rect> = Vec::new();
+    let mut current_line = None;
+    for i in indices {
+        let r = boxes[i].rect;
+        match rects.last_mut() {
+            Some(last) if current_line == Some(boxes[i].line) => {
+                let right = (last.x + last.w).max(r.x + r.w);
+                let top = (last.y + last.h).max(r.y + r.h);
+                last.x = last.x.min(r.x);
+                last.y = last.y.min(r.y);
+                last.w = right - last.x;
+                last.h = top - last.y;
+            }
+            _ => {
+                rects.push(r);
+                current_line = Some(boxes[i].line);
+            }
+        }
+    }
+    rects
 }
 
 /// Les blocs de lecture de la page : le texte horizontal ordonné par `reading_order::layout`,

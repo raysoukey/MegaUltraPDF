@@ -384,3 +384,38 @@ fn sample_pdf_is_deterministic() {
     let b = mega_core::testing::sample_pdf(2, "stable");
     assert!(a == b, "deux générations diffèrent");
 }
+
+/// C5 (audit du Lot 13) : la recherche suit l'**ordre de lecture**, comme la sélection : un mot
+/// dessiné à part, une valeur dessinée après son libellé, une expression qui passe à la ligne
+/// suivante sont trouvés ; chaque occurrence surligne un rectangle par ligne.
+#[test]
+fn search_follows_reading_order() {
+    let doc = Document::from_bytes(mega_core::testing::out_of_order_pdf(), None).unwrap();
+    let find = |q: &str, match_case: bool| {
+        doc.search_page(
+            0,
+            q,
+            &mega_core::SearchOptions {
+                match_case,
+                whole_word: false,
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        find("mot GRAS au", true).len(),
+        1,
+        "fragment dessiné à part"
+    );
+    assert_eq!(
+        find("Utilisateur : ALICE", true).len(),
+        1,
+        "valeur dessinée après"
+    );
+    let across = find("paragraphe Troisieme", true);
+    assert_eq!(across.len(), 1, "expression sur deux lignes");
+    assert_eq!(across[0].rects.len(), 2, "un rectangle par ligne");
+    assert_eq!(find("alice", false).len(), 1, "sans casse");
+    assert!(find("alice", true).is_empty(), "avec casse");
+    assert_eq!(find("ligne", false).len(), 13);
+}

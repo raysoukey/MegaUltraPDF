@@ -306,5 +306,7 @@ fn gen_hostile_fixtures(dir: &Path) -> anyhow::Result<()> {
 
 /// L'exécutable qpdf : `MEGA_QPDF` s'il est défini, sinon `qpdf` dans le `PATH`.
 fn qpdf_exe() -> PathBuf {
-    std::env::var_os("MEGA_QPDF").map_or_else(|| PathBuf::from("qpdf"), PathBuf::from)
+    std::env::var_os("MEGA_QPDF")
+        .filter(|v| !v.is_empty())
+        .map_or_else(|| PathBuf::from("qpdf"), PathBuf::from)
 }

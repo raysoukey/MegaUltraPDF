@@ -28,7 +28,10 @@ fn fixture(name: &str) -> PathBuf {
 
 /// L'exécutable qpdf, s'il répond ; sans lui, panique seulement si la CI l'exige.
 fn qpdf() -> Option<PathBuf> {
-    let exe = std::env::var_os("MEGA_QPDF").map_or_else(|| PathBuf::from("qpdf"), PathBuf::from);
+    // Une variable vide compte comme absente.
+    let exe = std::env::var_os("MEGA_QPDF")
+        .filter(|v| !v.is_empty())
+        .map_or_else(|| PathBuf::from("qpdf"), PathBuf::from);
     let works = Command::new(&exe)
         .arg("--version")
         .output()

@@ -39,8 +39,12 @@ jobs:
         shell: pwsh
         run: |
           choco install qpdf --no-progress -y
-          $exe = Get-ChildItem 'C:\Program Files' -Filter qpdf.exe -Recurse -Depth 3 | Select-Object -First 1
-          "MEGA_QPDF=$($exe.FullName)" >> $env:GITHUB_ENV
+          # Chemin de qpdf.exe : dans Program Files (installeur), sinon par la commande (shim).
+          $exe = Get-ChildItem 'C:\Program Files' -Filter qpdf.exe -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { $exe = (Get-Command qpdf -ErrorAction SilentlyContinue).Source }
+          if (-not $exe) { throw 'qpdf introuvable après installation' }
+          "MEGA_QPDF=$exe" >> $env:GITHUB_ENV
 
       - uses: dtolnay/rust-toolchain@stable
         with:

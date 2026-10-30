@@ -615,8 +615,12 @@ endstream",
 /// (`/Fx1 Do`), comme le produit un aplatissement de formulaire ou une page importée : le
 /// caviardage par objets ne peut pas l'atteindre et doit le signaler.
 pub fn xobject_text_pdf() -> Vec<u8> {
+    xobject_text_pdf_from("BT /Helv 24 Tf 72 700 Td (Cache) Tj ET")
+}
+
+/// Une page dont tout le texte est dessiné par le formulaire XObject `form`.
+fn xobject_text_pdf_from(form: &str) -> Vec<u8> {
     let content = "q /Fx1 Do Q";
-    let form = "BT /Helv 24 Tf 72 700 Td (Cache) Tj ET";
     let objects = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
@@ -1174,8 +1178,9 @@ pub fn inherited_media_box_pdf() -> Vec<u8> {
 
 /// Une page dont le texte est **dessiné dans le désordre** (correctif 0.12.2), comme dans les
 /// PDF réels où la sélection sautait : lignes d'un paragraphe dessinées 3, 1, 2 ; mot en gras
-/// dessiné à la fin du flux au milieu de sa ligne ; liste « libellé : valeur » dont les valeurs
-/// sont dessinées après tous les libellés ; deux colonnes de 5 lignes dessinées en alternance ;
+/// dessiné à la fin du flux au milieu de sa ligne ; liste « libellé : valeur » de 5 lignes dont
+/// les valeurs sont dessinées après tous les libellés ; deux colonnes de texte de 5 lignes
+/// dessinées en alternance ;
 /// date alignée à droite dessinée en dernier. Courier : chaque caractère fait 7,2 pt de large
 /// (0,6 × 12), ce qui place la suite d'une ligne exactement après un fragment.
 pub fn out_of_order_pdf() -> Vec<u8> {
@@ -1188,32 +1193,33 @@ pub fn out_of_order_pdf() -> Vec<u8> {
     content.push_str(&draw("Cour", 72.0, 720.0, "Premiere ligne avec un mot "));
     content.push_str(&draw("Cour", 72.0 + 31.0 * char_w, 720.0, " au milieu"));
     content.push_str(&draw("Cour", 72.0, 705.0, "Deuxieme ligne du paragraphe"));
-    let labels = ["Utilisateur :", "Entreprise :", "Ville :"];
-    let values = ["ALICE", "B42", "Quebec"];
+    let labels = [
+        "Utilisateur :",
+        "Entreprise :",
+        "Ville :",
+        "Pays :",
+        "Telephone :",
+    ];
+    let values = ["ALICE", "B42", "Quebec", "Canada", "555-0100"];
     for (k, label) in labels.iter().enumerate() {
         content.push_str(&draw("Cour", 90.0, 640.0 - 15.0 * k as f64, label));
     }
     for (k, value) in values.iter().enumerate() {
         content.push_str(&draw("Cour", 300.0, 640.0 - 15.0 * k as f64, value));
     }
-    let left = [
-        "Gauche un",
-        "Gauche deux",
-        "Gauche trois",
-        "Gauche quatre",
-        "Gauche cinq",
-    ];
-    let right = [
-        "Droite un",
-        "Droite deux",
-        "Droite trois",
-        "Droite quatre",
-        "Droite cinq",
-    ];
+    let numbers = ["un", "deux", "trois", "quatre", "cinq"];
+    let left: Vec<String> = numbers
+        .iter()
+        .map(|n| format!("Gauche ligne {n} du texte"))
+        .collect();
+    let right: Vec<String> = numbers
+        .iter()
+        .map(|n| format!("Droite ligne {n} du texte"))
+        .collect();
     for k in 0..5 {
-        let y = 560.0 - 15.0 * k as f64;
-        content.push_str(&draw("Cour", 72.0, y, left[k]));
-        content.push_str(&draw("Cour", 320.0, y, right[k]));
+        let y = 530.0 - 15.0 * k as f64;
+        content.push_str(&draw("Cour", 72.0, y, &left[k]));
+        content.push_str(&draw("Cour", 300.0, y, &right[k]));
     }
     content.push_str(&draw("CourB", 72.0 + 27.0 * char_w, 720.0, "GRAS"));
     content.push_str(&draw("Cour", 420.0, 780.0, "Le 3 mars 2026"));
@@ -1239,6 +1245,28 @@ pub fn out_of_order_pdf() -> Vec<u8> {
             pdf_text_string("Texte dans le désordre")
         ),
     )
+}
+
+/// Une page avec un paragraphe horizontal et un **bandeau vertical** (« arXiv:2310.0001 »,
+/// tourné d'un quart de tour par sa matrice `Tm`, comme sur les articles d'arXiv). Le texte
+/// tourné garde son ordre de dessin au lieu d'être découpé en lignes horizontales.
+pub fn sidebar_pdf() -> Vec<u8> {
+    let content = "BT /Cour 12 Tf 72 700 Td (Paragraphe horizontal) Tj ET \
+                   BT /Cour 12 Tf 0 1 -1 0 40 300 Tm (arXiv:2310.0001) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /Font << /Cour 4 0 R >> >> /Contents 5 0 R >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
 /// Assemble des objets PDF numérotés à partir de 1, puis l'objet `/Info` en dernier,

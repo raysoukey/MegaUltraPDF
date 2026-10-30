@@ -15,7 +15,7 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>
 endobj
 6 0 obj
-<< /Length 1162 >>
+<< /Length 1505 >>
 stream
 BT /Cour 12 Tf 72.00 690.00 Td (Troisieme ligne du paragraphe) Tj ET
 BT /Cour 12 Tf 72.00 720.00 Td (Premiere ligne avec un mot ) Tj ET
@@ -24,19 +24,23 @@ BT /Cour 12 Tf 72.00 705.00 Td (Deuxieme ligne du paragraphe) Tj ET
 BT /Cour 12 Tf 90.00 640.00 Td (Utilisateur :) Tj ET
 BT /Cour 12 Tf 90.00 625.00 Td (Entreprise :) Tj ET
 BT /Cour 12 Tf 90.00 610.00 Td (Ville :) Tj ET
+BT /Cour 12 Tf 90.00 595.00 Td (Pays :) Tj ET
+BT /Cour 12 Tf 90.00 580.00 Td (Telephone :) Tj ET
 BT /Cour 12 Tf 300.00 640.00 Td (ALICE) Tj ET
 BT /Cour 12 Tf 300.00 625.00 Td (B42) Tj ET
 BT /Cour 12 Tf 300.00 610.00 Td (Quebec) Tj ET
-BT /Cour 12 Tf 72.00 560.00 Td (Gauche un) Tj ET
-BT /Cour 12 Tf 320.00 560.00 Td (Droite un) Tj ET
-BT /Cour 12 Tf 72.00 545.00 Td (Gauche deux) Tj ET
-BT /Cour 12 Tf 320.00 545.00 Td (Droite deux) Tj ET
-BT /Cour 12 Tf 72.00 530.00 Td (Gauche trois) Tj ET
-BT /Cour 12 Tf 320.00 530.00 Td (Droite trois) Tj ET
-BT /Cour 12 Tf 72.00 515.00 Td (Gauche quatre) Tj ET
-BT /Cour 12 Tf 320.00 515.00 Td (Droite quatre) Tj ET
-BT /Cour 12 Tf 72.00 500.00 Td (Gauche cinq) Tj ET
-BT /Cour 12 Tf 320.00 500.00 Td (Droite cinq) Tj ET
+BT /Cour 12 Tf 300.00 595.00 Td (Canada) Tj ET
+BT /Cour 12 Tf 300.00 580.00 Td (555-0100) Tj ET
+BT /Cour 12 Tf 72.00 530.00 Td (Gauche ligne un du texte) Tj ET
+BT /Cour 12 Tf 300.00 530.00 Td (Droite ligne un du texte) Tj ET
+BT /Cour 12 Tf 72.00 515.00 Td (Gauche ligne deux du texte) Tj ET
+BT /Cour 12 Tf 300.00 515.00 Td (Droite ligne deux du texte) Tj ET
+BT /Cour 12 Tf 72.00 500.00 Td (Gauche ligne trois du texte) Tj ET
+BT /Cour 12 Tf 300.00 500.00 Td (Droite ligne trois du texte) Tj ET
+BT /Cour 12 Tf 72.00 485.00 Td (Gauche ligne quatre du texte) Tj ET
+BT /Cour 12 Tf 300.00 485.00 Td (Droite ligne quatre du texte) Tj ET
+BT /Cour 12 Tf 72.00 470.00 Td (Gauche ligne cinq du texte) Tj ET
+BT /Cour 12 Tf 300.00 470.00 Td (Droite ligne cinq du texte) Tj ET
 BT /CourB 12 Tf 266.40 720.00 Td (GRAS) Tj ET
 BT /Cour 12 Tf 420.00 780.00 Td (Le 3 mars 2026) Tj ET
 endstream
@@ -53,9 +57,9 @@ xref
 0000000256 00000 n 
 0000000351 00000 n 
 0000000451 00000 n 
-0000001664 00000 n 
+0000002007 00000 n 
 trailer
 << /Size 8 /Root 1 0 R /Info 7 0 R >>
 startxref
-1818
+2161
 %%EOF

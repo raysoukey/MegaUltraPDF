@@ -100,8 +100,11 @@ impl Document {
                 return Err(e);
             }
         };
+        // Tous les caractères que PDFium voit sous la zone, y compris ceux sans emprise que la
+        // couche texte écarte (comportement d'avant le correctif 0.12.2). Limite : un texte à
+        // l'échelle nulle (`0 Tz`) n'apparaît pas du tout dans la couche de PDFium.
         let remaining = self
-            .text_boxes(page)?
+            .drawn_chars(page)?
             .into_iter()
             .filter(|b| {
                 let (cx, cy) = (b.rect.x + b.rect.w / 2.0, b.rect.y + b.rect.h / 2.0);

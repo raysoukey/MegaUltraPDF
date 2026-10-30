@@ -6,7 +6,8 @@
 //! dessinée après celle des libellés, des lignes dans le désordre… La sélection (une plage
 //! d'index) et la copie ramassaient alors des morceaux de toute la page. Ce module recalcule
 //! l'ordre à partir de la **géométrie** seule : il ne connaît que des rectangles, ce qui le rend
-//! testable sans PDF.
+//! testable sans PDF. Les rectangles viennent d'un fichier non fiable : le calcul ne doit ni
+//! paniquer ni épuiser la pile, quelle que soit leur disposition.
 
 use crate::geometry::Rect;
 
@@ -17,16 +18,32 @@ pub type Block = Vec<Vec<usize>>;
 /// Deux caractères sont sur la même ligne si leurs étendues verticales se recouvrent d'au
 /// moins cette part de la plus petite hauteur (un exposant reste sur sa ligne).
 const SAME_LINE_OVERLAP: f32 = 0.5;
-/// Dans une ligne, un blanc plus large que ce multiple de la hauteur médiane `H` sépare deux
-/// segments (une tabulation entre un libellé et sa valeur, ou deux colonnes).
+/// Un caractère plus haut que ce multiple de la hauteur médiane `H` (lettrine, grande
+/// parenthèse, métrique de police cassée) rejoint une ligne sans l'agrandir : sinon il
+/// fusionnerait toutes les lignes qu'il couvre.
+const TALL: f32 = 1.5;
+/// Dans une ligne, un blanc plus large que ce multiple de `H` sépare deux segments (une
+/// tabulation entre un libellé et sa valeur, ou deux colonnes).
 const SEGMENT_GAP: f32 = 1.5;
 /// Une bande verticale vide d'au moins ce multiple de `H` peut séparer deux colonnes…
 const COLUMN_GAP: f32 = 1.0;
-/// … à condition que chaque côté compte au moins ce nombre de lignes : une petite liste
-/// « libellé : valeur » se lit ainsi ligne par ligne, et non colonne par colonne.
-const COLUMN_MIN_LINES: usize = 4;
-/// Un vide vertical d'au moins ce multiple de `H` sépare deux paragraphes.
+/// … si chaque côté ressemble à de la **prose** : des segments d'au moins ce multiple de `H`
+/// de large (largeur médiane). Les libellés, numéros et valeurs courtes d'une liste ou d'un
+/// tableau ne le sont pas : ils restent lus ligne par ligne…
+const COLUMN_MIN_WIDTH: f32 = 12.0;
+/// … et si chaque côté compte au moins ce nombre de lignes.
+const COLUMN_MIN_LINES: usize = 2;
+/// On n'essaie que les bandes vides les plus larges : les colonnes sont séparées par les plus
+/// grands blancs, et cela borne le travail sur une page fabriquée avec des milliers de bandes.
+const COLUMN_CANDIDATES: usize = 8;
+/// Un vide vertical d'au moins ce multiple de `H` sépare deux paragraphes…
 const PARAGRAPH_GAP: f32 = 0.8;
+/// … et d'au moins ce multiple du plus petit interligne du bloc (texte en double interligne).
+const PARAGRAPH_VS_LINE_GAP: f32 = 1.5;
+/// Budget de travail du découpage (en segments examinés, par segment de la page) : au-delà, un
+/// morceau est lu tel quel, ligne par ligne. Une page normale en utilise une petite fraction ;
+/// une page fabriquée pour faire durer le calcul ne peut pas le rendre quadratique.
+const WORK_PER_SEGMENT: usize = 64;
 
 /// Un morceau de ligne d'un seul tenant : sa ligne, ses caractères (de gauche à droite) et
 /// son emprise.
@@ -37,20 +54,21 @@ struct Segment {
 }
 
 /// Les blocs de la page dans l'ordre de lecture. Les rectangles de largeur ou de hauteur
-/// nulle (sauts de ligne ajoutés par PDFium) sont ignorés.
+/// nulle (sauts de ligne ajoutés par PDFium) ou non finis (fichier corrompu) sont ignorés.
 pub fn layout(rects: &[Rect]) -> Vec<Block> {
-    let visible: Vec<usize> = (0..rects.len())
-        .filter(|&i| rects[i].w > 0.0 && rects[i].h > 0.0)
-        .collect();
+    let visible: Vec<usize> = (0..rects.len()).filter(|&i| usable(&rects[i])).collect();
     if visible.is_empty() {
         return Vec::new();
     }
     let h = median_height(rects, &visible);
     let lines = group_lines(rects, visible, h);
     let segments = split_segments(rects, &lines, h);
-    let mut blocks = Vec::new();
-    xy_cut(&segments, (0..segments.len()).collect(), h, &mut blocks);
-    blocks
+    xy_cut(&segments, h)
+}
+
+/// Vrai si le rectangle peut servir au calcul : coordonnées finies, largeur et hauteur > 0.
+fn usable(r: &Rect) -> bool {
+    [r.x, r.y, r.w, r.h].iter().all(|v| v.is_finite()) && r.w > 0.0 && r.h > 0.0
 }
 
 /// Hauteur médiane des caractères : l'unité de mesure des seuils (≈ la taille du texte).
@@ -65,21 +83,28 @@ fn center_y(r: &Rect) -> f32 {
     r.y + r.h / 2.0
 }
 
+/// Recouvrement vertical de deux étendues `[bas, haut]` (négatif si elles sont disjointes).
+fn overlap(bottom: f32, top: f32, r: &Rect) -> f32 {
+    top.min(r.y + r.h) - bottom.max(r.y)
+}
+
 /// Regroupe les caractères en lignes, de la plus haute à la plus basse ; dans chaque ligne,
 /// les caractères sont rangés de gauche à droite par `order_line`.
 ///
 /// \[Apprentissage\] **Trier, puis balayer** : une fois les caractères triés par hauteur, une
 /// ligne est une suite de voisins qui se recouvrent ; un seul passage suffit à les regrouper.
 /// `sort_by(|a, b| …total_cmp…)` trie des `f32` (qui n'ont pas d'ordre total à cause de `NaN`).
-fn group_lines(rects: &[Rect], mut visible: Vec<usize>, h: f32) -> Vec<Vec<usize>> {
-    visible.sort_by(|&a, &b| center_y(&rects[b]).total_cmp(&center_y(&rects[a])));
+fn group_lines(rects: &[Rect], visible: Vec<usize>, h: f32) -> Vec<Vec<usize>> {
+    // Les caractères trop hauts ne dessinent pas les lignes : on les rattache après coup.
+    let (mut normal, tall): (Vec<usize>, Vec<usize>) =
+        visible.into_iter().partition(|&i| rects[i].h <= TALL * h);
+    normal.sort_by(|&a, &b| center_y(&rects[b]).total_cmp(&center_y(&rects[a])));
     // Chaque ligne : ses caractères et sa bande verticale (bas, haut).
     let mut lines: Vec<(Vec<usize>, f32, f32)> = Vec::new();
-    for i in visible {
+    for i in normal {
         let r = &rects[i];
         let joins = lines.last().is_some_and(|(_, bottom, top)| {
-            let overlap = top.min(r.y + r.h) - bottom.max(r.y);
-            overlap >= SAME_LINE_OVERLAP * (top - bottom).min(r.h)
+            overlap(*bottom, *top, r) >= SAME_LINE_OVERLAP * (top - bottom).min(r.h)
         });
         match lines.last_mut() {
             Some((chars, bottom, top)) if joins => {
@@ -90,6 +115,24 @@ fn group_lines(rects: &[Rect], mut visible: Vec<usize>, h: f32) -> Vec<Vec<usize
             _ => lines.push((vec![i], r.y, r.y + r.h)),
         }
     }
+    // Un caractère haut rejoint la ligne qu'il recouvre le plus (à égalité, la plus haute :
+    // une lettrine commence sa première ligne) ; sans recouvrement, il forme sa propre ligne.
+    for t in tall {
+        let r = &rects[t];
+        let mut best: Option<(usize, f32)> = None;
+        for (k, (_, bottom, top)) in lines.iter().enumerate() {
+            let o = overlap(*bottom, *top, r);
+            if o > 0.0 && best.is_none_or(|(_, b)| o > b) {
+                best = Some((k, o));
+            }
+        }
+        match best {
+            Some((k, _)) => lines[k].0.push(t),
+            None => lines.push((vec![t], r.y, r.y + r.h)),
+        }
+    }
+    // Les lignes ajoutées pour des caractères hauts isolés reprennent leur place (de haut en bas).
+    lines.sort_by(|a, b| (b.1 + b.2).total_cmp(&(a.1 + a.2)));
     lines
         .into_iter()
         .map(|(chars, _, _)| order_line(rects, chars, h))
@@ -164,32 +207,40 @@ fn segment(rects: &[Rect], line: usize, chars: Vec<usize>) -> Segment {
     }
 }
 
-/// Découpage « XY » récursif : coupe en colonnes s'il le faut, sinon en paragraphes, et range
-/// chaque morceau final comme un bloc.
+/// Découpage « XY » : chaque morceau est coupé en colonnes s'il le faut, sinon au plus grand
+/// vide entre paragraphes ; un morceau qu'on ne peut plus couper devient un bloc.
 ///
-/// \[Apprentissage\] **Récursion** : la fonction s'appelle elle-même sur chaque moitié ; elle
-/// s'arrête quand plus aucune coupe n'est possible (une « feuille »). Chaque appel reçoit un
-/// ensemble strictement plus petit, donc la récursion se termine.
-fn xy_cut(segments: &[Segment], ids: Vec<usize>, h: f32, out: &mut Vec<Block>) {
-    if let Some((left, right)) = column_cut(segments, &ids, h) {
-        xy_cut(segments, left, h, out);
-        xy_cut(segments, right, h, out);
-        return;
-    }
-    let bands = paragraph_bands(segments, ids, h);
-    if bands.len() > 1 {
-        for band in bands {
-            xy_cut(segments, band, h, out);
+/// \[Apprentissage\] **Une pile au lieu de la récursion** : une fonction récursive empile un
+/// appel par niveau, et la pile d'un fil est petite (quelques Mo). Un fichier malveillant peut
+/// provoquer des dizaines de milliers de niveaux et faire tomber l'application. Ici, les
+/// morceaux à traiter attendent dans un `Vec` (sur le tas, sans limite pratique) : on dépile le
+/// prochain à lire, et ses deux moitiés sont empilées « second, puis premier » pour que le
+/// premier soit lu d'abord.
+fn xy_cut(segments: &[Segment], h: f32) -> Vec<Block> {
+    let budget = WORK_PER_SEGMENT * segments.len() + 1024;
+    let mut work = 0;
+    let mut blocks = Vec::new();
+    let mut pending: Vec<Vec<usize>> = vec![(0..segments.len()).collect()];
+    while let Some(ids) = pending.pop() {
+        work += ids.len();
+        let cut = if work > budget {
+            None
+        } else {
+            column_cut(segments, &ids, h).or_else(|| paragraph_cut(segments, &ids, h))
+        };
+        match cut {
+            Some((first, second)) => {
+                pending.push(second);
+                pending.push(first);
+            }
+            None => blocks.push(leaf(segments, &ids)),
         }
-        return;
     }
-    if let Some(band) = bands.into_iter().next() {
-        out.push(leaf(segments, &band));
-    }
+    blocks
 }
 
-/// Une coupe en colonnes : la plus large bande verticale vide (d'au moins `COLUMN_GAP × H`)
-/// dont chaque côté compte au moins `COLUMN_MIN_LINES` lignes.
+/// Une coupe en colonnes : parmi les plus larges bandes verticales vides (d'au moins
+/// `COLUMN_GAP × H`), la première dont les deux côtés ressemblent à de la prose.
 fn column_cut(segments: &[Segment], ids: &[usize], h: f32) -> Option<(Vec<usize>, Vec<usize>)> {
     // Projection horizontale : les intervalles couverts, fusionnés.
     let mut spans: Vec<(f32, f32)> = ids
@@ -216,44 +267,61 @@ fn column_cut(segments: &[Segment], ids: &[usize], h: f32) -> Option<(Vec<usize>
         .filter(|(a, b)| b - a >= COLUMN_GAP * h)
         .collect();
     gaps.sort_by(|a, b| (b.1 - b.0).total_cmp(&(a.1 - a.0)));
-    for (gap_start, _) in gaps {
+    for (gap_start, _) in gaps.into_iter().take(COLUMN_CANDIDATES) {
         let (left, right): (Vec<usize>, Vec<usize>) = ids
             .iter()
             .partition(|&&s| segments[s].bounds.x + segments[s].bounds.w <= gap_start);
-        if distinct_lines(segments, &left) >= COLUMN_MIN_LINES
-            && distinct_lines(segments, &right) >= COLUMN_MIN_LINES
-        {
+        if is_column(segments, &left, h) && is_column(segments, &right, h) {
             return Some((left, right));
         }
     }
     None
 }
 
-/// Nombre de lignes différentes touchées par ces segments.
-fn distinct_lines(segments: &[Segment], ids: &[usize]) -> usize {
+/// Vrai si ces segments ont l'allure d'une colonne de texte : assez de lignes, et des segments
+/// assez larges (une colonne de libellés, de numéros ou de valeurs courtes n'en est pas une).
+fn is_column(segments: &[Segment], ids: &[usize], h: f32) -> bool {
     let mut lines: Vec<usize> = ids.iter().map(|&s| segments[s].line).collect();
     lines.sort_unstable();
     lines.dedup();
-    lines.len()
+    if lines.len() < COLUMN_MIN_LINES {
+        return false;
+    }
+    let mut widths: Vec<f32> = ids.iter().map(|&s| segments[s].bounds.w).collect();
+    widths.sort_by(f32::total_cmp);
+    widths[widths.len() / 2] >= COLUMN_MIN_WIDTH * h
 }
 
-/// Coupe aux grands vides verticaux (`PARAGRAPH_GAP × H`) : des bandes, de haut en bas.
-fn paragraph_bands(segments: &[Segment], mut ids: Vec<usize>, h: f32) -> Vec<Vec<usize>> {
+/// Une coupe au **plus grand** vide vertical entre paragraphes : d'au moins `PARAGRAPH_GAP × H`
+/// et d'au moins `PARAGRAPH_VS_LINE_GAP` fois le plus petit interligne du morceau. Couper au
+/// plus grand vide d'abord laisse aux colonnes une chance d'être reconnues à l'étape suivante
+/// (un titre au-dessus de deux colonnes, par exemple).
+fn paragraph_cut(segments: &[Segment], ids: &[usize], h: f32) -> Option<(Vec<usize>, Vec<usize>)> {
     let top = |s: usize| segments[s].bounds.y + segments[s].bounds.h;
-    ids.sort_by(|&a, &b| top(b).total_cmp(&top(a)));
-    // Chaque bande : ses segments et son bord bas.
-    let mut bands: Vec<(Vec<usize>, f32)> = Vec::new();
-    for s in ids {
-        let bottom = segments[s].bounds.y;
-        match bands.last_mut() {
-            Some((members, band_bottom)) if top(s) > *band_bottom - PARAGRAPH_GAP * h => {
-                members.push(s);
-                *band_bottom = band_bottom.min(bottom);
-            }
-            _ => bands.push((vec![s], bottom)),
+    let mut order: Vec<usize> = ids.to_vec();
+    order.sort_by(|&a, &b| top(b).total_cmp(&top(a)));
+    // Un vide sépare le morceau à la position `k` si le segment `k` est entièrement sous tous
+    // les précédents.
+    let mut gaps: Vec<(usize, f32)> = Vec::new();
+    let mut lowest = f32::MAX;
+    for (k, &s) in order.iter().enumerate() {
+        if k > 0 && top(s) < lowest {
+            gaps.push((k, lowest - top(s)));
         }
+        lowest = lowest.min(segments[s].bounds.y);
     }
-    bands.into_iter().map(|(members, _)| members).collect()
+    let smallest = if gaps.len() >= 2 {
+        gaps.iter().map(|g| g.1).fold(f32::MAX, f32::min)
+    } else {
+        0.0
+    };
+    let threshold = (PARAGRAPH_GAP * h).max(PARAGRAPH_VS_LINE_GAP * smallest);
+    let (k, _) = gaps
+        .into_iter()
+        .filter(|g| g.1 >= threshold)
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    let second = order.split_off(k);
+    Some((order, second))
 }
 
 /// Un bloc final : ses lignes de haut en bas, chacune avec ses segments de gauche à droite.
@@ -380,18 +448,161 @@ mod tests {
         assert_eq!(text, "Nom: Alice\nCode: A12\nVille: Quebec");
     }
 
+    /// Une ligne de prose de 30 caractères (180 pt, soit 15 H) : « <mot> » complété de points.
+    fn prose(word: &str) -> String {
+        format!("{word:.<30}")
+    }
+
     #[test]
     fn two_columns_read_column_by_column() {
-        // Deux colonnes de 5 lignes dessinées en alternance gauche, droite.
+        // Deux colonnes de prose de 5 lignes dessinées en alternance gauche, droite.
+        let left: Vec<String> = (1..=5).map(|k| prose(&format!("g{k}"))).collect();
+        let right: Vec<String> = (1..=5).map(|k| prose(&format!("d{k}"))).collect();
         let mut words = Vec::new();
-        let left = ["g1", "g2", "g3", "g4", "g5"];
-        let right = ["d1", "d2", "d3", "d4", "d5"];
         for k in 0..5 {
             let y = 700.0 - 14.0 * k as f32;
-            words.push((left[k], 72.0, y));
-            words.push((right[k], 320.0, y));
+            words.push((left[k].as_str(), 72.0, y));
+            words.push((right[k].as_str(), 300.0, y));
         }
-        assert_eq!(read(&words), "g1\ng2\ng3\ng4\ng5\n\nd1\nd2\nd3\nd4\nd5");
+        let expected = format!("{}\n\n{}", left.join("\n"), right.join("\n"));
+        assert_eq!(read(&words), expected);
+    }
+
+    /// Relecture (I3) : un titre sur toute la largeur, puis deux colonnes dont les paragraphes
+    /// s'arrêtent à la même hauteur : la page ne doit pas être lue rangée par rangée.
+    #[test]
+    fn two_columns_under_a_title_with_aligned_paragraphs() {
+        let title = "Titre du document sur toute la largeur de la page.";
+        let left: Vec<String> = (1..=6).map(|k| prose(&format!("g{k}"))).collect();
+        let right: Vec<String> = (1..=6).map(|k| prose(&format!("d{k}"))).collect();
+        let ys = [700.0, 686.0, 672.0, 640.0, 626.0, 612.0];
+        let mut words = vec![(title, 72.0, 760.0)];
+        for k in 0..6 {
+            words.push((left[k].as_str(), 72.0, ys[k]));
+            words.push((right[k].as_str(), 300.0, ys[k]));
+        }
+        let column = |c: &[String]| format!("{}\n\n{}", c[..3].join("\n"), c[3..].join("\n"));
+        let expected = format!("{title}\n\n{}\n\n{}", column(&left), column(&right));
+        assert_eq!(read(&words), expected);
+    }
+
+    /// Relecture (I3) : la colonne de droite n'a que 3 lignes (dernière page d'un article).
+    #[test]
+    fn a_short_right_column_is_still_a_column() {
+        let left: Vec<String> = (1..=6).map(|k| prose(&format!("g{k}"))).collect();
+        let right: Vec<String> = (1..=3).map(|k| prose(&format!("d{k}"))).collect();
+        let mut words = Vec::new();
+        for (k, l) in left.iter().enumerate() {
+            words.push((l.as_str(), 72.0, 700.0 - 14.0 * k as f32));
+        }
+        for (k, r) in right.iter().enumerate() {
+            words.push((r.as_str(), 300.0, 700.0 - 14.0 * k as f32));
+        }
+        assert_eq!(
+            read(&words),
+            format!("{}\n\n{}", left.join("\n"), right.join("\n"))
+        );
+    }
+
+    /// Relecture (I1) : une liste « libellé : valeur » de 5 lignes se lit encore ligne par ligne.
+    #[test]
+    fn five_label_value_rows_read_row_by_row() {
+        let labels = ["Nom:", "Code:", "Ville:", "Pays:", "Tel:"];
+        let values = ["Alice", "A12", "Quebec", "Canada", "555"];
+        let mut words = Vec::new();
+        for (k, label) in labels.iter().enumerate() {
+            words.push((*label, 72.0, 700.0 - 14.0 * k as f32));
+        }
+        for (k, value) in values.iter().enumerate() {
+            words.push((*value, 250.0, 700.0 - 14.0 * k as f32));
+        }
+        assert_eq!(
+            read(&words),
+            "Nom: Alice\nCode: A12\nVille: Quebec\nPays: Canada\nTel: 555"
+        );
+    }
+
+    /// Relecture (I1) : une liste numérotée dont le texte commence loin du numéro.
+    #[test]
+    fn numbered_list_reads_row_by_row() {
+        let items: Vec<String> = (1..=5).map(|k| prose(&format!("element {k}"))).collect();
+        let mut words = Vec::new();
+        let numbers = ["1.", "2.", "3.", "4.", "5."];
+        for (k, number) in numbers.iter().enumerate() {
+            words.push((*number, 72.0, 700.0 - 14.0 * k as f32));
+        }
+        for (k, item) in items.iter().enumerate() {
+            words.push((item.as_str(), 108.0, 700.0 - 14.0 * k as f32));
+        }
+        let expected: Vec<String> = (0..5)
+            .map(|k| format!("{} {}", numbers[k], items[k]))
+            .collect();
+        assert_eq!(read(&words), expected.join("\n"));
+    }
+
+    /// Relecture (I2) : une lettrine haute de trois lignes ne fusionne pas ces lignes.
+    #[test]
+    fn a_drop_cap_does_not_merge_lines() {
+        let (mut chars, mut rects) = page(&[
+            ("orem ipsum", 106.0, 700.0),
+            ("dolor sit", 106.0, 686.0),
+            ("amet cons", 106.0, 672.0),
+        ]);
+        chars.insert(0, 'L');
+        rects.insert(
+            0,
+            Rect {
+                x: 72.0,
+                y: 672.0,
+                w: 30.0,
+                h: 40.0,
+            },
+        );
+        assert_eq!(
+            blocks_text(&layout(&rects), &chars, &rects),
+            "Lorem ipsum\ndolor sit\namet cons"
+        );
+    }
+
+    /// Relecture (M1) : des rectangles infinis ou invalides (fichier malveillant) sont ignorés.
+    #[test]
+    fn non_finite_boxes_are_ignored() {
+        let (mut chars, mut rects) = page(&[("ab", 72.0, 700.0)]);
+        chars.push('Z');
+        rects.push(Rect {
+            x: 72.0,
+            y: 690.0,
+            w: 6.0,
+            h: f32::INFINITY,
+        });
+        chars.push('Y');
+        rects.push(Rect {
+            x: f32::NAN,
+            y: 690.0,
+            w: 6.0,
+            h: 12.0,
+        });
+        assert_eq!(layout(&rects), vec![vec![vec![0, 1]]]);
+    }
+
+    /// Relecture (C1) : un « escalier » de 20 000 caractères (chacun sur sa ligne et sa bande
+    /// verticale), fabriqué pour épuiser la pile, ne fait pas tomber l'application. Le calcul
+    /// tourne sur un fil à petite pile (256 Kio) : une récursion profonde y déborderait.
+    #[test]
+    fn a_deep_staircase_does_not_overflow_the_stack() {
+        let rects: Vec<Rect> = (0..20_000)
+            .map(|k| Rect {
+                x: k as f32 * 20.0,
+                y: 300_000.0 - k as f32 * 14.0,
+                w: 6.0,
+                h: 12.0,
+            })
+            .collect();
+        let handle = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || layout(&rects).iter().map(|b| b.len()).sum::<usize>())
+            .unwrap();
+        assert_eq!(handle.join().unwrap(), 20_000);
     }
 
     #[test]

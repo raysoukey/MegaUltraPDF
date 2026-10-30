@@ -158,8 +158,10 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   `change` simulé doit avoir `bubbles: true` (Svelte 5 délègue l'événement à la racine).
 - Couche texte (correctif 0.12.2, ADR-0016) : l'ordre de PDFium est l'**ordre de dessin**, pas celui
   de lecture ; `text_boxes` et `page_text` passent par `reading_order::layout` (fonction pure sur des
-  rectangles, testée sans PDF) et écartent les `\r\n` générés. Ne jamais reconstruire une sélection ou
-  un texte à partir de l'ordre brut de PDFium. Fixture : `fixtures/out-of-order.pdf`, scénario `selection`.
+  rectangles, testée sans PDF, pile explicite et non récursion) et écartent les `\r\n` générés ; le
+  texte tourné garde son ordre de dessin. Chaque `TextBox` porte `line` et `block` : l'interface vise et
+  copie avec eux, jamais avec la géométrie ni l'ordre brut de PDFium. Le contrôle après caviardage utilise
+  `drawn_chars` (non filtré). Fixture : `fixtures/out-of-order.pdf`, scénario `selection`.
 - Fermeture (correctif 0.12.1) : avec un `onCloseRequested` dans l'interface, Tauri ne ferme plus la
   fenêtre lui-même, l'API JS appelle `window.destroy()` : la capacité **`core:window:allow-destroy`**
   est obligatoire (test `window-close.test.ts`), sinon la fenêtre ne se ferme jamais. Les scénarios

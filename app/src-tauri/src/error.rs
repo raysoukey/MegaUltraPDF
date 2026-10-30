@@ -56,7 +56,9 @@ impl From<CoreError> for AppError {
             CoreError::InvalidPdf(_) => ErrorKind::InvalidPdf,
             CoreError::PageOutOfRange { .. } => ErrorKind::NotFound,
             CoreError::Io(_) => ErrorKind::Io,
-            CoreError::RenderTooLarge { .. } => ErrorKind::InvalidPdf,
+            CoreError::RenderTooLarge { .. } | CoreError::FileTooLarge { .. } => {
+                ErrorKind::InvalidPdf
+            }
             CoreError::NotFound { .. } => ErrorKind::NotFound,
             CoreError::InvalidPageSpec(_)
             | CoreError::InvalidOperation(_)

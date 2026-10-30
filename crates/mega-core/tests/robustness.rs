@@ -189,3 +189,25 @@ fn the_save_pass_does_not_inflate_a_decompression_bomb() {
     let out = mega_core::cleanup::before_save(&bytes, None).unwrap();
     assert!(out == bytes, "la bombe a été décompressée puis réécrite");
 }
+
+/// R6 : un fichier de plus de 2 Gio (au-delà de ce que PDFium peut charger) est refusé
+/// **avant** d'être lu en mémoire. Le fichier de test est creux : `set_len` ne l'écrit pas.
+#[test]
+fn a_file_over_two_gibibytes_is_refused_before_reading() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("immense.pdf");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(3 * 1024 * 1024 * 1024).unwrap();
+    drop(file);
+    let start = std::time::Instant::now();
+    let result = Document::open(&path, None);
+    assert!(
+        matches!(result, Err(CoreError::FileTooLarge { .. })),
+        "{:?}",
+        result.err()
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "lu en entier"
+    );
+}

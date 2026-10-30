@@ -54,14 +54,10 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     doc.renumber_objects();
     let out = session.finish()?;
     // Ceinture de sécurité : la réécriture `lopdf` remplace le fichier de l'utilisateur ; si
-    // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages, on écrit les
-    // octets PDFium tels quels.
-    if !rewrite_is_sane(pages_before, &out, password) {
-        return Ok(bytes.to_vec());
-    }
-    let reread = crate::crypt::LopdfSession::load(&out, password)
-        .ok()
-        .and_then(|s| page_contents(&s.doc));
+    // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages et les mêmes
+    // contenus, on écrit les octets PDFium tels quels. Une seule relecture pour les deux
+    // contrôles (audit du Lot 13, R6 : trois chargements par enregistrement auparavant).
+    let reread = reload_if_sane(pages_before, &out, password).and_then(|s| page_contents(&s.doc));
     if reread.as_ref() != Some(&contents_before) {
         return Ok(bytes.to_vec());
     }
@@ -168,13 +164,18 @@ pub(crate) fn prune(doc: &mut Document) -> usize {
 /// Vrai si `out` se relit (et, s'il est chiffré, se déchiffre avec `password`) comme un PDF
 /// non vide ayant encore `pages_before` pages.
 pub(crate) fn rewrite_is_sane(pages_before: usize, out: &[u8], password: Option<&str>) -> bool {
-    match crate::crypt::LopdfSession::load(out, password) {
-        Ok(reloaded) => {
-            reloaded.doc.get_pages().len() == pages_before
-                && reloaded.doc.trailer.get(b"Root").is_ok()
-        }
-        Err(_) => false,
-    }
+    reload_if_sane(pages_before, out, password).is_some()
+}
+
+/// `out` relu (et déchiffré), s'il passe le contrôle de [`rewrite_is_sane`].
+fn reload_if_sane(
+    pages_before: usize,
+    out: &[u8],
+    password: Option<&str>,
+) -> Option<crate::crypt::LopdfSession> {
+    let reloaded = crate::crypt::LopdfSession::load(out, password).ok()?;
+    (reloaded.doc.get_pages().len() == pages_before && reloaded.doc.trailer.get(b"Root").is_ok())
+        .then_some(reloaded)
 }
 
 /// Nettoie chaque annotation d'une page. PDFium écrit une annotation fraîchement créée

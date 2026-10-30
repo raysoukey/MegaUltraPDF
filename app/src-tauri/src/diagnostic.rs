@@ -142,9 +142,10 @@ pub fn record(error: &AppError) {
 }
 
 /// Le message `message` sans ce qui pourrait venir de l'utilisateur : chaque passage entre
-/// guillemets (« », " ", ou ' ' ouvrant après une espace, pour épargner les apostrophes de
-/// « d'accès ») devient `«…»`, chaque mot qui contient `/` ou `\` (un chemin) devient
-/// `«chemin»`, et le tout est coupé à [`MAX_MESSAGE_CHARS`] caractères.
+/// guillemets (« », " ", accents graves, ou ' ' ouvrant après une espace, pour épargner les
+/// apostrophes de « d'accès ») devient `«…»`, un chemin (mot qui contient `/` ou `\`, avec
+/// ses espaces éventuelles) devient `«chemin»`, et le tout est coupé à [`MAX_MESSAGE_CHARS`]
+/// caractères.
 pub fn sanitize(message: &str) -> String {
     let mut out = String::new();
     let mut chars = message.chars().peekable();
@@ -153,6 +154,8 @@ pub fn sanitize(message: &str) -> String {
         let closing = match c {
             '«' => Some('»'),
             '"' => Some('"'),
+            // Les messages de panique de la bibliothèque standard citent entre accents graves.
+            '`' => Some('`'),
             '\'' if previous.is_whitespace() || previous == '(' => Some('\''),
             _ => None,
         };
@@ -172,19 +175,32 @@ pub fn sanitize(message: &str) -> String {
             }
         }
     }
-    let masked: Vec<String> = out
-        .split(' ')
-        .map(|word| {
-            if !word.contains(['/', '\\']) {
-                return word.to_string();
+    // Un chemin peut contenir des espaces (« C:\\Users\\Jean Dupont\\… ») : à partir du premier
+    // mot qui contient un séparateur, on masque jusqu'à la parenthèse fermante si le chemin en
+    // ouvre une, sinon jusqu'à la fin du message.
+    let mut masked: Vec<String> = Vec::new();
+    let mut words = out.split(' ');
+    while let Some(word) = words.next() {
+        if !word.contains(['/', '\\']) {
+            masked.push(word.to_string());
+            continue;
+        }
+        let core = word.trim_start_matches(['(', '[', '{']);
+        let lead = &word[..word.len() - core.len()];
+        if !lead.contains('(') {
+            masked.push(format!("{lead}«chemin»"));
+            break;
+        }
+        let mut last = word;
+        while !last.contains(')') {
+            match words.next() {
+                Some(next) => last = next,
+                None => break,
             }
-            let core = word.trim_start_matches(['(', '[', '{']);
-            let lead = &word[..word.len() - core.len()];
-            let core_end = core.trim_end_matches([')', ']', '}', ',', ';', ':', '.']);
-            let tail = &core[core_end.len()..];
-            format!("{lead}«chemin»{tail}")
-        })
-        .collect();
+        }
+        let tail = last.find(')').map_or("", |k| &last[k..]);
+        masked.push(format!("{lead}«chemin»{tail}"));
+    }
     let text = masked.join(" ");
     if text.chars().count() > MAX_MESSAGE_CHARS {
         let mut cut: String = text.chars().take(MAX_MESSAGE_CHARS).collect();
@@ -293,9 +309,34 @@ mod tests {
         );
         assert_eq!(
             sanitize("lecture de /home/moi/Documents/lettre.pdf impossible"),
-            "lecture de «chemin» impossible"
+            // Fin du chemin inconnue (il peut contenir des espaces) : masqué jusqu'au bout.
+            "lecture de «chemin»"
         );
         assert!(sanitize(&"x".repeat(1000)).chars().count() <= MAX_MESSAGE_CHARS + 1);
+    }
+
+    /// Relecture de la PR A : un message de panique de la bibliothèque standard cite la chaîne
+    /// fautive entre accents graves (du texte de document, peut-être), et un chemin peut
+    /// contenir des espaces.
+    #[test]
+    fn panic_quotes_and_paths_with_spaces_are_masked() {
+        // Format des versions de Rust qui citent la chaîne fautive entre accents graves.
+        let message = "byte index 23 is not a char boundary; it is inside 'é' (bytes 23..25)                        of `Facture confidentielle é`";
+        assert!(
+            !sanitize(message).contains("confidentielle"),
+            "{}",
+            sanitize(message)
+        );
+        assert_eq!(
+            sanitize(r"le fichier C:\Users\Jean Dupont\Mes documents\Facture EDF.png existe déjà"),
+            "le fichier «chemin»"
+        );
+        assert_eq!(
+            sanitize(
+                r"Tesseract introuvable (C:\Program Files\Tesseract-OCR\tesseract.exe) : échec"
+            ),
+            "Tesseract introuvable («chemin») : échec"
+        );
     }
 
     #[test]

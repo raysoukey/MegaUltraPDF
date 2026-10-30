@@ -438,3 +438,28 @@ fn glyphs_without_unicode_keep_their_place() {
         "{text:?}"
     );
 }
+
+/// Relecture de la PR B (critique) : des mots séparés par du crénage, sans caractère espace
+/// (LaTeX), gardent leurs espaces dans la copie, l'export et la recherche.
+#[test]
+fn kerned_words_keep_their_spaces() {
+    let doc = Document::from_bytes(mega_core::testing::kerned_pdf(), None).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().trim(), "Hello world foo bar");
+    let boxes: String = doc.text_boxes(0).unwrap().iter().map(|b| b.ch).collect();
+    assert_eq!(boxes.trim(), "Hello world foo bar");
+    let find = |q: &str, whole_word: bool| {
+        doc.search_page(
+            0,
+            q,
+            &mega_core::SearchOptions {
+                match_case: false,
+                whole_word,
+            },
+        )
+        .unwrap()
+        .len()
+    };
+    assert_eq!(find("hello world", false), 1);
+    assert_eq!(find("hello", true), 1);
+    assert_eq!(find("world foo", true), 1);
+}

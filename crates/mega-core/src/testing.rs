@@ -278,6 +278,28 @@ pdfaid:part=\"2\" pdfaid:conformance=\"B\"/>\
     assemble_pdf(&objects, "<< /Title (Archive) >>")
 }
 
+/// Une ligne dont les mots sont séparés par du **crénage** (`TJ` avec un décalage négatif),
+/// sans aucun caractère espace, comme l'écrivent pdfTeX (LaTeX) et beaucoup de générateurs :
+/// « Hello world foo bar ». PDFium y ajoute des espaces sans emprise, que la couche de texte
+/// doit garder (relecture de la PR B du Lot 13).
+pub fn kerned_pdf() -> Vec<u8> {
+    let content = "BT /F1 24 Tf 72 700 Td [(Hello)-333(world)-333(foo)-333(bar)] TJ ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Title (Crenage) >>")
+}
+
 pub fn xmp_pdf() -> Vec<u8> {
     let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\

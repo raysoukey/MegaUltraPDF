@@ -64,7 +64,7 @@ impl Document {
     /// Tous les caractères de la page `index`, dans l'ordre de lecture, avec leurs numéros de
     /// ligne et de bloc.
     pub fn text_boxes(&self, index: u16) -> CoreResult<Vec<TextBox>> {
-        let drawn = self.drawn_chars(index)?;
+        let drawn = self.reading_chars(index)?;
         let mut boxes = Vec::with_capacity(drawn.len());
         let mut line_number: u32 = 0;
         for (block_number, block) in (0u32..).zip(page_blocks(&drawn)) {
@@ -86,7 +86,7 @@ impl Document {
     /// Tout le texte de la page `index`, dans l'ordre de lecture (export texte) : le même que
     /// celui de la sélection et de la copie.
     pub fn page_text(&self, index: u16) -> CoreResult<String> {
-        let drawn = self.drawn_chars(index)?;
+        let drawn = self.reading_chars(index)?;
         let chars: Vec<char> = drawn.iter().map(|d| d.ch).collect();
         let rects: Vec<Rect> = drawn.iter().map(|d| d.rect).collect();
         Ok(crate::reading_order::blocks_text(
@@ -94,6 +94,14 @@ impl Document {
             &chars,
             &rects,
         ))
+    }
+
+    /// Les caractères que lit la couche de texte : ceux de [`Document::drawn_chars`], où chaque
+    /// espace **ajoutée par PDFium** entre deux mots reçoit l'emprise du blanc qu'elle
+    /// représente (voir [`with_word_spaces`]). Le contrôle après caviardage, lui, garde
+    /// `drawn_chars` : une espace reconstituée n'est pas du texte du fichier.
+    pub(crate) fn reading_chars(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
+        Ok(with_word_spaces(self.drawn_chars(index)?))
     }
 
     /// Les caractères de la page dans l'ordre où le fichier les dessine, en espace affiché.
@@ -153,6 +161,42 @@ impl Document {
             .map(|rects| SearchHit { page: index, rects })
             .collect())
     }
+}
+
+/// Donne une emprise aux espaces **sans emprise** que PDFium ajoute entre deux mots
+/// (relecture de la PR B du Lot 13).
+///
+/// Beaucoup de fichiers (pdfTeX, donc LaTeX) séparent les mots par un simple décalage
+/// (crénage `TJ`), sans caractère espace. PDFium ajoute alors une espace de largeur nulle,
+/// que l'ordre de lecture écartait : « Helloworld » à la copie, à l'export et à la recherche.
+/// Chaque espace sans emprise entre deux caractères horizontaux de la même ligne, séparés par
+/// un blanc de mot (au plus une hauteur de caractère), reçoit le rectangle de ce blanc.
+fn with_word_spaces(mut chars: Vec<DrawnChar>) -> Vec<DrawnChar> {
+    for i in 1..chars.len().saturating_sub(1) {
+        let empty = chars[i].rect.w <= 0.0 || chars[i].rect.h <= 0.0;
+        if !(empty && chars[i].ch.is_whitespace()) {
+            continue;
+        }
+        let (prev, next) = (&chars[i - 1], &chars[i + 1]);
+        let same_line = prev.horizontal
+            && next.horizontal
+            && (prev.rect.y - next.rect.y).abs() < 0.5 * prev.rect.h.max(next.rect.h);
+        let left = prev.rect.x + prev.rect.w;
+        // Un blanc de mot, pas une gouttière de colonnes ni une tabulation : au plus une
+        // hauteur de caractère (un espacement de mots courant vaut environ un tiers).
+        let gap = next.rect.x - left;
+        if !same_line || gap <= 0.0 || gap > prev.rect.h || prev.rect.h <= 0.0 {
+            continue;
+        }
+        chars[i].rect = Rect {
+            x: left,
+            y: prev.rect.y,
+            w: next.rect.x - left,
+            h: prev.rect.h,
+        };
+        chars[i].horizontal = true;
+    }
+    chars
 }
 
 /// Un caractère du texte cherché, et la boîte d'où il vient (`None` : espace ajoutée entre

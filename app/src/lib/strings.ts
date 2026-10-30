@@ -158,6 +158,10 @@ export const fr = {
   aboutNotices:
     'Les textes complets des licences sont livrés avec l’application : THIRD_PARTY_LICENSES.md (composants tiers) et la notice placée à côté de la bibliothèque PDFium.',
   renderFailed: 'Page impossible à afficher',
+  propPdfa: 'Conformité déclarée',
+  pdfaNone: 'Aucune',
+  pdfaNoLongerGuaranteed: (claim: string) =>
+    `Enregistré. Ce document déclare la conformité ${claim} : après modification, elle n’est plus garantie.`,
   documentLost: (name: string) =>
     `« ${name} » a été fermé après une erreur interne. Rouvrez-le pour continuer.`,
   aboutDiagnostic:
@@ -767,6 +771,10 @@ export const en: Strings = {
   aboutNotices:
     'The full licence texts ship with the application: THIRD_PARTY_LICENSES.md (third-party components) and the notice next to the PDFium library.',
   renderFailed: 'This page cannot be displayed',
+  propPdfa: 'Declared conformance',
+  pdfaNone: 'None',
+  pdfaNoLongerGuaranteed: (claim: string) =>
+    `Saved. This document declares ${claim} conformance: after editing, it is no longer guaranteed.`,
   documentLost: (name: string) =>
     `“${name}” was closed after an internal error. Reopen it to continue.`,
   aboutDiagnostic:

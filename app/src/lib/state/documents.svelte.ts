@@ -6,6 +6,7 @@ import {
   allAnnotations as fetchAllAnnotations,
   beginEditGroup,
   editState,
+  documentProperties,
   endEditGroup,
   allFormFields as fetchAllFormFields,
   annotations as fetchAnnotations,
@@ -79,6 +80,7 @@ import { pagesToEvict } from '$lib/logic/pagecache';
 import { clampScale } from '$lib/logic/zoom';
 import { serialQueue } from '$lib/logic/queue';
 import { redactNotice } from '$lib/logic/redact';
+import { saveNotice } from '$lib/logic/pdfa';
 import { promptAfterOpen } from '$lib/logic/open';
 import { inGroup } from '$lib/logic/group';
 import { t } from '$lib/strings';
@@ -641,6 +643,7 @@ export async function saveAs(doc: OpenDoc): Promise<boolean> {
 
 async function writeTo(doc: OpenDoc, path: string | undefined): Promise<boolean> {
   docsState.error = null;
+  const modified = doc.edit.modified;
   try {
     const result = await saveDocument(doc.summary.id, path);
     // Enregistrer ne change ni les pages ni les images : seuls résumé et état bougent.
@@ -649,7 +652,15 @@ async function writeTo(doc: OpenDoc, path: string | undefined): Promise<boolean>
     if (result.summary.path) rememberRecent(result.summary.path);
     // Le fichier a changé : ses signatures sont à relire.
     void refreshSignatures(doc);
-    showNotice(t.saved);
+    // Un PDF/A modifié : sa conformité déclarée n'est plus garantie (Lot 13, C6).
+    const pdfa = modified
+      ? await documentProperties(doc.summary.id).then(
+          (p) => p.pdfa,
+          () => null,
+        )
+      : null;
+    const notice = saveNotice(modified, pdfa);
+    showNotice(notice, notice === t.saved ? 1500 : 8000);
     return true;
   } catch (e) {
     reportError(t.saveError, e);

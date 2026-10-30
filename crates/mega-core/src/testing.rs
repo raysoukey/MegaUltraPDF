@@ -245,6 +245,39 @@ pub fn checkbox_states_pdf() -> Vec<u8> {
 
 /// Un document avec des métadonnées **XMP** non compressées (`/Metadata` du catalogue) :
 /// titre « Ancien », auteur « Alice », date de modification 2020.
+/// Une page qui **déclare** la conformité PDF/A-2B : identification `pdfaid` dans les
+/// métadonnées XMP (attributs, comme l'écrivent Acrobat et LibreOffice) et `/OutputIntents`
+/// (profil de sortie). Le fichier n'est pas réellement conforme (police non incorporée) :
+/// seule compte la déclaration, que l'application signale et doit conserver (Lot 13, C6).
+pub fn pdfa_pdf() -> Vec<u8> {
+    let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description rdf:about=\"\" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\" \
+pdfaid:part=\"2\" pdfaid:conformance=\"B\"/>\
+</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+    let content = "BT /F1 24 Tf 72 700 Td (Archive) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R /OutputIntents [6 0 R] >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /Font << /F1 7 0 R >> >> /Contents 5 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Type /Metadata /Subtype /XML /Length {} >>\nstream\n{xmp}\nendstream",
+            xmp.len()
+        ),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB IEC61966-2.1) >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Title (Archive) >>")
+}
+
 pub fn xmp_pdf() -> Vec<u8> {
     let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\

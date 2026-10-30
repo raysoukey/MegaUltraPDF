@@ -80,6 +80,8 @@ export interface DocumentProperties {
   modification_date: string | null;
   pdf_version: string;
   page_count: number;
+  /** Conformité PDF/A déclarée (ex. « PDF/A-2B »), `null` sans déclaration (Lot 13). */
+  pdfa: string | null;
 }
 
 /** Une commande d'édition (miroir de `mega_core::EditCommand`, sérialisée avec `kind`). */

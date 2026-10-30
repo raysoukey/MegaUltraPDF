@@ -34,6 +34,10 @@ pub struct DocumentProperties {
     pub pdf_version: String,
     /// Nombre de pages.
     pub page_count: u16,
+    /// Conformité **déclarée** dans les métadonnées XMP (`pdfaid`), ex. `"PDF/A-2B"`. Une
+    /// déclaration, pas une vérification : après une modification, la conformité n'est plus
+    /// garantie, et l'interface le dit (audit du Lot 13, C6).
+    pub pdfa: Option<String>,
 }
 
 impl Document {
@@ -41,6 +45,7 @@ impl Document {
     pub fn properties(&self) -> CoreResult<DocumentProperties> {
         let _guard = engine::guard();
         let meta = self.inner().metadata();
+        let lopdf_info = self.lopdf_info_unlocked();
         let get = |tag: Tag| -> Option<String> {
             meta.get(tag)
                 .map(|t| t.value().trim().to_string())
@@ -56,9 +61,10 @@ impl Document {
             creation_date: get(Tag::CreationDate),
             // pdfium-render 0.9.4 demande à PDFium la balise « ModificationDate », qui
             // n'existe pas (la clé PDF est `/ModDate`) : toujours vide. On la lit nous-mêmes.
-            modification_date: get(Tag::ModificationDate).or_else(|| self.mod_date_unlocked()),
+            modification_date: get(Tag::ModificationDate).or(lopdf_info.mod_date),
             pdf_version: version_label(&format!("{:?}", self.inner().version())),
             page_count: self.count_unlocked(),
+            pdfa: lopdf_info.pdfa,
         })
     }
 }
@@ -155,28 +161,85 @@ impl Document {
     }
 }
 
+/// Ce que PDFium ne donne pas et que `lopdf` lit en un seul chargement.
+#[derive(Default)]
+struct LopdfInfo {
+    mod_date: Option<String>,
+    pdfa: Option<String>,
+}
+
 impl Document {
-    /// `/ModDate` du dictionnaire `/Info`, lu par `lopdf` (jeton déjà pris par l'appelant ;
-    /// `to_bytes` n'en a pas besoin : `save_to_bytes` est appelé directement).
-    fn mod_date_unlocked(&self) -> Option<String> {
+    /// `/ModDate` du dictionnaire `/Info` et déclaration PDF/A du XMP, lus par `lopdf` (jeton
+    /// déjà pris par l'appelant ; `to_bytes` n'en a pas besoin : `save_to_bytes` est appelé
+    /// directement).
+    fn lopdf_info_unlocked(&self) -> LopdfInfo {
         // Rien de changé : les octets du fichier suffisent, sans sérialisation complète (C15).
         let saved;
         let bytes: &[u8] = if self.changed {
-            saved = self.inner().save_to_bytes().ok()?;
-            &saved
+            match self.inner().save_to_bytes() {
+                Ok(b) => {
+                    saved = b;
+                    &saved
+                }
+                Err(_) => return LopdfInfo::default(),
+            }
         } else {
             self.file_bytes()
         };
         // Un fichier à mot de passe utilisateur se lit avec ce mot de passe (C16).
-        let doc = crate::crypt::load_limited(bytes, self.password()).ok()?;
-        let info = doc.trailer.get(b"Info").ok()?;
-        let (_, info) = doc.dereference(info).ok()?;
-        let raw = info.as_dict().ok()?.get(b"ModDate").ok()?;
-        let (_, raw) = doc.dereference(raw).ok()?;
-        let text = decode_text_string(raw.as_str().ok()?);
-        let text = text.trim().to_string();
-        (!text.is_empty()).then_some(text)
+        let Ok(doc) = crate::crypt::load_limited(bytes, self.password()) else {
+            return LopdfInfo::default();
+        };
+        LopdfInfo {
+            mod_date: mod_date_of(&doc),
+            pdfa: pdfa_claim_of(&doc),
+        }
     }
+}
+
+/// `/ModDate` du dictionnaire `/Info`.
+fn mod_date_of(doc: &lopdf::Document) -> Option<String> {
+    let info = doc.trailer.get(b"Info").ok()?;
+    let (_, info) = doc.dereference(info).ok()?;
+    let raw = info.as_dict().ok()?.get(b"ModDate").ok()?;
+    let (_, raw) = doc.dereference(raw).ok()?;
+    let text = decode_text_string(raw.as_str().ok()?);
+    let text = text.trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+/// Conformité PDF/A déclarée par le flux XMP `/Metadata` du catalogue (`pdfaid:part`, et
+/// `pdfaid:conformance` s'il existe), ex. `"PDF/A-2B"`.
+fn pdfa_claim_of(doc: &lopdf::Document) -> Option<String> {
+    let metadata = doc.catalog().ok()?.get(b"Metadata").ok()?;
+    let (_, stream) = doc.dereference(metadata).ok()?;
+    let xmp = crate::crypt::stream_bytes(stream.as_stream().ok()?)?;
+    let xmp = String::from_utf8_lossy(&xmp);
+    let part = xmp_value(&xmp, "pdfaid:part")?;
+    let conformance = xmp_value(&xmp, "pdfaid:conformance").unwrap_or_default();
+    Some(format!("PDF/A-{part}{}", conformance.to_uppercase()))
+}
+
+/// Valeur d'une propriété XMP simple, écrite en attribut (`nom="2"`) ou en élément
+/// (`<nom>2</nom>`).
+fn xmp_value(xmp: &str, name: &str) -> Option<String> {
+    let attribute = [format!("{name}=\""), format!("{name}='")]
+        .into_iter()
+        .find_map(|start| {
+            let from = xmp.find(&start)? + start.len();
+            let end = xmp[from..].find(['"', '\''])?;
+            Some(xmp[from..from + end].to_string())
+        });
+    let element = || {
+        let open = format!("<{name}>");
+        let from = xmp.find(&open)? + open.len();
+        let end = xmp[from..].find('<')?;
+        Some(xmp[from..from + end].to_string())
+    };
+    attribute
+        .or_else(element)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty() && v.len() <= 8)
 }
 
 /// Instant Unix d'une date PDF `D:AAAAMMJJHHmmSS` (le décalage horaire est appliqué s'il est

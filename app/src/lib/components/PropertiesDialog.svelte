@@ -59,6 +59,7 @@
       [t.propModified, pdfDate(info.modification_date)],
       [t.propVersion, info.pdf_version],
       [t.propPages, String(info.page_count)],
+      [t.propPdfa, info.pdfa ?? t.pdfaNone],
     ];
   });
 

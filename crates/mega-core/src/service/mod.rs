@@ -14,7 +14,6 @@
 mod cache;
 mod queue;
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -83,6 +82,8 @@ enum Request {
     #[cfg(test)]
     Panic {
         id: DocId,
+        /// Vrai : la requête modifiait le document (accès `get_mut`) ; faux : simple lecture.
+        mutating: bool,
         reply: SyncSender<CoreResult<()>>,
     },
     OpenPath {
@@ -748,32 +749,34 @@ impl ServiceHandle {
     }
 }
 
-/// Les documents ouverts, avec la trace de ceux que la requête en cours a touchés : si elle
-/// panique, ce sont eux qu'on ferme (audit du Lot 13, R4).
-///
-/// \[Apprentissage\] **`RefCell`** : `get` ne reçoit qu'une référence partagée (`&self`) mais
-/// doit noter l'identifiant dans `touched`. `RefCell` permet cette modification « intérieure »
-/// en vérifiant les emprunts à l'exécution au lieu de la compilation ; ici un seul emprunt
-/// à la fois, toujours bref.
+/// Les documents ouverts, avec la trace de ceux que la requête en cours a pu **modifier**
+/// (accès `get_mut`, ouverture) : si elle panique, ce sont eux qu'on ferme (audit du Lot 13,
+/// R4). Une simple lecture (`get` : rendu, texte, résumé) ne ferme rien : le document n'a pas
+/// changé, et ses modifications non enregistrées seraient perdues pour rien.
 #[derive(Default)]
 struct Docs {
     map: HashMap<DocId, Entry>,
-    touched: RefCell<Vec<DocId>>,
+    touched: Vec<DocId>,
 }
 
 impl Docs {
     fn get(&self, id: &DocId) -> Option<&Entry> {
-        self.touched.borrow_mut().push(*id);
         self.map.get(id)
     }
 
     fn get_mut(&mut self, id: &DocId) -> Option<&mut Entry> {
-        self.touched.get_mut().push(*id);
+        self.touched.push(*id);
+        self.map.get_mut(id)
+    }
+
+    /// Accès modifiable **sans** trace : pour la seule génération d'un rendu, un compteur
+    /// qui ne touche pas à l'état PDFium du document.
+    fn get_mut_untracked(&mut self, id: &DocId) -> Option<&mut Entry> {
         self.map.get_mut(id)
     }
 
     fn insert(&mut self, id: DocId, entry: Entry) {
-        self.touched.get_mut().push(id);
+        self.touched.push(id);
         self.map.insert(id, entry);
     }
 
@@ -821,7 +824,7 @@ impl Actor {
             self.queue.push(req.priority(), req);
         }
         if let Some(req) = self.queue.pop() {
-            self.docs.touched.get_mut().clear();
+            self.docs.touched.clear();
             // \[Apprentissage\] **`catch_unwind`** arrête la remontée d'une panique (un bug,
             // un `[i]` hors limites…) à cette frontière : sans lui, le thread de l'acteur
             // mourrait et toutes les opérations suivantes échoueraient jusqu'au redémarrage.
@@ -838,7 +841,7 @@ impl Actor {
     /// Après une panique : ferme les documents que la requête a touchés (leur état PDFium est
     /// douteux) et oublie leurs rendus en cache. L'appelant reçoit `CoreError::Aborted`.
     fn close_touched_documents(&mut self) {
-        let touched = std::mem::take(self.docs.touched.get_mut());
+        let touched = std::mem::take(&mut self.docs.touched);
         for id in touched {
             if self.docs.remove(&id).is_some() {
                 self.cache.invalidate_doc(id);
@@ -853,8 +856,16 @@ impl Actor {
         match req {
             #[cfg(test)]
             #[allow(clippy::panic)]
-            Request::Panic { id, reply } => {
-                let _ = self.docs.get_mut(&id);
+            Request::Panic {
+                id,
+                mutating,
+                reply,
+            } => {
+                if mutating {
+                    let _ = self.docs.get_mut(&id);
+                } else {
+                    let _ = self.docs.get(&id);
+                }
                 drop(reply);
                 panic!("panique de test (document {id})");
             }
@@ -1157,7 +1168,7 @@ impl Actor {
     fn render(&mut self, req: RenderRequest) -> CoreResult<Arc<Vec<u8>>> {
         let entry = self
             .docs
-            .get_mut(&req.doc)
+            .get_mut_untracked(&req.doc)
             .ok_or(CoreError::NotFound { id: req.doc })?;
         // Le frontend est l'autorité sur la génération : plus ancienne → annulée ;
         // plus récente que ce que l'acteur connaît → on se met à jour.
@@ -1250,13 +1261,36 @@ mod tests {
                 .id
         };
         let (victim, other) = (open("victime"), open("autre"));
-        let outcome = service.call(|reply| Request::Panic { id: victim, reply });
+        let outcome = service.call(|reply| Request::Panic {
+            id: victim,
+            mutating: true,
+            reply,
+        });
         assert!(matches!(outcome, Err(CoreError::Aborted)), "{outcome:?}");
         assert!(matches!(
             service.summary(victim),
             Err(CoreError::NotFound { .. })
         ));
         assert!(service.summary(other).is_ok(), "l'acteur vit toujours");
+    }
+
+    /// Relecture de la PR A : une panique pendant une simple **lecture** (rendu, texte,
+    /// résumé) ne ferme pas le document : rien n'y a été modifié, et ses modifications non
+    /// enregistrées seraient perdues pour rien.
+    #[test]
+    fn a_panic_while_reading_keeps_the_document_open() {
+        let service = PdfService::spawn();
+        let id = service
+            .open_bytes(crate::testing::sample_pdf(1, "lu"), None)
+            .unwrap()
+            .id;
+        let outcome = service.call(|reply| Request::Panic {
+            id,
+            mutating: false,
+            reply,
+        });
+        assert!(matches!(outcome, Err(CoreError::Aborted)), "{outcome:?}");
+        assert!(service.summary(id).is_ok(), "document resté ouvert");
     }
 
     /// A17 : ordre de service déterministe (sans `sleep`) : une vignette puis une page

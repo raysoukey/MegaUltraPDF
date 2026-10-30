@@ -469,7 +469,8 @@ export interface AppError {
     | 'not_found'
     | 'invalid_operation'
     | 'io'
-    | 'internal';
+    | 'internal'
+    | 'aborted';
   message: string;
 }
 

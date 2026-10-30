@@ -5,6 +5,7 @@
 import {
   allAnnotations as fetchAllAnnotations,
   beginEditGroup,
+  editState,
   endEditGroup,
   allFormFields as fetchAllFormFields,
   annotations as fetchAnnotations,
@@ -533,6 +534,26 @@ function afterEdit(doc: OpenDoc, result: EditResult): void {
 
 function reportError(message: (m: string) => string, e: unknown): void {
   docsState.error = message(isAppError(e) ? e.message : String(e));
+  if (isAppError(e) && e.kind === 'aborted') void dropLostDocuments();
+}
+
+/**
+ * Après une panique rattrapée par le backend (`aborted`, Lot 13) : le document que
+ * l'opération modifiait a été fermé côté Rust. Ses onglets sont fermés ici aussi, avec un
+ * avis, plutôt que de laisser un onglet dont chaque action échouerait (« document inconnu »).
+ */
+async function dropLostDocuments(): Promise<void> {
+  for (const doc of [...docsState.docs]) {
+    const lost = await editState(doc.summary.id).then(
+      () => false,
+      (e: unknown) => isAppError(e) && e.kind === 'not_found',
+    );
+    if (lost) {
+      const name = displayName(doc);
+      await closeDoc(doc.summary.id);
+      showNotice(t.documentLost(name), 6000);
+    }
+  }
 }
 
 /** Éditions envoyées au backend dont la réponse n'est pas encore arrivée. */

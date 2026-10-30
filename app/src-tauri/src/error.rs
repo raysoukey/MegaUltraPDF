@@ -36,6 +36,8 @@ pub enum ErrorKind {
     Io,
     /// Défaillance interne (PDFium absente, verrou indisponible…).
     Internal,
+    /// Une opération a paniqué : le document qu'elle modifiait a pu être fermé (Lot 13).
+    Aborted,
 }
 
 impl AppError {
@@ -66,8 +68,8 @@ impl From<CoreError> for AppError {
             CoreError::Cancelled => ErrorKind::Internal,
             CoreError::LibraryNotFound { .. }
             | CoreError::Pdfium(_)
-            | CoreError::ServiceStopped
-            | CoreError::Aborted => ErrorKind::Internal,
+            | CoreError::ServiceStopped => ErrorKind::Internal,
+            CoreError::Aborted => ErrorKind::Aborted,
         };
         // Message complet, causes incluses (ex. « Erreur d'accès au fichier : Accès refusé »).
         let error = AppError::new(kind, mega_core::error::display_chain(&e));

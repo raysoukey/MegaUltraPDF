@@ -105,11 +105,12 @@ pub enum CoreError {
     #[error("Le service PDF est arrêté.")]
     ServiceStopped,
 
-    /// L'opération a échoué de façon inattendue (panique interne) : le document concerné a été
-    /// fermé par précaution, les autres restent ouverts (audit du Lot 13, R4).
+    /// L'opération a échoué de façon inattendue (panique interne). Si elle modifiait un
+    /// document, celui-ci a été fermé par précaution ; les autres restent ouverts (audit du
+    /// Lot 13, R4).
     #[error(
-        "L'opération a échoué de façon inattendue ; le document concerné a été fermé par \
-         précaution. Rouvrez-le pour continuer."
+        "L'opération a échoué de façon inattendue. Si elle modifiait le document, il a été \
+         fermé par précaution : rouvrez-le pour continuer."
     )]
     Aborted,
 

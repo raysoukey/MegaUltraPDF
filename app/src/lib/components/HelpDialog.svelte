@@ -100,12 +100,6 @@
         <p>{t.aboutPdfium}</p>
         <p>{t.aboutFont}</p>
         <p>{t.aboutNotices}</p>
-        <p>{t.aboutDiagnostic}</p>
-        <p>
-          <button type="button" onclick={() => openDiagnosticFolder().catch(() => {})}
-            >{t.openDiagnosticFolder}</button
-          >
-        </p>
         <details>
           <summary>{t.aboutThirdParty(crateCount, licenses.length - crateCount)}</summary>
           <table class="licenses">
@@ -127,6 +121,12 @@
             </tbody>
           </table>
         </details>
+        <p>{t.aboutDiagnostic}</p>
+        <p>
+          <button type="button" onclick={() => openDiagnosticFolder().catch(() => {})}
+            >{t.openDiagnosticFolder}</button
+          >
+        </p>
       {/if}
     </div>
 

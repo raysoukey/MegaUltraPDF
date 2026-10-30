@@ -2810,6 +2810,7 @@ dependencies = [
  "rand 0.10.3",
  "rsa",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "spki 0.7.3",
  "subsetter",

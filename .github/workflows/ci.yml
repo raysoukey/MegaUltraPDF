@@ -39,8 +39,8 @@ jobs:
         shell: pwsh
         run: |
           choco install qpdf --no-progress -y
-          $bin = Get-ChildItem 'C:\Program Files\qpdf*in' -Directory | Select-Object -First 1
-          "MEGA_QPDF=$($bin.FullName)\qpdf.exe" >> $env:GITHUB_ENV
+          $exe = Get-ChildItem 'C:\Program Files' -Filter qpdf.exe -Recurse -Depth 3 | Select-Object -First 1
+          "MEGA_QPDF=$($exe.FullName)" >> $env:GITHUB_ENV
 
       - uses: dtolnay/rust-toolchain@stable
         with:

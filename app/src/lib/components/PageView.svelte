@@ -138,11 +138,12 @@
     inset: 0;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    /* En haut à gauche de la page : sur une page immense, le centre serait hors de vue. */
+    align-items: flex-start;
+    justify-content: flex-start;
     gap: 0.5rem;
-    padding: 1rem;
-    text-align: center;
+    padding: 2rem;
+    text-align: start;
     color: #5a1d1d;
     background: #fdf0f0;
     border: 2px dashed #c25b5b;

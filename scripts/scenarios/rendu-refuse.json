@@ -1,0 +1,97 @@
+[
+  {
+    "wait": 3000
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "click": "button[title^='Zoom avant']"
+  },
+  {
+    "wait": 3000
+  },
+  {
+    "assert": "(() => { const f = document.querySelector('.page .failure'); return (f && f.textContent.includes('Page impossible à afficher') && f.textContent.includes('Rendu trop grand')) || 'ERREUR ' + document.querySelector('.zoom')?.textContent + ' ' + (f ? f.textContent : 'aucun cadre'); })()",
+    "label": "page de 14 400 pt zoomée (plus de 50 Mpx) : un cadre explique pourquoi elle ne s'affiche pas, au lieu d'une page blanche"
+  },
+  {
+    "shot": "01-rendu-refuse.png"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "click": "button[title^='Zoom arrière']"
+  },
+  {
+    "wait": 3000
+  },
+  {
+    "assert": "(() => { const p = document.querySelector('.page'); return (!p.querySelector('.failure') && !!p.querySelector('img')) || 'ERREUR ' + document.querySelector('.zoom')?.textContent; })()",
+    "label": "après un zoom arrière, la page s'affiche et le cadre disparaît"
+  },
+  {
+    "shot": "02-zoom-arriere.png"
+  }
+]

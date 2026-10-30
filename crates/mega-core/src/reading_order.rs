@@ -89,7 +89,7 @@ fn is_cjk(c: char) -> bool {
 }
 
 /// Les colonnes d'**écriture verticale** de la page (audit du Lot 13, C4) : suites d'au moins
-/// deux caractères CJK dessinés d'affilée, chacun **sous** le précédent et à peu près à la
+/// trois caractères CJK dessinés d'affilée, sans voisin collé sur leur ligne, chacun **sous** le précédent et à peu près à la
 /// même abscisse. Découpées en lignes horizontales, elles donneraient une ligne d'un caractère
 /// par rangée ; on les lit à part, dans leur ordre de dessin (de haut en bas, colonne par
 /// colonne), comme le texte tourné. Des lettres latines empilées (une colonne de chiffres d'un
@@ -111,7 +111,7 @@ pub fn vertical_runs(rects: &[Rect], chars: &[char]) -> Vec<Vec<usize>> {
             run.push(i);
             continue;
         }
-        if run.len() >= 2 {
+        if run.len() >= MIN_VERTICAL_RUN {
             runs.push(std::mem::take(&mut run));
         }
         run.clear();
@@ -119,11 +119,28 @@ pub fn vertical_runs(rects: &[Rect], chars: &[char]) -> Vec<Vec<usize>> {
             run.push(i);
         }
     }
-    if run.len() >= 2 {
+    if run.len() >= MIN_VERTICAL_RUN {
         runs.push(run);
     }
+    // Un caractère qui a un voisin collé à sa gauche ou à sa droite, sur sa ligne, appartient
+    // à une ligne horizontale : un titre d'un caractère suivi d'une ligne à la même marge
+    // ressemblerait sinon à une colonne (relecture de la PR B du Lot 13).
+    let side_neighbour = |i: usize| {
+        let r = &rects[i];
+        (0..rects.len().min(chars.len())).any(|j| {
+            let o = &rects[j];
+            let overlap = (r.y + r.h).min(o.y + o.h) - r.y.max(o.y);
+            let gap = (o.x - (r.x + r.w)).max(r.x - (o.x + o.w));
+            j != i && usable(o) && overlap > 0.5 * r.h.min(o.h) && gap < 0.3 * r.w.max(o.w)
+        })
+    };
+    runs.retain(|run| !run.iter().any(|&i| side_neighbour(i)));
     runs
 }
+
+/// Nombre minimal de caractères empilés pour parler de colonne verticale : deux caractères
+/// l'un sous l'autre arrivent par hasard (fin d'une ligne, début de la suivante).
+const MIN_VERTICAL_RUN: usize = 3;
 
 /// Sens d'un caractère pour la lecture (version simplifiée de l'algorithme bidirectionnel
 /// d'Unicode, UAX #9).
@@ -618,6 +635,33 @@ mod tests {
         // Des lettres latines empilées (une colonne de chiffres d'un tableau) ne comptent pas.
         let digits: Vec<char> = "12345".chars().collect();
         assert!(vertical_runs(&rects[..5], &digits).is_empty());
+    }
+
+    /// Relecture de la PR B : un titre japonais d'un seul caractère (« 序 »), suivi d'une ligne
+    /// horizontale qui commence à la même marge, n'est pas une colonne verticale ; le premier
+    /// caractère de la ligne reste dans sa ligne.
+    #[test]
+    fn a_one_character_heading_is_not_a_vertical_column() {
+        // Interligne de 1,5 fois la taille, boîtes de 1,15 fois : écart vertical de 0,35.
+        let square = |x: f32, y: f32| Rect {
+            x,
+            y,
+            w: 12.0,
+            h: 13.8,
+        };
+        let chars: Vec<char> = "序本文はここから始まります".chars().collect();
+        let mut rects = vec![square(100.0, 700.0)];
+        rects.extend((0..chars.len() - 1).map(|k| square(100.0 + 12.0 * k as f32, 682.0)));
+        assert!(vertical_runs(&rects, &chars).is_empty());
+        let lines: Vec<String> = layout_chars(&rects, &chars)
+            .iter()
+            .flatten()
+            .map(|line| line.iter().map(|&i| chars[i]).collect())
+            .collect();
+        assert_eq!(
+            lines,
+            vec!["序".to_string(), "本文はここから始まります".to_string()]
+        );
     }
 
     /// Propriété (audit du Lot 13, R9) : pour des rectangles **quelconques** (positions et

@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Couche de texte d'une page (caractères positionnés) et recherche.
+//!
+//! Les caractères viennent de PDFium ; quand PDFium n'en expose **aucun** sur une page qui
+//! porte un objet texte, le sous-module `tounicode` les retrouve par les `/ToUnicode` des
+//! polices (audit L2 : police CID CFF en OpenType dont PDFium ne trouve pas les glyphes).
 
+use std::borrow::Cow;
+
+use pdfium_render::prelude::{PdfPage, PdfPageObject, PdfPageObjectsCommon};
 use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
 use crate::engine;
 use crate::error::CoreResult;
 use crate::geometry::Rect;
+
+mod tounicode;
 
 /// Un caractère de la page avec son rectangle (points PDF, origine bas-gauche).
 ///
@@ -109,13 +118,31 @@ impl Document {
     /// Les caractères de la page dans l'ordre où le fichier les dessine, en espace affiché.
     /// Seuls les sauts de ligne ajoutés par PDFium (`\r`, `\n`) sont écartés : un caractère
     /// sans largeur reste là (le contrôle après caviardage doit le voir, même invisible).
+    ///
+    /// Si PDFium n'expose aucun caractère alors que la page porte un objet texte, les
+    /// caractères viennent du repli [`Document::tounicode_fallback`] (audit L2). Le contrôle
+    /// après caviardage en profite : un texte que PDFium ne voit pas, mais que les autres
+    /// lecteurs extraient, compte aussi comme du texte resté sous la zone.
     pub(crate) fn drawn_chars(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
+        let (chars, fallback) = self.pdfium_chars(index)?;
+        if fallback {
+            return self.tounicode_fallback(index);
+        }
+        Ok(chars)
+    }
+
+    /// Les caractères qu'expose PDFium (voir [`Document::drawn_chars`]), et vrai s'il faut
+    /// recourir au repli : aucun caractère, mais un objet texte sur la page.
+    fn pdfium_chars(&self, index: u16) -> CoreResult<(Vec<DrawnChar>, bool)> {
         let _guard = engine::guard();
         let page = self
             .inner()
             .pages()
             .get(self.checked_index_unlocked(index)?)?;
         let text = page.text()?;
+        if text.len() <= 0 {
+            return Ok((Vec::new(), draws_text(&page)));
+        }
         let frame = crate::geometry::frame_of(&page);
         // Les unités UTF-16 que PDFium rend, avec leur emprise et leur angle à l'écran. Une unité
         // sans emprise est ignorée.
@@ -164,7 +191,45 @@ impl Document {
                 });
             }
         }
-        Ok(chars)
+        Ok((chars, false))
+    }
+
+    /// Repli de la couche de texte (audit L2) : les caractères de la page `index` retrouvés
+    /// par les `/ToUnicode` de ses polices, lues avec `lopdf` (module `tounicode`, limites
+    /// dans sa documentation), en espace affiché et dans l'ordre de dessin.
+    ///
+    /// Les octets lus sont ceux du document **courant** : ceux du fichier tant que rien n'a
+    /// changé, sinon une sérialisation par PDFium (après un caviardage, le contrôle doit voir
+    /// la page caviardée, pas l'originale). Un fichier que `lopdf` ne sait pas lire ne donne
+    /// aucun caractère : c'est un repli, il n'ajoute pas de cas d'erreur.
+    pub(crate) fn tounicode_fallback(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
+        let frame = self.page_frame(index)?;
+        // [Apprentissage] `Cow` (« copie à l'écriture ») : soit un emprunt des octets du
+        // fichier, soit des octets fraîchement produits, sans copier les premiers.
+        let bytes: Cow<'_, [u8]> = if self.changed {
+            Cow::Owned(self.to_bytes()?)
+        } else {
+            Cow::Borrowed(&self.file_bytes)
+        };
+        let Ok(doc) = crate::crypt::load_limited(&bytes, self.password()) else {
+            return Ok(Vec::new());
+        };
+        let Some(&page_id) = doc.get_pages().get(&(u32::from(index) + 1)) else {
+            return Ok(Vec::new());
+        };
+        Ok(tounicode::page_chars(&doc, page_id)
+            .into_iter()
+            .filter(|c| c.ch != '\r' && c.ch != '\n')
+            .map(|c| {
+                let angle = (c.angle - f32::from(frame.rotate)).rem_euclid(360.0);
+                DrawnChar {
+                    ch: c.ch,
+                    rect: frame.from_user_space(c.rect),
+                    horizontal: angle <= ANGLE_TOLERANCE || angle >= 360.0 - ANGLE_TOLERANCE,
+                    angle,
+                }
+            })
+            .collect())
     }
 
     /// Cherche `query` dans la page `index`. Une requête vide ne trouve rien.
@@ -189,6 +254,45 @@ impl Document {
             .map(|rects| SearchHit { page: index, rects })
             .collect())
     }
+}
+
+/// Nombre maximal d'objets examinés par [`draws_text`] à l'intérieur des formulaires.
+const MAX_FORM_OBJECTS: usize = 10_000;
+
+/// Vrai si la page porte un objet texte, à son niveau ou dans un formulaire XObject (jusqu'à
+/// `tounicode::MAX_FORM_DEPTH` niveaux) : sans objet texte, inutile de relire le fichier avec
+/// `lopdf` (une page numérisée n'a que des images). Au-delà de [`MAX_FORM_OBJECTS`] objets,
+/// on répond oui par prudence : le repli, lui, est borné.
+fn draws_text(page: &PdfPage<'_>) -> bool {
+    // Pile explicite (pas de récursion) : formulaires à examiner, avec leur profondeur.
+    let mut pending: Vec<(PdfPageObject<'_>, usize)> = Vec::new();
+    for object in page.objects().iter() {
+        match object {
+            PdfPageObject::Text(_) => return true,
+            PdfPageObject::XObjectForm(_) => pending.push((object, 1)),
+            _ => {}
+        }
+    }
+    let mut examined = 0usize;
+    while let Some((object, depth)) = pending.pop() {
+        let PdfPageObject::XObjectForm(form) = &object else {
+            continue;
+        };
+        for i in 0..form.len() {
+            examined += 1;
+            if examined > MAX_FORM_OBJECTS {
+                return true;
+            }
+            match form.get(i) {
+                Ok(PdfPageObject::Text(_)) => return true,
+                Ok(child @ PdfPageObject::XObjectForm(_)) if depth < tounicode::MAX_FORM_DEPTH => {
+                    pending.push((child, depth + 1));
+                }
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 /// Vrai pour une moitié haute de paire de substitution UTF-16 (`D800`–`DBFF`).

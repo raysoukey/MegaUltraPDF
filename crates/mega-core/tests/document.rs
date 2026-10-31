@@ -531,3 +531,42 @@ fn arabic_corpus_file_has_word_spaces() {
     let hits = doc.search_page(0, "الخطوط", &Default::default()).unwrap();
     assert!(hits.len() >= 4, "{} occurrences", hits.len());
 }
+
+/// Audit L2 : une police CID CFF enveloppée en OpenType dont le CID n'est pas le numéro de
+/// glyphe ; PDFium ne trouve pas le glyphe et n'expose aucun caractère. Le texte s'extrait
+/// quand même par la `/ToUnicode` de la police, avec une emprise à l'endroit du glyphe
+/// (`BT /F1 24 Tf 50 100 Td <A911> Tj ET`, chasse 1000).
+#[test]
+fn opentype_cff_cid_text_is_extracted() {
+    let doc = Document::from_bytes(mega_core::testing::opentype_cff_cid_pdf(), None).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().trim(), "除");
+    let boxes = doc.text_boxes(0).unwrap();
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    let r = boxes[0].rect;
+    assert!(
+        (r.x - 50.0).abs() < 0.5 && (r.w - 24.0).abs() < 0.5,
+        "{r:?}"
+    );
+    assert!(r.y <= 100.0 && r.y + r.h >= 115.0, "{r:?}");
+    let hits = doc.search_page(0, "除", &Default::default()).unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+/// Même contrôle sur le fichier du corpus (Noto Sans TC), si `MEGA_CORPUS` désigne
+/// `fixtures/corpus`.
+#[test]
+fn opentype_cff_cid_corpus_file_has_text() {
+    let Ok(dir) = std::env::var("MEGA_CORPUS") else {
+        return;
+    };
+    let doc = Document::open(format!("{dir}/polices/Embedded_font.pdf"), None).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().trim(), "除");
+    let boxes = doc.text_boxes(0).unwrap();
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    // `0.12 cm`, `167.97 Tm`, `1.366 Tf` : origine (150.66, 487.12), cadratin de 27,5 pt.
+    let r = boxes[0].rect;
+    assert!(
+        (r.x - 150.66).abs() < 0.5 && (r.w - 27.54).abs() < 0.5,
+        "{r:?}"
+    );
+}

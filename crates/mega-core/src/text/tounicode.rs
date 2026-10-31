@@ -1,0 +1,1091 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Repli de la couche de texte : quand PDFium n'expose **aucun** caractère d'une page qui porte
+//! pourtant un objet texte, on relit son contenu avec `lopdf` et on traduit chaque code de
+//! caractère par la `/ToUnicode` de sa police (audit L2, Lot 14).
+//!
+//! Le cas mesuré : une police CID **CFF enveloppée en OpenType** (`/FontFile3 /Subtype
+//! /OpenType`, comme Noto Sans CJK ou Source Han) dont les CID ne sont pas les numéros de
+//! glyphe. PDFium prend le CID pour un numéro de glyphe, n'en trouve pas, et l'objet texte n'a
+//! ni largeur ni caractère : rien à sélectionner, chercher ou copier, alors que poppler, MuPDF
+//! et pdf.js lisent le texte. PDFium ne dessine pas non plus le glyphe : cela, le repli ne le
+//! corrige pas (il ne touche qu'à la couche de texte).
+//!
+//! Ce que le repli calcule (ISO 32000-1, §9.4) : pour chaque code d'une chaîne `Tj`, `TJ`, `'`
+//! ou `"`, le texte que donne la `/ToUnicode`, et une emprise : la chasse du glyphe (`/W` et
+//! `/DW` d'une police composite, `/Widths` d'une police simple) sur la hauteur du cadratin
+//! (`/Ascent` et `/Descent` du descripteur, bornés), placée par la matrice de rendu
+//! `[Tfs × Th, 0, 0, Tfs, 0, Trise] × Tm × CTM`. Les formulaires XObject (`Do`) sont suivis.
+//!
+//! Limites, car c'est un repli et non un second moteur de texte :
+//! - une police **sans** `/ToUnicode` ne donne aucun caractère (pas de décodage par
+//!   `/Encoding`) ; ses glyphes font quand même avancer la position ;
+//! - l'écriture verticale (`Identity-V`) est placée comme de l'horizontale ;
+//! - les codes sont lus sur deux octets pour une police composite (un seul si sa
+//!   `/ToUnicode` déclare un espace de codes d'un octet), sur un octet pour une police simple :
+//!   les codages à longueur variable ne sont pas suivis ;
+//! - rien n'est écarté pour invisibilité (rognage, mode de rendu 3 ou 7), comme dans PDFium ;
+//! - bornes : [`MAX_CHARS`] caractères, [`MAX_FORM_DEPTH`] niveaux de formulaires,
+//!   [`MAX_OPERATIONS`] opérateurs lus, [`MAX_ENTRIES`] entrées par `/ToUnicode` ou `/W`.
+//!
+//! \[Apprentissage\] **Pile explicite au lieu de récursion** : un formulaire XObject peut en
+//! appeler un autre, et un fichier hostile peut en enchaîner des milliers. Plutôt qu'une
+//! fonction qui s'appelle elle-même (et ferait déborder la pile du programme), on garde un
+//! `Vec<Frame>` : entrer dans un formulaire = empiler un cadre, en sortir = le dépiler. La
+//! profondeur se compte avec `frames.len()` (voir `docs/apprentissage/lot-13.md`).
+//!
+//! \[Apprentissage\] **`Rc`** (compteur de références) : plusieurs cadres partagent la même
+//! liste d'opérateurs d'un formulaire appelé plusieurs fois ; `Rc::clone` copie un pointeur et
+//! incrémente un compteur, jamais la liste elle-même.
+
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use lopdf::content::{Content, Operation};
+use lopdf::{Dictionary, Document as LoDocument, Object, ObjectId};
+
+use crate::content::raster::{IDENTITY, Matrix, apply, matrix_operands, multiply};
+use crate::geometry::Rect;
+
+/// Nombre maximal de caractères rendus par le repli pour une page.
+pub(super) const MAX_CHARS: usize = 20_000;
+/// Profondeur maximale de formulaires XObject imbriqués.
+pub(super) const MAX_FORM_DEPTH: usize = 8;
+/// Nombre maximal d'opérateurs lus pour une page, formulaires compris (un formulaire appelé
+/// mille fois compte mille fois).
+pub(super) const MAX_OPERATIONS: usize = 1_000_000;
+/// Nombre maximal d'entrées lues dans une `/ToUnicode` ou un tableau `/W`.
+pub(super) const MAX_ENTRIES: usize = 100_000;
+/// Nombre maximal de polices **directes** (dictionnaire écrit dans les ressources, sans
+/// référence, donc sans cache) analysées pour une page.
+const MAX_FONT_LOADS: usize = 256;
+
+/// Un caractère retrouvé par le repli.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct FoundChar {
+    /// Le caractère.
+    pub(super) ch: char,
+    /// Son emprise, en espace **utilisateur**.
+    pub(super) rect: Rect,
+    /// Son angle en degrés (0 à 360), mesuré comme `FPDFText_GetCharAngle` de PDFium.
+    pub(super) angle: f32,
+}
+
+/// Destination d'une plage `bfrange` d'une `/ToUnicode`.
+enum Target {
+    /// `<lo> <hi> <dst>` : le code `lo + k` donne `dst` dont la dernière unité UTF-16 est
+    /// augmentée de `k`.
+    Start(Vec<u16>),
+    /// `<lo> <hi> [<d0> <d1> …]` : une destination par code.
+    List(Vec<String>),
+}
+
+/// Une `/ToUnicode` lue : codes de caractère → texte Unicode.
+#[derive(Default)]
+pub(super) struct ToUnicode {
+    /// Entrées `bfchar`.
+    chars: BTreeMap<u32, String>,
+    /// Entrées `bfrange`, rangées par premier code : `lo → (hi, destination)`.
+    ranges: BTreeMap<u32, (u32, Target)>,
+    /// Longueur en octets des codes, d'après la première `codespacerange`.
+    code_len: Option<usize>,
+}
+
+/// Un élément lexical d'un CMap (PostScript réduit à ce dont on a besoin).
+enum Token {
+    /// Chaîne hexadécimale `<…>`, décodée.
+    Hex(Vec<u8>),
+    /// Début de tableau `[`.
+    ArrayStart,
+    /// Fin de tableau `]`.
+    ArrayEnd,
+    /// Mot-clé (`beginbfchar`, `def`…).
+    Keyword(Vec<u8>),
+    /// Tout le reste (nombre, nom, chaîne littérale, dictionnaire) : ignoré.
+    Other,
+}
+
+/// Valeur d'un chiffre hexadécimal.
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Vrai pour un délimiteur PostScript (fin d'un mot).
+fn is_delimiter(b: u8) -> bool {
+    b.is_ascii_whitespace() || b == 0 || b"()<>[]{}/%".contains(&b)
+}
+
+/// Lecteur d'éléments d'un CMap, octet par octet.
+struct Lexer<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl Lexer<'_> {
+    /// L'élément suivant, ou `None` en fin de données.
+    fn next_token(&mut self) -> Option<Token> {
+        loop {
+            let b = *self.data.get(self.pos)?;
+            if b.is_ascii_whitespace() || b == 0 {
+                self.pos += 1;
+            } else if b == b'%' {
+                while self
+                    .data
+                    .get(self.pos)
+                    .is_some_and(|&c| c != b'\n' && c != b'\r')
+                {
+                    self.pos += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        let b = *self.data.get(self.pos)?;
+        self.pos += 1;
+        match b {
+            b'[' => Some(Token::ArrayStart),
+            b']' => Some(Token::ArrayEnd),
+            b'<' if self.data.get(self.pos) == Some(&b'<') => {
+                self.pos += 1;
+                Some(Token::Other)
+            }
+            b'>' => {
+                if self.data.get(self.pos) == Some(&b'>') {
+                    self.pos += 1;
+                }
+                Some(Token::Other)
+            }
+            b'<' => {
+                let mut digits = Vec::new();
+                while let Some(&c) = self.data.get(self.pos) {
+                    self.pos += 1;
+                    if c == b'>' {
+                        break;
+                    }
+                    digits.extend(hex_digit(c));
+                }
+                // Un nombre impair de chiffres : le dernier est complété par 0 (§7.3.4.3).
+                Some(Token::Hex(
+                    digits
+                        .chunks(2)
+                        .map(|p| (p[0] << 4) | p.get(1).copied().unwrap_or(0))
+                        .collect(),
+                ))
+            }
+            b'(' => {
+                // Chaîne littérale : parenthèses équilibrées, `\` échappe le caractère suivant.
+                let mut depth = 1usize;
+                while let Some(&c) = self.data.get(self.pos) {
+                    self.pos += 1;
+                    match c {
+                        b'\\' => self.pos += 1,
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Token::Other)
+            }
+            _ => {
+                let start = self.pos - 1;
+                while self.data.get(self.pos).is_some_and(|&c| !is_delimiter(c)) {
+                    self.pos += 1;
+                }
+                let word = self.data.get(start..self.pos).unwrap_or_default();
+                // Un nom (`/CMapName`), un nombre ou une accolade ne sont pas des mots-clés.
+                if b.is_ascii_alphabetic() {
+                    Some(Token::Keyword(word.to_vec()))
+                } else {
+                    Some(Token::Other)
+                }
+            }
+        }
+    }
+}
+
+/// Code de caractère (gros-boutiste) écrit sur 1 à 4 octets ; `None` au-delà.
+fn code_of(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() || bytes.len() > 4 {
+        return None;
+    }
+    Some(bytes.iter().fold(0u32, |acc, &b| (acc << 8) | u32::from(b)))
+}
+
+/// Unités UTF-16 gros-boutistes d'une destination (un octet final isolé est ignoré).
+fn utf16_units(bytes: &[u8]) -> Vec<u16> {
+    // [Apprentissage] `as_chunks::<2>()` découpe la tranche en tableaux `[u8; 2]` et rend à
+    // part le reste (ici un octet isolé, ignoré) ; voir aussi `cleanup/mod.rs`.
+    let (pairs, _odd) = bytes.as_chunks::<2>();
+    pairs.iter().map(|&pair| u16::from_be_bytes(pair)).collect()
+}
+
+/// Texte d'une suite d'unités UTF-16 ; une moitié de paire isolée est ignorée.
+fn utf16_text(units: &[u16]) -> String {
+    char::decode_utf16(units.iter().copied())
+        .filter_map(Result::ok)
+        .collect()
+}
+
+/// Un opérande d'un CMap, entre deux mots-clés.
+enum Operand {
+    /// Chaîne hexadécimale.
+    Hex(Vec<u8>),
+    /// Tableau de destinations (`bfrange` à liste), déjà décodées.
+    List(Vec<String>),
+    /// Autre chose (nombre, nom…).
+    Other,
+}
+
+impl ToUnicode {
+    /// Lit un CMap `/ToUnicode` : `codespacerange` (longueur des codes), `bfchar`, `bfrange`.
+    /// Un CMap abîmé donne ce qu'on a pu en lire, jamais d'erreur.
+    pub(super) fn parse(data: &[u8]) -> Self {
+        let mut map = ToUnicode::default();
+        let mut lexer = Lexer { data, pos: 0 };
+        // Opérandes depuis le dernier mot-clé ; tableau en cours de lecture.
+        let mut operands: Vec<Operand> = Vec::new();
+        let mut array: Option<Vec<String>> = None;
+        while let Some(token) = lexer.next_token() {
+            if map.len() >= MAX_ENTRIES || operands.len() > 3 * MAX_ENTRIES {
+                break;
+            }
+            match token {
+                Token::ArrayStart => array = Some(Vec::new()),
+                Token::ArrayEnd => {
+                    if let Some(items) = array.take() {
+                        operands.push(Operand::List(items));
+                    }
+                }
+                Token::Hex(bytes) => match array.as_mut() {
+                    Some(items) => items.push(utf16_text(&utf16_units(&bytes))),
+                    None => operands.push(Operand::Hex(bytes)),
+                },
+                Token::Keyword(word) => {
+                    match word.as_slice() {
+                        b"endcodespacerange" => {
+                            if map.code_len.is_none()
+                                && let Some(Operand::Hex(lo)) = operands.first()
+                            {
+                                map.code_len = Some(lo.len());
+                            }
+                        }
+                        b"endbfchar" => map.add_chars(&operands),
+                        b"endbfrange" => map.add_ranges(std::mem::take(&mut operands)),
+                        _ => {}
+                    }
+                    operands.clear();
+                    array = None;
+                }
+                Token::Other => {
+                    if array.is_none() {
+                        operands.push(Operand::Other);
+                    }
+                }
+            }
+        }
+        map
+    }
+
+    /// Nombre d'entrées lues.
+    fn len(&self) -> usize {
+        self.chars.len() + self.ranges.len()
+    }
+
+    /// Entrées d'une section `bfchar` : paires `<code> <destination>`.
+    fn add_chars(&mut self, operands: &[Operand]) {
+        for pair in operands.as_chunks::<2>().0 {
+            if let [Operand::Hex(src), Operand::Hex(dst)] = pair
+                && let Some(code) = code_of(src)
+            {
+                self.chars.insert(code, utf16_text(&utf16_units(dst)));
+            }
+        }
+    }
+
+    /// Entrées d'une section `bfrange` : triplets `<lo> <hi> <dst>` ou `<lo> <hi> [ … ]`.
+    fn add_ranges(&mut self, operands: Vec<Operand>) {
+        let mut operands = operands.into_iter();
+        while let (Some(lo), Some(hi), Some(dst)) =
+            (operands.next(), operands.next(), operands.next())
+        {
+            let (Operand::Hex(lo), Operand::Hex(hi)) = (lo, hi) else {
+                continue;
+            };
+            let (Some(lo), Some(hi)) = (code_of(&lo), code_of(&hi)) else {
+                continue;
+            };
+            if hi < lo {
+                continue;
+            }
+            let target = match dst {
+                Operand::Hex(bytes) => Target::Start(utf16_units(&bytes)),
+                Operand::List(items) => Target::List(items),
+                Operand::Other => continue,
+            };
+            self.ranges.insert(lo, (hi, target));
+        }
+    }
+
+    /// Le texte du code `code`, s'il est défini et non vide.
+    pub(super) fn lookup(&self, code: u32) -> Option<String> {
+        if let Some(text) = self.chars.get(&code) {
+            return (!text.is_empty()).then(|| text.clone());
+        }
+        let (&lo, (hi, target)) = self.ranges.range(..=code).next_back()?;
+        if code > *hi {
+            return None;
+        }
+        let offset = code - lo;
+        let text = match target {
+            Target::Start(units) => {
+                let mut units = units.clone();
+                let last = units.last_mut()?;
+                *last = last.checked_add(u16::try_from(offset).ok()?)?;
+                utf16_text(&units)
+            }
+            Target::List(items) => items.get(usize::try_from(offset).ok()?)?.clone(),
+        };
+        (!text.is_empty()).then_some(text)
+    }
+}
+
+/// Chasses d'une police, en unités de glyphe.
+struct Widths {
+    /// Chasses données une à une (`c [w1 w2 …]` dans `/W`, ou `/Widths`).
+    explicit: BTreeMap<u32, f32>,
+    /// Plages `c_first c_last w` de `/W`, rangées par premier code.
+    ranges: BTreeMap<u32, (u32, f32)>,
+    /// Chasse par défaut (`/DW`, `/MissingWidth`).
+    default: f32,
+}
+
+impl Widths {
+    /// La chasse du code `code`.
+    fn get(&self, code: u32) -> f32 {
+        if let Some(&w) = self.explicit.get(&code) {
+            return w;
+        }
+        match self.ranges.range(..=code).next_back() {
+            Some((_, &(last, w))) if code <= last => w,
+            _ => self.default,
+        }
+    }
+}
+
+/// Ce que le repli sait d'une police de la page.
+struct Font {
+    /// Sa `/ToUnicode`, s'il y en a une.
+    to_unicode: Option<ToUnicode>,
+    /// Codes sur deux octets (police composite) plutôt qu'un.
+    two_bytes: bool,
+    /// Ses chasses.
+    widths: Widths,
+    /// Unités de glyphe → unités de texte (1/1000, ou `/FontMatrix` d'une police Type 3).
+    scale: f32,
+    /// Haut et bas du cadratin, en unités de texte (fractions de la taille de police).
+    ascent: f32,
+    descent: f32,
+}
+
+/// L'objet `obj`, référence suivie.
+fn resolve<'a>(doc: &'a LoDocument, obj: &'a Object) -> Option<&'a Object> {
+    doc.dereference(obj).ok().map(|(_, o)| o)
+}
+
+/// La valeur de `key` dans `dict`, référence suivie.
+fn entry<'a>(doc: &'a LoDocument, dict: &'a Dictionary, key: &[u8]) -> Option<&'a Object> {
+    resolve(doc, dict.get(key).ok()?)
+}
+
+/// Un nombre fini, référence suivie.
+fn number(doc: &LoDocument, obj: &Object) -> Option<f32> {
+    resolve(doc, obj)?.as_float().ok().filter(|v| v.is_finite())
+}
+
+/// Les chasses d'un tableau `/W` de police CID (§9.7.4.3) : `c [w1 w2 …]` ou `c_first c_last w`.
+fn cid_widths(doc: &LoDocument, w: Option<&Object>, default: f32) -> Widths {
+    let mut widths = Widths {
+        explicit: BTreeMap::new(),
+        ranges: BTreeMap::new(),
+        default,
+    };
+    let Some(items) = w.and_then(|w| resolve(doc, w)?.as_array().ok()) else {
+        return widths;
+    };
+    let mut i = 0;
+    while i < items.len() && widths.explicit.len() + widths.ranges.len() < MAX_ENTRIES {
+        let Some(first) = items.get(i).and_then(|o| number(doc, o)) else {
+            break;
+        };
+        // Un code est un entier positif : on le tronque, comme les autres lecteurs.
+        let first = first.max(0.0) as u32;
+        let next = items.get(i + 1).and_then(|o| resolve(doc, o));
+        if let Some(Object::Array(list)) = next {
+            for (k, value) in list.iter().take(MAX_ENTRIES).enumerate() {
+                let (Some(w), Ok(k)) = (number(doc, value), u32::try_from(k)) else {
+                    continue;
+                };
+                widths.explicit.insert(first.saturating_add(k), w);
+            }
+            i += 2;
+        } else {
+            let last = next.and_then(|o| number(doc, o));
+            let w = items.get(i + 2).and_then(|o| number(doc, o));
+            let (Some(last), Some(w)) = (last, w) else {
+                break;
+            };
+            widths.ranges.insert(first, (last.max(0.0) as u32, w));
+            i += 3;
+        }
+    }
+    widths
+}
+
+/// Les chasses d'une police simple : `/FirstChar` et `/Widths` ; hors de la plage,
+/// `/MissingWidth` du descripteur. Sans `/Widths` (police standard), un demi-cadratin.
+fn simple_widths(doc: &LoDocument, font: &Dictionary, descriptor: Option<&Dictionary>) -> Widths {
+    let list = entry(doc, font, b"Widths").and_then(|o| o.as_array().ok());
+    let missing = descriptor
+        .and_then(|d| entry(doc, d, b"MissingWidth"))
+        .and_then(|o| number(doc, o));
+    let mut widths = Widths {
+        explicit: BTreeMap::new(),
+        ranges: BTreeMap::new(),
+        default: missing.unwrap_or(if list.is_some() { 0.0 } else { 500.0 }),
+    };
+    let first = entry(doc, font, b"FirstChar")
+        .and_then(|o| number(doc, o))
+        .map_or(0, |f| f.max(0.0) as u32);
+    for (k, value) in list.into_iter().flatten().take(256).enumerate() {
+        if let (Some(w), Ok(k)) = (number(doc, value), u32::try_from(k)) {
+            widths.explicit.insert(first.saturating_add(k), w);
+        }
+    }
+    widths
+}
+
+/// Ce que le repli retient de la police `font` (dictionnaire `/Font`).
+fn load_font(doc: &LoDocument, font: &Dictionary) -> Font {
+    let subtype = entry(doc, font, b"Subtype").and_then(|o| o.as_name().ok());
+    let to_unicode = entry(doc, font, b"ToUnicode")
+        .and_then(|o| o.as_stream().ok())
+        .and_then(crate::crypt::stream_bytes)
+        .map(|data| ToUnicode::parse(&data));
+    let composite = subtype == Some(b"Type0".as_slice());
+    let descendant = composite
+        .then(|| entry(doc, font, b"DescendantFonts"))
+        .flatten()
+        .and_then(|o| o.as_array().ok())
+        .and_then(|a| a.first())
+        .and_then(|o| resolve(doc, o))
+        .and_then(|o| o.as_dict().ok());
+    // Le descripteur d'une police composite est dans sa police descendante.
+    let descriptor = descendant
+        .or((!composite).then_some(font))
+        .and_then(|d| entry(doc, d, b"FontDescriptor"))
+        .and_then(|o| o.as_dict().ok());
+    let widths = match descendant {
+        Some(cid_font) => {
+            let default = entry(doc, cid_font, b"DW")
+                .and_then(|o| number(doc, o))
+                .unwrap_or(1000.0);
+            cid_widths(doc, cid_font.get(b"W").ok(), default)
+        }
+        None if composite => cid_widths(doc, None, 1000.0),
+        None => simple_widths(doc, font, descriptor),
+    };
+    // Une police Type 3 a son propre espace de glyphe (`/FontMatrix`) ; les autres, 1/1000.
+    let scale = if subtype == Some(b"Type3".as_slice()) {
+        entry(doc, font, b"FontMatrix")
+            .and_then(|o| o.as_array().ok())
+            .and_then(|m| m.first())
+            .and_then(|o| number(doc, o))
+            .filter(|s| *s > 0.0)
+            .unwrap_or(0.001)
+    } else {
+        0.001
+    };
+    // Cadratin : `/Ascent` et `/Descent` bornés (certains fichiers y mettent la boîte de toute
+    // la police, deux fois plus haute que la ligne).
+    let metric = |key: &[u8]| {
+        descriptor
+            .and_then(|d| entry(doc, d, key))
+            .and_then(|o| number(doc, o))
+            .map(|v| v / 1000.0)
+    };
+    let ascent = metric(b"Ascent").map_or(0.8, |a| a.clamp(0.5, 1.0));
+    let descent = metric(b"Descent").map_or(-0.2, |d| d.clamp(-0.3, 0.0));
+    let two_bytes = composite
+        && to_unicode
+            .as_ref()
+            .is_none_or(|map| map.code_len != Some(1));
+    Font {
+        to_unicode,
+        two_bytes,
+        widths,
+        scale,
+        ascent,
+        descent,
+    }
+}
+
+/// L'état graphique qui compte pour le texte (sauvé par `q`, rendu par `Q`, §8.4 et §9.3).
+#[derive(Clone)]
+struct GraphicsState {
+    /// Matrice courante (`cm`).
+    ctm: Matrix,
+    /// Police courante : index dans `Walker::fonts`.
+    font: Option<usize>,
+    /// Taille de police (`Tf`).
+    size: f32,
+    /// Espacement des caractères (`Tc`).
+    char_spacing: f32,
+    /// Espacement des mots (`Tw`).
+    word_spacing: f32,
+    /// Échelle horizontale (`Tz` / 100).
+    horizontal_scale: f32,
+    /// Interligne (`TL`).
+    leading: f32,
+    /// Montée (`Ts`).
+    rise: f32,
+}
+
+/// Un flux de contenu en cours de lecture : la page, ou un formulaire XObject.
+struct Frame {
+    /// Ses opérateurs.
+    ops: Rc<Vec<Operation>>,
+    /// Le prochain à lire.
+    next: usize,
+    /// Ses ressources (polices, XObjects).
+    resources: Rc<Dictionary>,
+    /// Le formulaire lu (`None` pour la page) : un formulaire déjà sur la pile n'y entre pas
+    /// une seconde fois (cycle).
+    form: Option<ObjectId>,
+    /// État graphique à rendre en sortant du formulaire, et hauteur de la pile `q` d'alors.
+    saved: Option<(GraphicsState, usize)>,
+}
+
+/// Le lecteur de contenu.
+struct Walker<'a> {
+    doc: &'a LoDocument,
+    /// Polices déjà analysées.
+    fonts: Vec<Font>,
+    /// Police analysée par objet de police.
+    font_ids: BTreeMap<ObjectId, usize>,
+    /// Polices directes analysées (bornées par [`MAX_FONT_LOADS`]).
+    direct_loads: usize,
+    /// Opérateurs des formulaires déjà décodés.
+    forms: BTreeMap<ObjectId, Rc<Vec<Operation>>>,
+    state: GraphicsState,
+    /// Pile des états sauvés par `q`.
+    saved: Vec<GraphicsState>,
+    /// Matrice de texte (`Tm`) et de début de ligne (`Tlm`).
+    tm: Matrix,
+    tlm: Matrix,
+    out: Vec<FoundChar>,
+}
+
+/// Translation `(tx, ty)`.
+fn translation(tx: f32, ty: f32) -> Matrix {
+    [1.0, 0.0, 0.0, 1.0, tx, ty]
+}
+
+/// Le `n`-ième opérande d'un opérateur, en nombre.
+fn operand(op: &Operation, n: usize) -> Option<f32> {
+    op.operands
+        .get(n)
+        .and_then(|o| o.as_float().ok())
+        .filter(|v| v.is_finite())
+}
+
+impl<'a> Walker<'a> {
+    fn new(doc: &'a LoDocument) -> Self {
+        Walker {
+            doc,
+            fonts: Vec::new(),
+            font_ids: BTreeMap::new(),
+            direct_loads: 0,
+            forms: BTreeMap::new(),
+            state: GraphicsState {
+                ctm: IDENTITY,
+                font: None,
+                size: 0.0,
+                char_spacing: 0.0,
+                word_spacing: 0.0,
+                horizontal_scale: 1.0,
+                leading: 0.0,
+                rise: 0.0,
+            },
+            saved: Vec::new(),
+            tm: IDENTITY,
+            tlm: IDENTITY,
+            out: Vec::new(),
+        }
+    }
+
+    /// La police nommée `name` dans `resources`, analysée une fois par objet de police.
+    fn font(&mut self, resources: &Dictionary, name: &[u8]) -> Option<usize> {
+        let doc = self.doc;
+        let fonts = entry(doc, resources, b"Font")?.as_dict().ok()?;
+        let value = fonts.get(name).ok()?;
+        let (id, object) = doc.dereference(value).ok()?;
+        if let Some(index) = id.and_then(|id| self.font_ids.get(&id)) {
+            return Some(*index);
+        }
+        if id.is_none() {
+            if self.direct_loads >= MAX_FONT_LOADS {
+                return None;
+            }
+            self.direct_loads += 1;
+        }
+        let font = load_font(doc, object.as_dict().ok()?);
+        self.fonts.push(font);
+        let index = self.fonts.len() - 1;
+        if let Some(id) = id {
+            self.font_ids.insert(id, index);
+        }
+        Some(index)
+    }
+
+    /// Passe à la ligne suivante (`T*`).
+    fn next_line(&mut self) {
+        self.tlm = multiply(&translation(0.0, -self.state.leading), &self.tlm);
+        self.tm = self.tlm;
+    }
+
+    /// Dessine la chaîne `bytes` (`Tj`) : un caractère par code traduit, puis l'avance.
+    fn show(&mut self, bytes: &[u8]) {
+        let Some(font) = self.state.font.and_then(|i| self.fonts.get(i)) else {
+            return;
+        };
+        let state = &self.state;
+        let step = if font.two_bytes { 2 } else { 1 };
+        for chunk in bytes.chunks_exact(step) {
+            let Some(code) = code_of(chunk) else {
+                continue;
+            };
+            let advance = font.widths.get(code) * font.scale;
+            let text = font.to_unicode.as_ref().and_then(|map| map.lookup(code));
+            if let Some(text) = text
+                && self.out.len() < MAX_CHARS
+            {
+                // Matrice de rendu (§9.4.4) : espace du texte → espace utilisateur.
+                let size = [
+                    state.size * state.horizontal_scale,
+                    0.0,
+                    0.0,
+                    state.size,
+                    0.0,
+                    state.rise,
+                ];
+                let trm = multiply(&multiply(&size, &self.tm), &state.ctm);
+                // `FPDFText_GetCharAngle` : atan2(-b, a), dans le sens horaire.
+                let angle = (-trm[1]).atan2(trm[0]).to_degrees().rem_euclid(360.0);
+                // Une ligature (« ﬁ » → « fi ») partage la chasse du glyphe entre ses lettres.
+                let count = text.chars().count() as f32;
+                for (k, ch) in text.chars().enumerate() {
+                    let x0 = advance * k as f32 / count;
+                    let x1 = advance * (k + 1) as f32 / count;
+                    let corners = [
+                        (x0, font.descent),
+                        (x1, font.descent),
+                        (x0, font.ascent),
+                        (x1, font.ascent),
+                    ]
+                    .map(|(x, y)| apply(&trm, x, y));
+                    let (mut left, mut bottom) = (f32::MAX, f32::MAX);
+                    let (mut right, mut top) = (f32::MIN, f32::MIN);
+                    for (x, y) in corners {
+                        left = left.min(x);
+                        bottom = bottom.min(y);
+                        right = right.max(x);
+                        top = top.max(y);
+                    }
+                    let rect = Rect {
+                        x: left,
+                        y: bottom,
+                        w: right - left,
+                        h: top - bottom,
+                    };
+                    if [rect.x, rect.y, rect.w, rect.h]
+                        .iter()
+                        .all(|v| v.is_finite())
+                        && self.out.len() < MAX_CHARS
+                    {
+                        self.out.push(FoundChar { ch, rect, angle });
+                    }
+                }
+            }
+            // Avance (§9.4.4) : chasse × taille, plus `Tc`, plus `Tw` pour l'espace d'un octet.
+            let word = if step == 1 && code == 32 {
+                state.word_spacing
+            } else {
+                0.0
+            };
+            let tx = (advance * state.size + state.char_spacing + word) * state.horizontal_scale;
+            self.tm = multiply(&translation(tx, 0.0), &self.tm);
+        }
+    }
+
+    /// Le cadre du formulaire XObject nommé `name` (opérateur `Do`), ou `None` si ce n'est pas
+    /// un formulaire lisible, s'il est déjà sur la pile (cycle) ou trop profond.
+    fn enter_form(&mut self, frames: &[Frame], name: &[u8]) -> Option<Frame> {
+        let doc = self.doc;
+        if frames.len() > MAX_FORM_DEPTH {
+            return None;
+        }
+        let resources = &frames.last()?.resources;
+        let id = entry(doc, resources, b"XObject")?
+            .as_dict()
+            .ok()?
+            .get(name)
+            .ok()?
+            .as_reference()
+            .ok()?;
+        if frames.iter().any(|f| f.form == Some(id)) {
+            return None;
+        }
+        let stream = doc.get_object(id).ok()?.as_stream().ok()?;
+        if entry(doc, &stream.dict, b"Subtype").and_then(|o| o.as_name().ok())
+            != Some(b"Form".as_slice())
+        {
+            return None;
+        }
+        let ops = match self.forms.get(&id) {
+            Some(ops) => Rc::clone(ops),
+            None => {
+                let data = crate::crypt::stream_bytes(stream)?;
+                let ops = Rc::new(Content::decode(&data).ok()?.operations);
+                self.forms.insert(id, Rc::clone(&ops));
+                ops
+            }
+        };
+        // Sans `/Resources` propres, un formulaire utilise celles de son appelant.
+        let own = entry(doc, &stream.dict, b"Resources").and_then(|o| o.as_dict().ok());
+        let form_resources = match own {
+            Some(d) => Rc::new(d.clone()),
+            None => Rc::clone(resources),
+        };
+        let matrix = entry(doc, &stream.dict, b"Matrix")
+            .and_then(|o| o.as_array().ok())
+            .and_then(|m| {
+                let values: Vec<f32> = m.iter().filter_map(|o| number(doc, o)).collect();
+                <[f32; 6]>::try_from(values.as_slice()).ok()
+            })
+            .unwrap_or(IDENTITY);
+        let saved = (self.state.clone(), self.saved.len());
+        self.state.ctm = multiply(&matrix, &self.state.ctm);
+        Some(Frame {
+            ops,
+            next: 0,
+            resources: form_resources,
+            form: Some(id),
+            saved: Some(saved),
+        })
+    }
+
+    /// Applique un opérateur ; rend le cadre d'un formulaire où entrer.
+    fn step(&mut self, frames: &[Frame], op: &Operation, base: usize) -> Option<Frame> {
+        let state = &mut self.state;
+        match op.operator.as_str() {
+            "q" => self.saved.push(state.clone()),
+            "Q" => {
+                // Un `Q` en trop dans un formulaire ne rend pas l'état de son appelant.
+                if self.saved.len() > base
+                    && let Some(previous) = self.saved.pop()
+                {
+                    self.state = previous;
+                }
+            }
+            "cm" => {
+                if let Some(m) = matrix_operands(op) {
+                    state.ctm = multiply(&m, &state.ctm);
+                }
+            }
+            "BT" => {
+                self.tm = IDENTITY;
+                self.tlm = IDENTITY;
+            }
+            "Tf" => {
+                let name = op.operands.first().and_then(|o| o.as_name().ok());
+                let resources = frames.last().map(|f| Rc::clone(&f.resources));
+                self.state.font = match (name, resources) {
+                    (Some(name), Some(resources)) => self.font(&resources, name),
+                    _ => None,
+                };
+                self.state.size = operand(op, 1).unwrap_or(0.0);
+            }
+            "Tc" => state.char_spacing = operand(op, 0).unwrap_or(0.0),
+            "Tw" => state.word_spacing = operand(op, 0).unwrap_or(0.0),
+            "Tz" => state.horizontal_scale = operand(op, 0).unwrap_or(100.0) / 100.0,
+            "TL" => state.leading = operand(op, 0).unwrap_or(0.0),
+            "Ts" => state.rise = operand(op, 0).unwrap_or(0.0),
+            "Td" | "TD" => {
+                let (tx, ty) = (operand(op, 0).unwrap_or(0.0), operand(op, 1).unwrap_or(0.0));
+                if op.operator == "TD" {
+                    state.leading = -ty;
+                }
+                self.tlm = multiply(&translation(tx, ty), &self.tlm);
+                self.tm = self.tlm;
+            }
+            "Tm" => {
+                if let Some(m) = matrix_operands(op) {
+                    self.tm = m;
+                    self.tlm = m;
+                }
+            }
+            "T*" => self.next_line(),
+            "Tj" => {
+                if let Some(bytes) = op.operands.first().and_then(|o| o.as_str().ok()) {
+                    self.show(bytes);
+                }
+            }
+            "'" => {
+                self.next_line();
+                if let Some(bytes) = op.operands.first().and_then(|o| o.as_str().ok()) {
+                    self.show(bytes);
+                }
+            }
+            "\"" => {
+                state.word_spacing = operand(op, 0).unwrap_or(0.0);
+                state.char_spacing = operand(op, 1).unwrap_or(0.0);
+                self.next_line();
+                if let Some(bytes) = op.operands.get(2).and_then(|o| o.as_str().ok()) {
+                    self.show(bytes);
+                }
+            }
+            "TJ" => {
+                let items = op.operands.first().and_then(|o| o.as_array().ok());
+                for item in items.into_iter().flatten() {
+                    match item {
+                        Object::String(bytes, _) => self.show(bytes),
+                        other => {
+                            // Un nombre recule (ou avance) de millièmes de la taille de police.
+                            if let Ok(adjust) = other.as_float()
+                                && adjust.is_finite()
+                            {
+                                let tx = -adjust / 1000.0
+                                    * self.state.size
+                                    * self.state.horizontal_scale;
+                                self.tm = multiply(&translation(tx, 0.0), &self.tm);
+                            }
+                        }
+                    }
+                }
+            }
+            "Do" => {
+                let name = op.operands.first().and_then(|o| o.as_name().ok())?;
+                return self.enter_form(frames, name);
+            }
+            _ => {}
+        }
+        None
+    }
+}
+
+/// Les caractères que dessine la page `page_id`, traduits par les `/ToUnicode` de ses polices,
+/// dans l'ordre de dessin. Un contenu illisible donne ce qu'on a pu en lire.
+pub(super) fn page_chars(doc: &LoDocument, page_id: ObjectId) -> Vec<FoundChar> {
+    let Ok(page) = doc.get_dictionary(page_id) else {
+        return Vec::new();
+    };
+    let resources = Rc::new(crate::overlay::inherited_resources(doc, page));
+    let Some(content) = crate::crypt::page_content(doc, page_id)
+        .ok()
+        .and_then(|data| Content::decode(&data).ok())
+    else {
+        return Vec::new();
+    };
+    let mut walker = Walker::new(doc);
+    let mut frames = vec![Frame {
+        ops: Rc::new(content.operations),
+        next: 0,
+        resources,
+        form: None,
+        saved: None,
+    }];
+    let mut budget = MAX_OPERATIONS;
+    while budget > 0 && walker.out.len() < MAX_CHARS {
+        let Some(frame) = frames.last_mut() else {
+            break;
+        };
+        let ops = Rc::clone(&frame.ops);
+        let Some(op) = ops.get(frame.next) else {
+            // Fin du flux : on sort du formulaire et l'appelant retrouve son état.
+            if let Some(Frame {
+                saved: Some((state, depth)),
+                ..
+            }) = frames.pop()
+            {
+                walker.state = state;
+                walker.saved.truncate(depth);
+            }
+            continue;
+        };
+        frame.next += 1;
+        budget -= 1;
+        let base = frame.saved.as_ref().map_or(0, |(_, depth)| *depth);
+        if let Some(form) = walker.step(&frames, op, base) {
+            frames.push(form);
+        }
+    }
+    walker.out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bfchar_and_bfrange_are_read() {
+        let cmap = b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n\
+            /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n\
+            1 begincodespacerange <0000> <FFFF> endcodespacerange\n\
+            2 beginbfchar <0003> <0020> <A911> <9664> endbfchar\n\
+            2 beginbfrange <0010> <0012> <0041> <0020> <0021> [<00660069> <D835DF0B>] endbfrange\n\
+            endcmap CMapName currentdict /CMap defineresource pop end end";
+        let map = ToUnicode::parse(cmap);
+        assert_eq!(map.code_len, Some(2));
+        assert_eq!(map.lookup(0xA911).as_deref(), Some("除"));
+        assert_eq!(map.lookup(0x0003).as_deref(), Some(" "));
+        assert_eq!(map.lookup(0x0010).as_deref(), Some("A"));
+        assert_eq!(map.lookup(0x0012).as_deref(), Some("C"));
+        assert_eq!(map.lookup(0x0013), None);
+        assert_eq!(map.lookup(0x0020).as_deref(), Some("fi"));
+        assert_eq!(map.lookup(0x0021).as_deref(), Some("\u{1D70B}"));
+        assert_eq!(map.lookup(0x0004), None);
+    }
+
+    #[test]
+    fn one_byte_codespace_and_comments() {
+        let cmap = b"% commentaire <41> <42>\n1 begincodespacerange <00> <FF> endcodespacerange\n\
+            1 beginbfchar <41> <0042> endbfchar";
+        let map = ToUnicode::parse(cmap);
+        assert_eq!(map.code_len, Some(1));
+        assert_eq!(map.lookup(0x41).as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn a_damaged_cmap_gives_what_it_can() {
+        for cmap in [
+            &b"beginbfchar <41"[..],
+            b"beginbfrange <0000> <FFFF> endbfrange",
+            b"beginbfchar <0041> /space <0042> <0043> endbfchar",
+            b"(unbalanced ( string beginbfchar <41> <0041> endbfchar",
+            b"beginbfrange <0010> <0001> <0041> endbfrange",
+            b"beginbfrange <00FF> <0100> <FFFF> endbfrange",
+        ] {
+            let map = ToUnicode::parse(cmap);
+            for code in [0, 0x41, 0xFF, 0x100, 0xFFFF] {
+                let _ = map.lookup(code);
+            }
+        }
+        // Une plage dont la destination déborderait d'une unité UTF-16 s'arrête là.
+        let map = ToUnicode::parse(b"beginbfrange <00FF> <0100> <FFFF> endbfrange");
+        assert_eq!(map.lookup(0x0100), None);
+    }
+
+    /// Une page qui dessine « B » elle-même et « A » à travers un formulaire XObject agrandi
+    /// deux fois, qui s'appelle lui-même (cycle) : police simple, `/ToUnicode` d'un octet
+    /// (code 1 → « A », 2 → « B », 3 → « C »), chasse 600.
+    fn walked_page(page_content: &str, form_content: &str) -> Vec<FoundChar> {
+        use lopdf::{Stream, dictionary};
+        let mut doc = LoDocument::with_version("1.7");
+        let cmap = b"1 begincodespacerange <00> <FF> endcodespacerange\n\
+            1 beginbfrange <01> <03> <0041> endbfrange";
+        let to_unicode = doc.add_object(Stream::new(dictionary! {}, cmap.to_vec()));
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "FirstChar" => 1,
+            "Widths" => vec![600.into(), 600.into(), 600.into()],
+            "ToUnicode" => to_unicode,
+        });
+        let form_id = doc.new_object_id();
+        let resources = dictionary! {
+            "Font" => dictionary! { "F1" => font },
+            "XObject" => dictionary! { "X1" => form_id },
+        };
+        doc.objects.insert(
+            form_id,
+            Object::Stream(Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Form",
+                    "BBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+                    "Matrix" => vec![2.into(), 0.into(), 0.into(), 2.into(), 0.into(), 0.into()],
+                },
+                form_content.as_bytes().to_vec(),
+            )),
+        );
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            page_content.as_bytes().to_vec(),
+        ));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+            "Contents" => content,
+            "Resources" => resources,
+        });
+        page_chars(&doc, page)
+    }
+
+    #[test]
+    fn forms_matrices_and_spacing_are_followed() {
+        let chars = walked_page(
+            "q 1 0 0 1 10 0 cm /X1 Do Q BT /F1 10 Tf 0 50 Td 2 Tc [<02> -1000 <03>] TJ ET",
+            "BT /F1 10 Tf 5 5 Td <01> Tj ET /X1 Do",
+        );
+        let found: Vec<(char, f32, f32, f32)> = chars
+            .iter()
+            .map(|c| (c.ch, c.rect.x, c.rect.y, c.rect.w))
+            .collect();
+        // « A » : (5, 5) dans le formulaire, ×2 puis +10 en x ; chasse 0,6 × 10 × 2 = 12.
+        // Le formulaire qui s'appelle lui-même n'est lu qu'une fois.
+        // « B » : après `Q`, plus de décalage ; « C » : chasse 6 + Tc 2 + 10 (TJ -1000).
+        assert_eq!(found.len(), 3, "{found:?}");
+        let close = |a: f32, b: f32| (a - b).abs() < 0.01;
+        let (a, b, c) = (found[0], found[1], found[2]);
+        assert!(a.0 == 'A' && close(a.1, 20.0) && close(a.3, 12.0), "{a:?}");
+        assert!(close(a.2, 10.0 - 0.2 * 20.0), "{a:?}");
+        assert!(b.0 == 'B' && close(b.1, 0.0) && close(b.3, 6.0), "{b:?}");
+        assert!(c.0 == 'C' && close(c.1, 18.0), "{c:?}");
+        assert!(chars.iter().all(|c| c.angle == 0.0));
+    }
+
+    #[test]
+    fn a_page_without_text_or_with_garbage_gives_nothing() {
+        assert!(walked_page("0 0 10 10 re f", "").is_empty());
+        assert!(walked_page("BT /F9 10 Tf <01> Tj ET", "").is_empty());
+        assert!(walked_page("BT <01> Tj ET Q Q Q /Nope Do", "").is_empty());
+    }
+
+    #[test]
+    fn cid_widths_read_both_forms() {
+        let doc = LoDocument::with_version("1.7");
+        let w = Object::Array(vec![
+            1.into(),
+            Object::Array(vec![500.into(), 600.into()]),
+            10.into(),
+            20.into(),
+            700.into(),
+        ]);
+        let widths = cid_widths(&doc, Some(&w), 1000.0);
+        assert_eq!(widths.get(1), 500.0);
+        assert_eq!(widths.get(2), 600.0);
+        assert_eq!(widths.get(15), 700.0);
+        assert_eq!(widths.get(21), 1000.0);
+        assert_eq!(widths.get(3), 1000.0);
+    }
+}

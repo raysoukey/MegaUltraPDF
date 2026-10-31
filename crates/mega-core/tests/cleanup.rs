@@ -672,4 +672,19 @@ fn deleting_one_of_two_marked_objects_prunes_its_mcid_from_the_structure_tree() 
         .filter(|d| d.has(b"Alt"))
         .count();
     assert_eq!(alts, 1, "l'`/Alt` de l'élément vidé est retiré");
+    // Le `/ParentTree` n'annonce plus l'élément supprimé : entrée 0 nulle, entrée 1 intacte.
+    let tree = reread
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .find(|d| d.has(b"Nums"))
+        .unwrap();
+    let nums = tree.get(b"Nums").unwrap().as_array().unwrap();
+    let entries = reread
+        .get_object(nums[1].as_reference().unwrap())
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert!(matches!(entries[0], lopdf::Object::Null), "{entries:?}");
+    assert!(entries[1].as_reference().is_ok(), "{entries:?}");
 }

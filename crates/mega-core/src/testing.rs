@@ -55,13 +55,15 @@ pub fn two_marked_objects_pdf() -> Vec<u8> {
     };
     let e0 = element(&mut doc, 0, "Un");
     let e1 = element(&mut doc, 1, "Deux");
+    // `/ParentTree` et son tableau sont des objets indirects (la forme que produisent Word et
+    // LibreOffice) : la passe qui annule les entrées périmées doit les suivre.
+    let entries = doc.add_object(Object::Array(vec![e0.into(), e1.into()]));
+    let parent_tree = doc.add_object(dictionary! { "Nums" => vec![0.into(), entries.into()] });
     doc.objects.insert(
         root_id,
         Object::Dictionary(dictionary! {
             "Type" => "StructTreeRoot", "K" => vec![e0.into(), e1.into()],
-            "ParentTree" => dictionary! {
-                "Nums" => vec![0.into(), Object::Array(vec![e0.into(), e1.into()])],
-            },
+            "ParentTree" => parent_tree,
         }),
     );
     let catalog = doc.add_object(dictionary! {

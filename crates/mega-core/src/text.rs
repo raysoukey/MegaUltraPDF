@@ -115,26 +115,52 @@ impl Document {
             .get(self.checked_index_unlocked(index)?)?;
         let text = page.text()?;
         let frame = crate::geometry::frame_of(&page);
-        let mut chars = Vec::with_capacity(text.len().max(0) as usize);
+        // Les unités UTF-16 que PDFium rend, avec leur emprise et leur angle à l'écran. Une unité
+        // sans emprise est ignorée.
+        let mut units: Vec<(u32, Rect, f32)> = Vec::with_capacity(text.len().max(0) as usize);
         for c in text.chars().iter() {
-            // Un caractère sans valeur Unicode (glyphe de contrôle) ou sans emprise est ignoré.
-            let (Some(ch), Ok(bounds)) = (c.unicode_char(), c.loose_bounds()) else {
+            let Ok(bounds) = c.loose_bounds() else {
                 continue;
             };
-            if ch == '\r' || ch == '\n' {
-                continue;
-            }
             // PDFium mesure l'angle dans l'espace utilisateur, sens trigonométrique ; `/Rotate`
             // tourne l'affichage dans le sens horaire.
             let angle =
                 (c.angle_degrees().unwrap_or(0.0) - f32::from(frame.rotate)).rem_euclid(360.0);
-            let horizontal = angle <= ANGLE_TOLERANCE || angle >= 360.0 - ANGLE_TOLERANCE;
-            chars.push(DrawnChar {
-                ch,
-                rect: frame.from_user_space(Rect::from_pdf(bounds)),
-                horizontal,
+            units.push((
+                c.unicode_value(),
+                frame.from_user_space(Rect::from_pdf(bounds)),
                 angle,
-            });
+            ));
+        }
+        let mut chars = Vec::with_capacity(units.len());
+        let mut i = 0;
+        while i < units.len() {
+            // Une paire de substitution (deux unités) donne un seul caractère, à l'angle de la
+            // première unité ; toute autre unité se recompose seule.
+            let width = if is_high_surrogate(units[i].0)
+                && units.get(i + 1).is_some_and(|u| is_low_surrogate(u.0))
+            {
+                2
+            } else {
+                1
+            };
+            let angle = units[i].2;
+            let group: Vec<(u32, Rect)> = units[i..i + width].iter().map(|u| (u.0, u.1)).collect();
+            i += width;
+            // Un caractère sans valeur Unicode (glyphe de contrôle) est ignoré, ainsi que les
+            // sauts de ligne ajoutés par PDFium.
+            for (ch, rect) in pair_surrogates(&group) {
+                if ch == '\r' || ch == '\n' {
+                    continue;
+                }
+                let horizontal = angle <= ANGLE_TOLERANCE || angle >= 360.0 - ANGLE_TOLERANCE;
+                chars.push(DrawnChar {
+                    ch,
+                    rect,
+                    horizontal,
+                    angle,
+                });
+            }
         }
         Ok(chars)
     }
@@ -160,6 +186,65 @@ impl Document {
             .into_iter()
             .map(|rects| SearchHit { page: index, rects })
             .collect())
+    }
+}
+
+/// Vrai pour une moitié haute de paire de substitution UTF-16 (`D800`–`DBFF`).
+fn is_high_surrogate(unit: u32) -> bool {
+    (0xD800..=0xDBFF).contains(&unit)
+}
+
+/// Vrai pour une moitié basse de paire de substitution UTF-16 (`DC00`–`DFFF`).
+fn is_low_surrogate(unit: u32) -> bool {
+    (0xDC00..=0xDFFF).contains(&unit)
+}
+
+/// Recompose les caractères à partir des unités UTF-16 que rend PDFium (audit L1).
+///
+/// Sous Windows, PDFium donne un caractère hors du plan multilingue de base (emoji, lettres
+/// mathématiques `𝜋`, idéogrammes de l'extension B) en **deux** unités : une moitié haute
+/// (`D800`–`DBFF`) puis une moitié basse (`DC00`–`DFFF`). Chacune est jetée par
+/// `char::from_u32`, d'où un texte, une recherche et une copie amputés. Une paire devient un
+/// seul caractère dont l'emprise est l'**union** des deux rectangles ; une moitié isolée est
+/// écartée (aucun caractère valide) ; toute autre unité passe telle quelle, et celle qui n'est
+/// pas un caractère Unicode est écartée comme avant.
+///
+/// \[Apprentissage\] Un `char` Rust est une *valeur scalaire* Unicode : les points de code
+/// `D800`–`DFFF` en sont exclus, donc `char::from_u32(0xD835)` vaut `None`. Ces points ne
+/// servent qu'à UTF-16, qui écrit un point de code au-delà de `FFFF` en deux unités de 16 bits
+/// (voir `docs/apprentissage/`).
+pub(crate) fn pair_surrogates(units: &[(u32, Rect)]) -> Vec<(char, Rect)> {
+    let mut out = Vec::with_capacity(units.len());
+    let mut i = 0;
+    while i < units.len() {
+        let (unit, rect) = units[i];
+        if is_high_surrogate(unit) {
+            if let Some(&(low, low_rect)) = units.get(i + 1).filter(|u| is_low_surrogate(u.0)) {
+                let code = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+                if let Some(ch) = char::from_u32(code) {
+                    out.push((ch, union(rect, low_rect)));
+                }
+                i += 2;
+                continue;
+            }
+        } else if let Some(ch) = char::from_u32(unit) {
+            out.push((ch, rect));
+        }
+        // Moitié isolée (haute sans basse, ou basse seule) : ignorée.
+        i += 1;
+    }
+    out
+}
+
+/// Plus petit rectangle qui contient `a` et `b`.
+fn union(a: Rect, b: Rect) -> Rect {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    Rect {
+        x,
+        y,
+        w: (a.x + a.w).max(b.x + b.w) - x,
+        h: (a.y + a.h).max(b.y + b.h) - y,
     }
 }
 
@@ -342,6 +427,31 @@ fn page_blocks(drawn: &[DrawnChar]) -> Vec<crate::reading_order::Block> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn r(x: f32) -> Rect {
+        Rect {
+            x,
+            y: 0.0,
+            w: 10.0,
+            h: 12.0,
+        }
+    }
+
+    #[test]
+    fn pair_surrogates_recomposes_a_pair_and_drops_a_lone_half() {
+        let joined = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 20.0,
+            h: 12.0,
+        };
+        let pair = pair_surrogates(&[(0xD835, r(0.0)), (0xDF0B, r(10.0))]);
+        assert_eq!(pair, vec![('\u{1D70B}', joined)]);
+        let lone = pair_surrogates(&[(0xD835, r(0.0)), (0x41, r(10.0))]);
+        assert_eq!(lone, vec![('A', r(10.0))]);
+        let stray = pair_surrogates(&[(0xDF0B, r(0.0)), (0x42, r(10.0)), (0xD835, r(20.0))]);
+        assert_eq!(stray, vec![('B', r(10.0))]);
+    }
 
     fn drawn(ch: char, x: f32, y: f32) -> DrawnChar {
         DrawnChar {

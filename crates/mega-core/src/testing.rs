@@ -358,6 +358,36 @@ pub fn kerned_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Title (Crenage) >>")
 }
 
+/// Une page dont le texte contient un caractère **hors du plan multilingue de base** : U+1D70B
+/// (`𝜋`, lettre mathématique italique), que Cambria Math et Word écrivent. La police simple
+/// Helvetica n'a pas ce glyphe ; son `/ToUnicode` associe le code `A` à la paire de substitution
+/// UTF-16 `D835 DF0B`, et c'est cette paire que PDFium rend, une moitié par « caractère »
+/// (audit de compatibilité, L1). Le texte est invisible (`3 Tr`), comme une couche OCR.
+pub fn astral_text_pdf() -> Vec<u8> {
+    let content = "BT 3 Tr /F1 24 Tf 72 700 Td (x A y) Tj ET";
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap \
+/CMapName /Adobe-Identity-UCS def /CMapType 2 def \
+1 begincodespacerange <00> <FF> endcodespacerange \
+1 beginbfchar <41> <D835DF0B> endbfchar \
+endcmap CMapName currentdict /CMap defineresource pop end end";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding \
+         /ToUnicode 6 0 R >>"
+            .to_string(),
+        format!("<< /Length {} >>\nstream\n{cmap}\nendstream", cmap.len()),
+    ];
+    assemble_pdf(&objects, "<< /Title (Astral) >>")
+}
+
 pub fn xmp_pdf() -> Vec<u8> {
     let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\

@@ -463,3 +463,46 @@ fn kerned_words_keep_their_spaces() {
     assert_eq!(find("hello", true), 1);
     assert_eq!(find("world foo", true), 1);
 }
+
+/// Audit L1 : un caractère hors du plan multilingue de base (`𝜋`, U+1D70B) arrive de PDFium en
+/// deux unités UTF-16 ; il doit être recomposé, donc copié, exporté et trouvé.
+#[test]
+fn astral_characters_are_extracted_searchable_and_copied() {
+    let doc = Document::from_bytes(mega_core::testing::astral_text_pdf(), None).unwrap();
+    assert!(doc.page_text(0).unwrap().contains('\u{1D70B}'));
+    let hits = doc
+        .search_page(0, "\u{1D70B}", &Default::default())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        doc.text_boxes(0)
+            .unwrap()
+            .iter()
+            .all(|b| !(0xD800..=0xDFFF).contains(&(b.ch as u32)))
+    );
+}
+
+/// Même contrôle sur de vrais fichiers, si `MEGA_CORPUS` désigne `fixtures/corpus`.
+#[test]
+fn astral_characters_in_the_corpus() {
+    let Ok(dir) = std::env::var("MEGA_CORPUS") else {
+        return;
+    };
+    for (file, expected) in [
+        ("local/edge-article.pdf", '\u{1F600}'),
+        ("producteurs/bug1937438_from_word.pdf", '\u{1D70B}'),
+    ] {
+        let doc = Document::open(format!("{dir}/{file}"), None).unwrap();
+        let mut text = String::new();
+        for i in 0..doc.page_count() {
+            text.push_str(&doc.page_text(i).unwrap());
+            assert!(
+                doc.text_boxes(i)
+                    .unwrap()
+                    .iter()
+                    .all(|b| !(0xD800..=0xDFFF).contains(&(b.ch as u32)))
+            );
+        }
+        assert!(text.contains(expected), "{file}");
+    }
+}

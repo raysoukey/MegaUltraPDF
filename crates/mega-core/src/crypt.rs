@@ -200,3 +200,63 @@ impl LopdfSession {
         Ok(out)
     }
 }
+
+/// Version `(majeur, mineur)` annoncée par l'en-tête `%PDF-M.n`, cherché dans les 1024
+/// premiers octets (des octets parasites peuvent précéder l'en-tête, comme le tolère la
+/// lecture `lopdf`). `None` si aucun en-tête à deux chiffres n'y figure.
+///
+/// Pourquoi : PDFium ne sait écrire que les versions 1.0 à 1.7 et réécrit un `%PDF-2.0` en
+/// `%PDF-1.0` ; sans connaître la version d'origine, chaque édition d'un PDF/A-4 ou d'un
+/// PDF/UA-2 romprait sa conformité (audit E2).
+pub(crate) fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
+    let head = &bytes[..bytes.len().min(1024)];
+    let start = head.windows(5).position(|w| w == b"%PDF-")? + 5;
+    let digits = head.get(start..start + 3)?;
+    match digits {
+        [major @ b'0'..=b'9', b'.', minor @ b'0'..=b'9'] => Some((major - b'0', minor - b'0')),
+        _ => None,
+    }
+}
+
+/// Copie de `bytes` dont l'en-tête annonce au moins `min_version`, sans changer la longueur
+/// (les trois octets `M.n` sont réécrits en place : tous les décalages restent exacts).
+/// Les octets sont rendus tels quels si l'en-tête est déjà assez récent ou introuvable.
+pub(crate) fn raise_header_version(bytes: &[u8], min_version: Option<(u8, u8)>) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    if let (Some(min), Some(current)) = (min_version, header_version(bytes))
+        // [Apprentissage] Les tuples se comparent champ par champ : (2, 0) > (1, 7).
+        && min > current
+        && let Some(pos) = out[..out.len().min(1024)]
+            .windows(5)
+            .position(|w| w == b"%PDF-")
+    {
+        out[pos + 5] = b'0' + min.0;
+        out[pos + 7] = b'0' + min.1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    #[test]
+    fn header_version_reads_major_minor_after_a_prefix() {
+        assert_eq!(header_version(b"%PDF-2.0\n%\xE2\xE3"), Some((2, 0)));
+        assert_eq!(header_version(b"junk\n%PDF-1.4\n"), Some((1, 4)));
+        assert_eq!(header_version(b"nope"), None);
+    }
+
+    #[test]
+    fn raise_header_version_only_raises() {
+        assert_eq!(
+            raise_header_version(b"%PDF-1.4\nx", Some((2, 0))),
+            b"%PDF-2.0\nx"
+        );
+        assert_eq!(
+            raise_header_version(b"%PDF-1.7\nx", Some((1, 4))),
+            b"%PDF-1.7\nx"
+        );
+        assert_eq!(raise_header_version(b"%PDF-1.7\nx", None), b"%PDF-1.7\nx");
+    }
+}

@@ -228,6 +228,13 @@ impl Document {
         &self.file_bytes
     }
 
+    /// Version `(majeur, mineur)` de l'en-tête des octets du fichier (`file_bytes`), pas de
+    /// celle de PDFium qui ne sait écrire que 1.0 à 1.7 : elle sert de plancher à
+    /// `cleanup::before_save` pour que l'édition d'un PDF 2.0 reste un PDF 2.0 (audit E2).
+    pub(crate) fn file_version(&self) -> Option<(u8, u8)> {
+        crate::crypt::header_version(&self.file_bytes)
+    }
+
     /// Remplace le document PDFium sous-jacent (annuler / rétablir) ; l'ancien est libéré
     /// sous le jeton que l'appelant tient.
     pub(crate) fn replace_inner(&mut self, inner: PdfDocument<'static>) {

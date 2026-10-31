@@ -25,14 +25,27 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 /// Octets prêts à écrire : notes sans apparence imposée, `/InkList` sur les formes, objets
 /// orphelins élagués et renumérotés. Un document chiffré (ouvert avec `password`) est nettoyé
 /// en clair puis **rechiffré à l'identique** (`crypt::LopdfSession`, Lot 10).
-pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> {
+///
+/// `min_version` est la version d'en-tête du document d'origine : PDFium ne sait écrire que
+/// 1.0 à 1.7 (un `%PDF-2.0` ressort en `%PDF-1.0`), et l'en-tête écrit est le plus grand de
+/// celui des octets et de `min_version` (audit E2). `None` si aucune version n'est connue.
+pub fn before_save(
+    bytes: &[u8],
+    password: Option<&str>,
+    min_version: Option<(u8, u8)>,
+) -> CoreResult<Vec<u8>> {
     let mut session = match crate::crypt::LopdfSession::load(bytes, password) {
         Ok(session) => session,
         // Un fichier que lopdf ne relit (ou ne déchiffre) pas est écrit tel que PDFium l'a
         // produit, protection comprise.
-        Err(_) => return Ok(bytes.to_vec()),
+        Err(_) => return Ok(crate::crypt::raise_header_version(bytes, min_version)),
     };
     let doc = &mut session.doc;
+    // [Apprentissage] Les tuples se comparent champ par champ : (2, 0) > (1, 7), d'où `max`.
+    let written = crate::crypt::header_version(bytes).max(min_version);
+    if let Some((major, minor)) = written {
+        doc.version = format!("{major}.{minor}");
+    }
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
     // Le nettoyage ne touche à aucun flux de contenu : on en garde l'empreinte pour vérifier
     // la relecture (un rechiffrement faux brouillerait le contenu sans changer les pages).
@@ -55,7 +68,7 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     // contrôles (audit du Lot 13, R6 : trois chargements par enregistrement auparavant).
     let reread = reload_if_sane(pages_before, &out, password).map(|s| page_contents(&s.doc));
     if reread.as_ref() != Some(&contents_before) {
-        return Ok(bytes.to_vec());
+        return Ok(crate::crypt::raise_header_version(bytes, min_version));
     }
     Ok(out)
 }

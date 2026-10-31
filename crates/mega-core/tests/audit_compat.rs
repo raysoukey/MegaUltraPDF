@@ -1060,7 +1060,7 @@ fn e1_catalog_preservation() {
                 format!("{lost_raw:?}"),
             );
             verdict(&tag, "to_bytes brut : /Version", cat_version(&raw_lo));
-            let cleaned = mega_core::cleanup::before_save(&raw, None).unwrap();
+            let cleaned = mega_core::cleanup::before_save(&raw, None, None).unwrap();
             verdict(&tag, "before_save a modifié les octets", cleaned != raw);
             measure_catalog(&tag, &input, &cleaned, None);
         });
@@ -1136,7 +1136,7 @@ fn e2_cleanup_fallback_and_redaction() {
             "lopdf relit l'entrée",
             catch_unwind(|| lo(&input)).is_ok(),
         );
-        let fallback = mega_core::cleanup::before_save(&input, None).unwrap();
+        let fallback = mega_core::cleanup::before_save(&input, None, None).unwrap();
         verdict(
             "E2",
             "étape 0 : before_save rend les octets inchangés (repli)",
@@ -2451,7 +2451,7 @@ fn l15_third_party_annotations() {
             "to_bytes nu après rendu : /AP par annotation",
             format!("{generated:?}"),
         );
-        let cleaned = mega_core::cleanup::before_save(&raw, None).unwrap();
+        let cleaned = mega_core::cleanup::before_save(&raw, None, None).unwrap();
         let dc = lo(&cleaned);
         let after: Vec<String> = annots(&dc, page_ids(&dc)[0])
             .iter()

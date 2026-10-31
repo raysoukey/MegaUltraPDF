@@ -834,7 +834,7 @@ impl Document {
             bytes
         };
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
-        crate::cleanup::before_save(&bytes, self.password())
+        crate::cleanup::before_save(&bytes, self.password(), self.file_version())
     }
 
     /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.

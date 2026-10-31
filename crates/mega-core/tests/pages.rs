@@ -224,3 +224,95 @@ fn split_to_dir_refuses_existing_outputs_unless_forced() {
         );
     }
 }
+
+/// `sample_pdf` réécrit par `lopdf` avec l'en-tête `version` (PDFium ne sait écrire que 1.0 à 1.7).
+fn sample_with_header(version: &str, catalog_version: Option<&str>) -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&sample_pdf(3, "t")).unwrap();
+    doc.version = version.into();
+    if let Some(v) = catalog_version {
+        let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let catalog = doc.get_object_mut(root).unwrap().as_dict_mut().unwrap();
+        catalog.set("Version", lopdf::Object::Name(v.as_bytes().to_vec()));
+    }
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+#[test]
+fn rotate_merge_extract_and_protect_keep_the_2_0_header() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = Document::from_bytes(sample_with_header("2.0", None), None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let path = dir.path().join("rotated.pdf");
+    doc.save_as(&path).unwrap();
+    assert!(
+        std::fs::read(&path).unwrap().starts_with(b"%PDF-2.0"),
+        "save_as"
+    );
+
+    // Une seconde édition part des octets enregistrés : la version reste.
+    doc.rotate_pages(&[1], 1).unwrap();
+    doc.save_as(&path).unwrap();
+    assert!(
+        std::fs::read(&path).unwrap().starts_with(b"%PDF-2.0"),
+        "save_as bis"
+    );
+
+    assert!(
+        doc.extract_pages(&[0, 1]).unwrap().starts_with(b"%PDF-2.0"),
+        "extract"
+    );
+
+    let old = Document::from_bytes(sample_with_header("1.5", None), None).unwrap();
+    let new = Document::from_bytes(sample_with_header("2.0", None), None).unwrap();
+    assert!(
+        mega_core::pages::merge(&[&old, &new])
+            .unwrap()
+            .starts_with(b"%PDF-2.0"),
+        "merge"
+    );
+    assert!(
+        mega_core::pages::merge(&[&old, &old])
+            .unwrap()
+            .starts_with(b"%PDF-1."),
+        "merge 1.x"
+    );
+
+    let mut protected = Document::from_bytes(sample_with_header("2.0", None), None).unwrap();
+    protected
+        .protect(&mega_core::Protection {
+            user_password: "u".to_string(),
+            owner_password: "o".to_string(),
+            permissions: mega_core::Permissions {
+                print: true,
+                copy: true,
+                modify: true,
+                annotate: true,
+            },
+        })
+        .unwrap();
+    let protected_path = dir.path().join("protected.pdf");
+    protected.save_as(&protected_path).unwrap();
+    assert!(
+        std::fs::read(&protected_path)
+            .unwrap()
+            .starts_with(b"%PDF-2.0"),
+        "protect"
+    );
+}
+
+#[test]
+fn catalog_version_entry_survives_a_rewrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = Document::from_bytes(sample_with_header("1.4", Some("1.7")), None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let path = dir.path().join("v.pdf");
+    doc.save_as(&path).unwrap();
+    let out = std::fs::read(&path).unwrap();
+    assert!(out.starts_with(b"%PDF-1.4"));
+    let reread = lopdf::Document::load_mem(&out).unwrap();
+    let root = reread.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let catalog = reread.get_object(root).unwrap().as_dict().unwrap();
+    assert_eq!(catalog.get(b"Version").unwrap().as_name().unwrap(), b"1.7");
+}

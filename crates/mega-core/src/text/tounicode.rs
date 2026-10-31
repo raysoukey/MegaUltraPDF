@@ -25,8 +25,9 @@
 //!   les codages à longueur variable ne sont pas suivis ;
 //! - rien n'est écarté pour invisibilité (rognage, mode de rendu 3 ou 7), comme dans PDFium ;
 //! - bornes : [`MAX_CHARS`] caractères, [`MAX_FORM_DEPTH`] niveaux de formulaires,
-//!   [`MAX_OPERATIONS`] opérateurs lus, [`MAX_ENTRIES`] entrées par `/ToUnicode` ou `/W`,
-//!   [`MAX_ARRAY_ITEMS`] destinations par tableau de `bfrange`, [`MAX_FONT_LOADS`] polices,
+//!   [`MAX_OPERATIONS`] opérateurs lus, [`MAX_ENTRIES`] entrées (et chaînes de destination
+//!   gardées) par `/ToUnicode` ou `/W`, [`MAX_ARRAY_ITEMS`] destinations par tableau de
+//!   `bfrange` (et pas plus que sa plage n'a de codes), [`MAX_FONT_LOADS`] polices,
 //!   [`MAX_SAVED_STATES`] niveaux de `q`, et [`MAX_DECODED_BYTES`] décompressés en tout
 //!   (`/ToUnicode` et formulaires) : au-delà, la lecture s'arrête et rend ce qu'elle a. Une
 //!   `/ToUnicode` partagée par plusieurs polices n'est lue qu'une fois.
@@ -57,7 +58,8 @@ pub(super) const MAX_FORM_DEPTH: usize = 8;
 /// Nombre maximal d'opérateurs lus pour une page, formulaires compris (un formulaire appelé
 /// mille fois compte mille fois).
 pub(super) const MAX_OPERATIONS: usize = 1_000_000;
-/// Nombre maximal d'entrées lues dans une `/ToUnicode` ou un tableau `/W`.
+/// Nombre maximal d'entrées lues dans une `/ToUnicode` ou un tableau `/W`, et de chaînes de
+/// destination gardées par une `/ToUnicode` (`bfchar` et éléments de listes réunis).
 pub(super) const MAX_ENTRIES: usize = 100_000;
 /// Nombre maximal de destinations lues dans un tableau de `bfrange` (`<lo> <hi> [ … ]`).
 pub(super) const MAX_ARRAY_ITEMS: usize = 4_096;
@@ -100,6 +102,11 @@ pub(super) struct ToUnicode {
     ranges: BTreeMap<u32, (u32, Target)>,
     /// Longueur en octets des codes, d'après la première `codespacerange`.
     code_len: Option<usize>,
+    /// Chaînes de destination gardées jusqu'ici (`bfchar` et éléments des listes de
+    /// `bfrange`), plafonnées à [`MAX_ENTRIES`] : compter les seules entrées laisserait chaque
+    /// liste garder ses milliers de chaînes, soit des centaines de millions pour un CMap de
+    /// quelques dizaines de Mio fait de `<>`.
+    stored: usize,
 }
 
 /// Un élément lexical d'un CMap (PostScript réduit à ce dont on a besoin).
@@ -247,6 +254,26 @@ fn utf16_text(units: &[u16]) -> String {
         .collect()
 }
 
+/// Nombre de codes de la plage `lo..=hi` (`hi >= lo`), plafonné à [`MAX_ARRAY_ITEMS`].
+fn range_len(lo: u32, hi: u32) -> usize {
+    usize::try_from(hi - lo)
+        .map_or(MAX_ARRAY_ITEMS, |n| n.saturating_add(1))
+        .min(MAX_ARRAY_ITEMS)
+}
+
+/// Nombre de destinations qu'une liste `[ … ]` de `bfrange` peut garder : autant que sa plage
+/// a de codes (`<lo> <hi>`, les deux opérandes qui la précèdent), au plus [`MAX_ARRAY_ITEMS`].
+/// Une liste qui ne suit pas deux codes valides n'en garde aucune : elle sera écartée.
+fn list_room(operands: &[Operand]) -> usize {
+    let [.., Operand::Hex(lo), Operand::Hex(hi)] = operands else {
+        return 0;
+    };
+    match (code_of(lo), code_of(hi)) {
+        (Some(lo), Some(hi)) if hi >= lo => range_len(lo, hi),
+        _ => 0,
+    }
+}
+
 /// Un opérande d'un CMap, entre deux mots-clés.
 enum Operand {
     /// Chaîne hexadécimale.
@@ -263,24 +290,26 @@ impl ToUnicode {
     pub(super) fn parse(data: &[u8]) -> Self {
         let mut map = ToUnicode::default();
         let mut lexer = Lexer { data, pos: 0 };
-        // Opérandes depuis le dernier mot-clé ; tableau en cours de lecture.
+        // Opérandes depuis le dernier mot-clé ; tableau en cours de lecture, avec le nombre
+        // de destinations qu'il a le droit de garder.
         let mut operands: Vec<Operand> = Vec::new();
-        let mut array: Option<Vec<String>> = None;
+        let mut array: Option<(Vec<String>, usize)> = None;
         while let Some(token) = lexer.next_token() {
             if map.len() >= MAX_ENTRIES || operands.len() > 3 * MAX_ENTRIES {
                 break;
             }
             match token {
-                Token::ArrayStart => array = Some(Vec::new()),
+                Token::ArrayStart => array = Some((Vec::new(), list_room(&operands))),
                 Token::ArrayEnd => {
-                    if let Some(items) = array.take() {
+                    if let Some((items, _)) = array.take() {
                         operands.push(Operand::List(items));
                     }
                 }
                 Token::Hex(bytes) => match array.as_mut() {
-                    Some(items) => {
-                        if items.len() < MAX_ARRAY_ITEMS {
+                    Some((items, room)) => {
+                        if items.len() < *room && map.stored < MAX_ENTRIES {
                             items.push(utf16_text(&utf16_units(&bytes)));
+                            map.stored += 1;
                         }
                     }
                     None => operands.push(Operand::Hex(bytes)),
@@ -316,13 +345,31 @@ impl ToUnicode {
         self.chars.len() + self.ranges.len()
     }
 
+    /// Nombre de chaînes de destination réellement gardées (`bfchar` et éléments de listes).
+    #[cfg(test)]
+    fn stored_strings(&self) -> usize {
+        let lists: usize = self
+            .ranges
+            .values()
+            .map(|(_, target)| match target {
+                Target::List(items) => items.len(),
+                Target::Start(_) => 0,
+            })
+            .sum();
+        self.chars.len() + lists
+    }
+
     /// Entrées d'une section `bfchar` : paires `<code> <destination>`.
     fn add_chars(&mut self, operands: &[Operand]) {
         for pair in operands.as_chunks::<2>().0 {
+            if self.stored >= MAX_ENTRIES {
+                return;
+            }
             if let [Operand::Hex(src), Operand::Hex(dst)] = pair
                 && let Some(code) = code_of(src)
             {
                 self.chars.insert(code, utf16_text(&utf16_units(dst)));
+                self.stored += 1;
             }
         }
     }
@@ -344,7 +391,12 @@ impl ToUnicode {
             }
             let target = match dst {
                 Operand::Hex(bytes) => Target::Start(utf16_units(&bytes)),
-                Operand::List(items) => Target::List(items),
+                Operand::List(mut items) => {
+                    // Déjà borné à la lecture si `lo` et `hi` précédaient la liste ; ceinture
+                    // pour un CMap dont les opérandes sont décalés.
+                    items.truncate(range_len(lo, hi));
+                    Target::List(items)
+                }
                 Operand::Other => continue,
             };
             self.ranges.insert(lo, (hi, target));
@@ -443,6 +495,9 @@ fn cid_widths(doc: &LoDocument, w: Option<&Object>, default: f32) -> Widths {
             break;
         };
         // Un code est un entier positif : on le tronque, comme les autres lecteurs.
+        // [Apprentissage] `as` d'un `f32` vers un entier **sature** : une valeur trop grande
+        // donne `u32::MAX`, une négative 0, et NaN donne 0 (jamais de comportement indéfini,
+        // contrairement au C). `number` écarte déjà NaN et l'infini ; `max(0.0)` dit l'intention.
         let first = first.max(0.0) as u32;
         let next = items.get(i + 1).and_then(|o| resolve(doc, o));
         if let Some(Object::Array(list)) = next {
@@ -459,6 +514,7 @@ fn cid_widths(doc: &LoDocument, w: Option<&Object>, default: f32) -> Widths {
             let (Some(last), Some(w)) = (last, w) else {
                 break;
             };
+            // Même conversion saturante que pour `first`.
             widths.ranges.insert(first, (last.max(0.0) as u32, w));
             i += 3;
         }
@@ -604,6 +660,9 @@ struct Saved {
     ignored: usize,
 }
 
+/// Un formulaire XObject décodé : ses opérateurs, et ses `/Resources` propres s'il en a.
+type DecodedForm = (Rc<Vec<Operation>>, Option<Rc<Dictionary>>);
+
 /// Le lecteur de contenu.
 struct Walker<'a> {
     doc: &'a LoDocument,
@@ -613,8 +672,8 @@ struct Walker<'a> {
     font_ids: BTreeMap<ObjectId, usize>,
     /// `/ToUnicode` déjà lues, par flux (`None` : illisible).
     cmaps: BTreeMap<ObjectId, Option<Rc<ToUnicode>>>,
-    /// Opérateurs des formulaires déjà décodés.
-    forms: BTreeMap<ObjectId, Rc<Vec<Operation>>>,
+    /// Formulaires déjà décodés (`None` : illisibles, on n'y revient pas à chaque `Do`).
+    forms: BTreeMap<ObjectId, Option<DecodedForm>>,
     /// Octets décompressés qu'il reste le droit de produire.
     budget: usize,
     /// Vrai quand le budget d'octets est épuisé : la lecture s'arrête.
@@ -758,7 +817,8 @@ impl<'a> Walker<'a> {
                     state.rise,
                 ];
                 let trm = multiply(&multiply(&size, &self.tm), &state.ctm);
-                // `FPDFText_GetCharAngle` : atan2(-b, a), dans le sens horaire.
+                // Même mesure que `FPDFText_GetCharAngle` de PDFium : atan2(-b, a) de la matrice
+                // du caractère, en espace utilisateur, dans le sens horaire.
                 let angle = (-trm[1]).atan2(trm[0]).to_degrees().rem_euclid(360.0);
                 // Une ligature (« ﬁ » → « fi ») partage la chasse du glyphe entre ses lettres.
                 let count = text.chars().count() as f32;
@@ -806,6 +866,17 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// Les opérateurs et les `/Resources` propres du formulaire `stream`, ou `None` s'il est
+    /// illisible (ou si le budget d'octets ne suffit pas).
+    fn decode_form(&mut self, stream: &lopdf::Stream) -> Option<DecodedForm> {
+        let data = self.decode(stream)?;
+        let ops = Content::decode(&data).ok()?.operations;
+        let own = entry(self.doc, &stream.dict, b"Resources")
+            .and_then(|o| o.as_dict().ok())
+            .map(|d| Rc::new(d.clone()));
+        Some((Rc::new(ops), own))
+    }
+
     /// Le cadre du formulaire XObject nommé `name` (opérateur `Do`), ou `None` si ce n'est pas
     /// un formulaire lisible, s'il est déjà sur la pile (cycle) ou trop profond.
     fn enter_form(&mut self, frames: &[Frame], name: &[u8]) -> Option<Frame> {
@@ -830,21 +901,18 @@ impl<'a> Walker<'a> {
         {
             return None;
         }
-        let ops = match self.forms.get(&id) {
-            Some(ops) => Rc::clone(ops),
+        // Décodé une seule fois, qu'il soit lisible ou non : un formulaire illisible appelé
+        // mille fois ne se décompresse pas mille fois (ni ne se décompte mille fois du budget).
+        let (ops, own) = match self.forms.get(&id) {
+            Some(cached) => cached.clone()?,
             None => {
-                let data = self.decode(stream)?;
-                let ops = Rc::new(Content::decode(&data).ok()?.operations);
-                self.forms.insert(id, Rc::clone(&ops));
-                ops
+                let decoded = self.decode_form(stream);
+                self.forms.insert(id, decoded.clone());
+                decoded?
             }
         };
         // Sans `/Resources` propres, un formulaire utilise celles de son appelant.
-        let own = entry(doc, &stream.dict, b"Resources").and_then(|o| o.as_dict().ok());
-        let form_resources = match own {
-            Some(d) => Rc::new(d.clone()),
-            None => Rc::clone(resources),
-        };
+        let form_resources = own.unwrap_or_else(|| Rc::clone(resources));
         let matrix = entry(doc, &stream.dict, b"Matrix")
             .and_then(|o| o.as_array().ok())
             .and_then(|m| {
@@ -870,6 +938,11 @@ impl<'a> Walker<'a> {
     /// Applique un opérateur ; rend le cadre d'un formulaire où entrer. `base` : hauteur de la
     /// pile `q` et nombre de `q` ignorés à l'entrée du flux courant.
     fn step(&mut self, frames: &[Frame], op: &Operation, base: (usize, usize)) -> Option<Frame> {
+        // [Apprentissage] Emprunts **disjoints** de champs : `state` emprunte mutablement le
+        // seul champ `self.state`, et le compilateur accepte qu'on touche en même temps à
+        // `self.saved` ou `self.ignored` (d'autres champs). Il refuserait en revanche un appel de
+        // méthode `self.font(…)` tant que `state` vit : une méthode emprunte tout `self`. D'où
+        // `self.state.font = …` (et non `state.font`) dans la branche `Tf`.
         let state = &mut self.state;
         match op.operator.as_str() {
             "q" => {
@@ -1008,6 +1081,10 @@ fn walk(doc: &LoDocument, page_id: ObjectId, budget: usize) -> Walker<'_> {
         let Some(frame) = frames.last_mut() else {
             break;
         };
+        // [Apprentissage] `frame` emprunte mutablement `frames` ; `walker.step(&frames, …)`
+        // a besoin de l'emprunter à son tour. `Rc::clone` donne une poignée **à nous** sur la
+        // liste d'opérateurs (un pointeur et un compteur, pas une copie) : `op` en dépend au
+        // lieu de dépendre de `frames`, et l'emprunt de `frame` peut finir avant `step`.
         let ops = Rc::clone(&frame.ops);
         let Some(op) = ops.get(frame.next) else {
             // Fin du flux : on sort du formulaire et l'appelant retrouve son état.
@@ -1260,6 +1337,104 @@ mod tests {
         assert!(walker.budget < 1_000);
     }
 
+    /// Relecture de la partie B : un formulaire illisible appelé plusieurs fois n'est décodé
+    /// (et décompté du budget) qu'une fois ; un formulaire lisible garde ses opérateurs et ses
+    /// ressources d'un appel à l'autre.
+    #[test]
+    fn a_form_is_decoded_once_even_when_it_fails() {
+        use lopdf::Stream;
+        let broken: &[u8] = b"BT <01> Tj ET BI ]";
+        assert!(
+            Content::decode(broken).is_err(),
+            "le contenu doit être illisible"
+        );
+        let mut doc = LoDocument::with_version("1.7");
+        let cmap = abc_cmap(&mut doc);
+        let font = simple_font(&mut doc, cmap);
+        let form = |content: &[u8], resources: Option<Dictionary>| {
+            let mut dict = dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+            };
+            if let Some(resources) = resources {
+                dict.set("Resources", resources);
+            }
+            Stream::new(dict, content.to_vec())
+        };
+        let bad = doc.add_object(form(broken, None));
+        let good = doc.add_object(form(
+            b"BT /F1 10 Tf <01> Tj ET",
+            Some(dictionary! { "Font" => dictionary! { "F1" => font } }),
+        ));
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            b"/B Do /B Do /B Do /G Do /G Do".to_vec(),
+        ));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+            "Contents" => content,
+            "Resources" => dictionary! { "XObject" => dictionary! { "B" => bad, "G" => good } },
+        });
+        let walker = walk(&doc, page, MAX_DECODED_BYTES);
+        let text: String = walker.out.iter().map(|c| c.ch).collect();
+        assert_eq!(text, "AA");
+        let cmap_len = doc
+            .get_object(cmap)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .content
+            .len();
+        let used = MAX_DECODED_BYTES - walker.budget;
+        assert_eq!(
+            used,
+            broken.len() + b"BT /F1 10 Tf <01> Tj ET".len() + cmap_len
+        );
+        assert!(matches!(walker.forms.get(&bad), Some(None)));
+        assert!(matches!(walker.forms.get(&good), Some(Some(_))));
+    }
+
+    /// Aller-retour : la `/ToUnicode` qu'écrit notre propre police Unicode
+    /// (`fonts::unicode::Type0Writer`) se relit par le repli, paire de substitution comprise.
+    #[test]
+    fn our_type0_to_unicode_round_trips() {
+        let text = "Привет π 𝜋 é";
+        let mut writer = crate::fonts::unicode::Type0Writer::new();
+        let hex = writer.encode(text);
+        let mut doc = LoDocument::with_version("1.7");
+        let font = writer.write(&mut doc).unwrap();
+        let cmap_id = doc
+            .get_dictionary(font)
+            .unwrap()
+            .get(b"ToUnicode")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let stream = doc.get_object(cmap_id).unwrap().as_stream().unwrap();
+        let map = ToUnicode::parse(&crate::crypt::stream_bytes(stream).unwrap());
+        let distinct: Vec<char> = {
+            let mut seen = Vec::new();
+            for c in text.chars() {
+                if !seen.contains(&c) {
+                    seen.push(c);
+                }
+            }
+            seen
+        };
+        for (cid, c) in (1u32..).zip(&distinct) {
+            assert_eq!(map.lookup(cid), Some(c.to_string()), "CID {cid}");
+        }
+        let page = page_with(
+            &mut doc,
+            dictionary! { "F1" => font },
+            &format!("BT /F1 10 Tf {hex} Tj ET"),
+        );
+        let read: String = page_chars(&doc, page).iter().map(|c| c.ch).collect();
+        assert_eq!(read, text);
+    }
+
     #[test]
     fn identity_h_reads_two_bytes_whatever_the_codespace() {
         use lopdf::Stream;
@@ -1349,6 +1524,38 @@ mod tests {
         let last = u32::try_from(MAX_ARRAY_ITEMS).unwrap();
         assert_eq!(map.lookup(last - 1).as_deref(), Some("A"));
         assert_eq!(map.lookup(last), None);
+    }
+
+    /// Relecture de la partie B : des milliers de listes `bfrange` pleines de `<>` ne gardent
+    /// pas des millions de chaînes. Le total des destinations retenues est plafonné à
+    /// `MAX_ENTRIES`, et une liste n'en garde pas plus que sa plage n'a de codes.
+    #[test]
+    fn stored_destinations_are_capped_across_lists() {
+        let mut cmap = b"1 beginbfrange ".to_vec();
+        for k in 0..200u32 {
+            let lo = k * 0x100;
+            cmap.extend_from_slice(format!("<{lo:04X}> <{:04X}> [", lo + 0xFF).as_bytes());
+            cmap.extend_from_slice(&b"<> ".repeat(MAX_ARRAY_ITEMS));
+            cmap.extend_from_slice(b"] ");
+        }
+        cmap.extend_from_slice(b"endbfrange");
+        let map = ToUnicode::parse(&cmap);
+        let stored = map.stored_strings();
+        assert!(stored <= MAX_ENTRIES, "{stored} chaînes gardées");
+        // Une plage de 256 codes ne garde que 256 destinations, pas 4 096.
+        assert_eq!(stored, 200 * 256);
+        // Une plage de deux codes et une liste de trois : la troisième est ignorée.
+        let map =
+            ToUnicode::parse(b"1 beginbfrange <0001> <0002> [<0041> <0042> <0043>] endbfrange");
+        assert_eq!(map.stored_strings(), 2);
+        assert_eq!(map.lookup(2).as_deref(), Some("B"));
+        // `bfchar` compte aussi : passé le plafond, rien n'est plus gardé.
+        let mut cmap = format!("{} beginbfchar ", MAX_ENTRIES + 10).into_bytes();
+        for code in 0..MAX_ENTRIES + 10 {
+            cmap.extend_from_slice(format!("<{code:06X}> <0041> ").as_bytes());
+        }
+        cmap.extend_from_slice(b"endbfchar");
+        assert!(ToUnicode::parse(&cmap).stored_strings() <= MAX_ENTRIES);
     }
 
     #[test]

@@ -434,3 +434,72 @@ fn identity_pass_keeps_the_encrypt_dictionary_unchanged() {
     }
     assert_eq!(original, written);
 }
+
+/// Revue de la partie D : la police Unicode est réduite aussi dans un document chiffré en
+/// AES-256 (`fixtures/encrypted.pdf`), qui se rouvre ensuite avec son mot de passe.
+#[test]
+fn unicode_font_is_subset_in_an_aes256_document() {
+    let input = fixture("encrypted.pdf");
+    let mut doc = Document::from_bytes(input.clone(), Some("secret")).unwrap();
+    let style = mega_core::TextStyle {
+        family: mega_core::FontFamily::Unicode,
+        bold: false,
+        italic: false,
+        size: 24.0,
+        color: Color { r: 0, g: 0, b: 0 },
+    };
+    doc.insert_text(0, [100.0, 500.0], "Ω", &style).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("chiffre.pdf");
+    doc.save_as(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let saved =
+        lopdf::Document::load_mem_with_options(&bytes, lopdf::LoadOptions::with_password("secret"))
+            .unwrap();
+    // lopdf retire `/Encrypt` de la remorque après déchiffrement : on le lit masqué.
+    let version = |bytes: &[u8]| {
+        let raw = without_encrypt(bytes);
+        let encrypt = raw.trailer.get(b"Encrypx").unwrap();
+        raw.dereference(encrypt)
+            .unwrap()
+            .1
+            .as_dict()
+            .unwrap()
+            .get(b"V")
+            .unwrap()
+            .as_i64()
+            .unwrap()
+    };
+    assert_eq!(version(&input), 5, "la fixture est en AES-256");
+    assert_eq!(version(&bytes), 5, "toujours AES-256");
+    let programs: Vec<usize> = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| d.get(b"FontFile2").ok()?.as_reference().ok())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|id| {
+            saved
+                .get_object(id)
+                .unwrap()
+                .as_stream()
+                .unwrap()
+                .content
+                .len()
+        })
+        .collect();
+    assert_eq!(programs.len(), 1, "{programs:?}");
+    assert!(programs[0] < 40 * 1024, "police de {} octets", programs[0]);
+    assert!(
+        bytes.len() < input.len() + 60 * 1024,
+        "{} octets",
+        bytes.len()
+    );
+    assert!(matches!(
+        Document::from_bytes(bytes.clone(), None),
+        Err(CoreError::PasswordRequired | CoreError::WrongPassword)
+    ));
+    let reopened = Document::from_bytes(bytes, Some("secret")).unwrap();
+    assert!(reopened.page_text(0).unwrap().contains('Ω'));
+}

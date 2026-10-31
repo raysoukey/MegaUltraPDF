@@ -133,7 +133,7 @@ pub(crate) fn before_save_with(
     mcid::prune_orphan_mcids(doc);
     dedupe_font_files(doc);
     // Après la déduplication : un programme partagé donne un seul sous-ensemble (audit E10).
-    subset::subset_embedded_fonts(doc)?;
+    subset::subset_embedded_fonts(doc);
     if opts.appearances_fresh {
         drop_need_appearances(doc);
     }

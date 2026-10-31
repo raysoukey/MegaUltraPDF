@@ -29,7 +29,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use lopdf::content::Content;
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
-use crate::error::CoreResult;
 use crate::fonts::unicode::{DEJAVU_SANS, UnicodeFont, compressed, is_full_dejavu, subset_tag};
 
 /// Nombre maximal de glyphes relevés dans les chaînes de texte (au-delà, la passe renonce) :
@@ -48,9 +47,24 @@ const MAX_CONTENTS: usize = 100_000;
 struct CidFont {
     /// Son `/FontDescriptor`.
     descriptor: ObjectId,
-    /// Table CID → glyphe d'origine ; `None` pour `/Identity` (ou table absente) : le
-    /// glyphe est le CID lui-même. C'est ce qu'écrit PDFium.
-    map: Option<Vec<u16>>,
+    /// Table CID → glyphe d'origine.
+    map: CidMap,
+}
+
+/// La table `/CIDToGIDMap` d'une police descendante (§9.7.4.2).
+///
+/// \[Apprentissage\] **Un état explicite** : un `Option<Vec<u16>>` dirait la même chose
+/// (`None` pour l'identité), mais il faudrait se souvenir de ce que veut dire `None` ; et
+/// imbriqué dans le `Option` de « table illisible », il deviendrait un
+/// `Option<Option<Vec<u16>>>` illisible. Une `enum` aux variantes nommées porte ce sens
+/// dans le code lui-même, et `match` oblige à traiter chaque cas.
+#[derive(Debug)]
+enum CidMap {
+    /// `/Identity` (ou table absente) : le glyphe est le CID lui-même. C'est ce qu'écrit
+    /// PDFium.
+    Identity,
+    /// Un flux : le glyphe d'origine de chaque CID, rangé à l'indice du CID.
+    Table(Vec<u16>),
 }
 
 /// Les polices dont le programme est la DejaVu entière, et leurs liens.
@@ -85,6 +99,9 @@ struct Usage {
     /// Objets qui portent des ressources parcourues (page, flux, `/Resources` ou `/Font`
     /// indirects) : les seuls autorisés à citer une police `Type0` candidate.
     holders: BTreeSet<ObjectId>,
+    /// Dictionnaires `/Resources` et `/Font` **indirects** lus pendant le parcours : un objet
+    /// qui n'est pas un porteur ne doit pas les citer (voir [`mark_foreign_references`]).
+    shared: BTreeSet<ObjectId>,
     /// Glyphes relevés jusqu'ici (borne [`MAX_GLYPH_REFS`]).
     glyph_refs: usize,
 }
@@ -96,30 +113,35 @@ struct Usage {
 ///
 /// Pourquoi : un fichier de 2 Ko où l'on insère « Ω » en pesait 420 (audit E10). Une police
 /// dont un usage échappe au parcours reste entière (voir l'en-tête du module) ; une police
-/// que plus rien ne dessine est laissée à l'élagage.
-pub(crate) fn subset_embedded_fonts(doc: &mut Document) -> CoreResult<()> {
+/// citée que plus rien ne dessine est réduite à `.notdef` et l'espace ; un programme que
+/// plus rien n'atteint est laissé à l'élagage.
+///
+/// Ne rend rien : la passe ne peut pas échouer, elle renonce (police laissée entière).
+pub(crate) fn subset_embedded_fonts(doc: &mut Document) {
     let Some(mut candidates) = find_candidates(doc) else {
-        return Ok(());
+        return;
     };
     // Un contenu illisible ou trop gros : on ne sait pas tout ce qui est dessiné, rien ne
     // change.
     let Some(usage) = collect_usage(doc, &candidates) else {
-        return Ok(());
+        return;
     };
-    mark_foreign_references(doc, &mut candidates, &usage);
+    let live = super::reachable(doc);
+    mark_foreign_references(doc, &live, &mut candidates, &usage);
     let files: Vec<ObjectId> = candidates.files.keys().copied().collect();
+    let none_drawn = BTreeSet::new();
     for file in files {
-        if candidates.untouchable.contains(&file) {
+        // Un programme orphelin part à l'élagage : inutile de le réduire.
+        if candidates.untouchable.contains(&file) || !live.contains(&file) {
             continue;
         }
-        let Some(glyphs) = usage.glyphs.get(&file).filter(|g| !g.is_empty()) else {
-            continue;
-        };
+        // Une police encore citée mais que plus rien ne dessine (texte supprimé) est réduite
+        // à `.notdef` et l'espace : la garder entière coûterait 386 Ko pour rien.
+        let glyphs = usage.glyphs.get(&file).unwrap_or(&none_drawn);
         if let Some(plan) = plan_subset(&candidates, file, glyphs) {
             apply_plan(doc, &candidates, file, plan);
         }
     }
-    Ok(())
 }
 
 /// Les polices bâties sur la DejaVu entière ; `None` s'il n'y en a aucune (cas courant :
@@ -217,19 +239,18 @@ fn is_full_program(doc: &Document, file: ObjectId) -> bool {
         .is_some_and(|bytes| is_full_dejavu(&bytes))
 }
 
-/// La table `/CIDToGIDMap` d'une police descendante : `Some(None)` pour l'identité (nom
-/// `/Identity` ou clé absente, §9.7.4.2), `Some(Some(table))` pour un flux (deux octets
-/// gros-boutistes par CID), `None` si elle est illisible.
-fn cid_to_gid(doc: &Document, cid_font: &Dictionary) -> Option<Option<Vec<u16>>> {
+/// La table `/CIDToGIDMap` d'une police descendante (nom `/Identity`, clé absente, ou flux
+/// de deux octets gros-boutistes par CID) ; `None` si elle est illisible.
+fn cid_to_gid(doc: &Document, cid_font: &Dictionary) -> Option<CidMap> {
     let Ok(map) = cid_font.get(b"CIDToGIDMap") else {
-        return Some(None);
+        return Some(CidMap::Identity);
     };
     match doc.dereference(map).ok()?.1 {
-        Object::Name(name) if name == b"Identity" => Some(None),
+        Object::Name(name) if name == b"Identity" => Some(CidMap::Identity),
         Object::Stream(stream) => {
             // 65 536 CID au plus, deux octets chacun.
             let bytes = crate::crypt::stream_bytes_within(stream, 2 * 65_536)?;
-            Some(Some(
+            Some(CidMap::Table(
                 bytes
                     .as_chunks::<2>()
                     .0
@@ -279,12 +300,13 @@ fn collect_usage(doc: &Document, c: &Candidates) -> Option<Usage> {
     // doublons.
     let mut visited: BTreeSet<(ObjectId, ObjectId)> = BTreeSet::new();
     for page_id in doc.get_pages().into_values() {
-        let (resources, holders) = page_resources(doc, page_id);
+        let (resources, holders, shared) = page_resources(doc, page_id);
         usage.holders.extend(holders);
+        usage.shared.extend(shared);
         // Une apparence sans `/Resources` propres est dessinée par PDFium avec celles de la
         // page : on la lit de même.
         for stream in appearance_streams(doc, page_id) {
-            let own = own_resources(doc, stream, &mut usage.holders);
+            let own = own_resources(doc, stream, &mut usage);
             let owner = if own.is_some() { stream } else { page_id };
             if visited.insert((stream, owner)) {
                 todo.push(Work {
@@ -318,12 +340,17 @@ fn collect_usage(doc: &Document, c: &Candidates) -> Option<Usage> {
         // illisible et ignore la suite, que PDFium, lui, dessinerait peut-être ; des glyphes
         // y manqueraient au sous-ensemble.
         let content = Content::decode_strict(&bytes).ok()?;
-        let fonts = font_map(doc, &work.resources, &mut usage.holders);
+        // Un état graphique qui change de police sans `Tf`, ou qui dessine un masque que l'on
+        // ne parcourt pas : on ne sait plus quels glyphes sont dessinés par quelle police.
+        if graphics_state_escapes(doc, &work.resources) {
+            return None;
+        }
+        let fonts = font_map(doc, &work.resources, &mut usage);
         read_strings(c, &fonts, &content, &mut usage)?;
         // Formulaires, motifs et glyphes Type 3 cités par ces ressources : tous parcourus,
         // qu'ils soient dessinés ou non (relever trop de glyphes ne casse rien).
         for child in nested_streams(doc, &work.resources, &fonts) {
-            let own = own_resources(doc, child.stream, &mut usage.holders).or(child.resources);
+            let own = own_resources(doc, child.stream, &mut usage).or(child.resources);
             let owner = if own.is_some() {
                 child.stream
             } else {
@@ -347,9 +374,12 @@ fn collect_usage(doc: &Document, c: &Candidates) -> Option<Usage> {
 }
 
 /// Les ressources d'une page, héritées de ses ancêtres au besoin (comme
-/// `overlay::inherited_resources`), avec les objets qui les portent : la page ou l'ancêtre,
-/// et le dictionnaire `/Resources` s'il est indirect.
-fn page_resources(doc: &Document, page_id: ObjectId) -> (Dictionary, Vec<ObjectId>) {
+/// `overlay::inherited_resources`), avec les objets qui les portent (la page ou l'ancêtre,
+/// et le dictionnaire `/Resources` s'il est indirect) et ce dictionnaire indirect seul.
+fn page_resources(
+    doc: &Document,
+    page_id: ObjectId,
+) -> (Dictionary, Vec<ObjectId>, Option<ObjectId>) {
     let mut node_id = page_id;
     for _ in 0..32 {
         let Ok(node) = doc.get_dictionary(node_id) else {
@@ -358,25 +388,22 @@ fn page_resources(doc: &Document, page_id: ObjectId) -> (Dictionary, Vec<ObjectI
         if let Ok(res) = node.get(b"Resources")
             && let Ok((_, Object::Dictionary(dict))) = doc.dereference(res)
         {
+            let shared = res.as_reference().ok();
             let mut holders = vec![node_id];
-            holders.extend(res.as_reference().ok());
-            return (dict.clone(), holders);
+            holders.extend(shared);
+            return (dict.clone(), holders, shared);
         }
         let Ok(parent) = node.get(b"Parent").and_then(Object::as_reference) else {
             break;
         };
         node_id = parent;
     }
-    (Dictionary::new(), Vec::new())
+    (Dictionary::new(), Vec::new(), None)
 }
 
 /// Les `/Resources` propres du flux `stream`, s'il en a ; le flux (et le dictionnaire
 /// indirect) rejoignent les porteurs de ressources parcourues.
-fn own_resources(
-    doc: &Document,
-    stream: ObjectId,
-    holders: &mut BTreeSet<ObjectId>,
-) -> Option<Dictionary> {
+fn own_resources(doc: &Document, stream: ObjectId, usage: &mut Usage) -> Option<Dictionary> {
     let dict = &doc
         .get_object(stream)
         .and_then(Object::as_stream)
@@ -386,27 +413,56 @@ fn own_resources(
     let (_, Object::Dictionary(resources)) = doc.dereference(res).ok()? else {
         return None;
     };
-    holders.insert(stream);
-    holders.extend(res.as_reference().ok());
+    usage.holders.insert(stream);
+    usage.holders.extend(res.as_reference().ok());
+    usage.shared.extend(res.as_reference().ok());
     Some(resources.clone())
 }
 
 /// Les polices des ressources (nom → objet), sous-dictionnaire `/Font` indirect compris.
-fn font_map(
-    doc: &Document,
-    resources: &Dictionary,
-    holders: &mut BTreeSet<ObjectId>,
-) -> Dictionary {
+fn font_map(doc: &Document, resources: &Dictionary, usage: &mut Usage) -> Dictionary {
     let Ok(fonts) = resources.get(b"Font") else {
         return Dictionary::new();
     };
     match doc.dereference(fonts) {
         Ok((_, Object::Dictionary(dict))) => {
-            holders.extend(fonts.as_reference().ok());
+            usage.holders.extend(fonts.as_reference().ok());
+            usage.shared.extend(fonts.as_reference().ok());
             dict.clone()
         }
         _ => Dictionary::new(),
     }
+}
+
+/// Vrai si un état graphique (`/ExtGState`) des ressources porte `/Font` ou un vrai masque
+/// `/SMask` (autre que `/None`).
+///
+/// Pourquoi renoncer : `/Font [police taille]` change la police **sans** `Tf` (opérateur
+/// `gs`), et [`read_strings`] compterait les glyphes suivants pour la police d'avant ; un
+/// masque dessine son formulaire `/G`, que le parcours ne lit pas. PDFium n'écrit ni l'un
+/// ni l'autre : renoncer ne coûte rien au cas courant (revue de la partie D).
+fn graphics_state_escapes(doc: &Document, resources: &Dictionary) -> bool {
+    let Some(states) = resources
+        .get(b"ExtGState")
+        .ok()
+        .and_then(|e| doc.dereference(e).ok())
+        .and_then(|(_, e)| e.as_dict().ok())
+    else {
+        return false;
+    };
+    states.iter().any(|(_, state)| {
+        let Some(state) = doc
+            .dereference(state)
+            .ok()
+            .and_then(|(_, s)| s.as_dict().ok())
+        else {
+            return false;
+        };
+        let mask = state
+            .get(b"SMask")
+            .is_ok_and(|m| m.as_name().ok() != Some(b"None".as_slice()));
+        state.has(b"Font") || mask
+    })
 }
 
 /// Les flux d'apparence (`/AP` : `/N`, `/D`, `/R`, ou leurs sous-dictionnaires d'états) des
@@ -531,10 +587,29 @@ fn nested_streams(doc: &Document, resources: &Dictionary, fonts: &Dictionary) ->
     out
 }
 
+/// La police courante d'un contenu, telle que la suit [`read_strings`].
+///
+/// \[Apprentissage\] Même idée que [`CidMap`] : `Option<Option<ObjectId>>` aurait suffi
+/// (`None`, `Some(None)`, `Some(Some(id))`), mais trois variantes **nommées** se lisent sans
+/// mode d'emploi. `Clone, Copy` : la valeur est petite, `q` la recopie sur la pile.
+#[derive(Debug, Clone, Copy)]
+enum FontState {
+    /// Aucun `Tf` lu : la police est héritée de qui dessine ce contenu, donc inconnue.
+    Unknown,
+    /// Une police qui n'est pas candidate (Helvetica, autre police incorporée…).
+    Other,
+    /// Une police `Type0` candidate : sa police descendante.
+    Candidate(ObjectId),
+}
+
+/// Profondeur maximale de la pile `q` / `Q` suivie par [`read_strings`] : au-delà, la passe
+/// renonce (borne la mémoire face à un contenu hostile ; Acrobat s'arrête à 28 niveaux).
+const MAX_SAVED_STATES: usize = 256;
+
 /// Relève les glyphes des chaînes de texte (`Tj`, `TJ`, `'`, `"`) dessinées par une police
-/// candidate (`Tf`). `None` au-delà de [`MAX_GLYPH_REFS`], ou si une chaîne est dessinée
-/// avant tout `Tf` du contenu : un formulaire peut hériter la police de qui le dessine, on
-/// ne sait alors pas laquelle.
+/// candidate (`Tf`). `None` au-delà de [`MAX_GLYPH_REFS`] ou de [`MAX_SAVED_STATES`], ou si
+/// une chaîne est dessinée avant tout `Tf` du contenu : un formulaire peut hériter la police
+/// de qui le dessine, on ne sait alors pas laquelle.
 ///
 /// \[Apprentissage\] La police fait partie de l'état graphique, que `q` sauvegarde et `Q`
 /// restaure : une **pile** (`Vec` : `push` / `pop`) suit ces paires, sinon un `Tf` dans un
@@ -545,13 +620,14 @@ fn read_strings(
     content: &Content,
     usage: &mut Usage,
 ) -> Option<()> {
-    // Police courante : `None` tant qu'aucun `Tf` n'a été lu (inconnue), `Some(None)` pour
-    // une police non candidate, `Some(Some(descendante))` pour une police candidate.
-    let mut current: Option<Option<ObjectId>> = None;
-    let mut saved: Vec<Option<Option<ObjectId>>> = Vec::new();
+    let mut current = FontState::Unknown;
+    let mut saved: Vec<FontState> = Vec::new();
     for op in &content.operations {
         let strings: Vec<&[u8]> = match op.operator.as_str() {
             "q" => {
+                if saved.len() >= MAX_SAVED_STATES {
+                    return None;
+                }
                 saved.push(current);
                 continue;
             }
@@ -563,14 +639,14 @@ fn read_strings(
                 continue;
             }
             "Tf" => {
-                current = Some(
-                    op.operands
-                        .first()
-                        .and_then(|n| n.as_name().ok())
-                        .and_then(|n| fonts.get(n).ok())
-                        .and_then(|f| f.as_reference().ok())
-                        .and_then(|f| c.type0.get(&f).copied()),
-                );
+                current = op
+                    .operands
+                    .first()
+                    .and_then(|n| n.as_name().ok())
+                    .and_then(|n| fonts.get(n).ok())
+                    .and_then(|f| f.as_reference().ok())
+                    .and_then(|f| c.type0.get(&f).copied())
+                    .map_or(FontState::Other, FontState::Candidate);
                 continue;
             }
             "Tj" | "'" => op
@@ -596,8 +672,10 @@ fn read_strings(
         if strings.is_empty() {
             continue;
         }
-        let Some(cid_font) = current? else {
-            continue;
+        let cid_font = match current {
+            FontState::Unknown => return None,
+            FontState::Other => continue,
+            FontState::Candidate(cid_font) => cid_font,
         };
         let (Some(font), Some(file)) = (c.cid_fonts.get(&cid_font), c.file_of(cid_font)) else {
             continue;
@@ -613,8 +691,8 @@ fn read_strings(
                 }
                 let cid = u16::from_be_bytes(*pair);
                 let gid = match &font.map {
-                    None => cid,
-                    Some(map) => map.get(usize::from(cid)).copied().unwrap_or(0),
+                    CidMap::Identity => cid,
+                    CidMap::Table(map) => map.get(usize::from(cid)).copied().unwrap_or(0),
                 };
                 glyphs.insert(gid);
             }
@@ -635,13 +713,25 @@ fn as_bytes(object: &Object) -> Option<&[u8]> {
 /// n'a pas vu : un formulaire `/DR` (un autre lecteur y dessinerait n'importe quel
 /// caractère), une police simple bâtie sur le même descripteur, etc.
 ///
-/// Seuls comptent les objets atteignables : un orphelin (laissé par « annuler ») part à
-/// l'élagage, il ne dessinera plus rien.
-fn mark_foreign_references(doc: &Document, c: &mut Candidates, usage: &Usage) {
-    let live = super::reachable(doc);
+/// Un dictionnaire `/Resources` ou `/Font` **indirect** lu pendant le parcours et cité aussi
+/// par un objet qui n'est pas un porteur (icône `/MK /I` d'un widget, masque…) : cet objet
+/// dessine peut-être avec les mêmes polices, là où le parcours n'a pas lu. On ne sait pas
+/// avec lesquelles : tous les programmes restent entiers (revue de la partie D).
+///
+/// Seuls comptent les objets atteignables (`live`) : un orphelin (laissé par « annuler »)
+/// part à l'élagage, il ne dessinera plus rien.
+fn mark_foreign_references(
+    doc: &Document,
+    live: &BTreeSet<ObjectId>,
+    c: &mut Candidates,
+    usage: &Usage,
+) {
     let mut foreign: BTreeSet<ObjectId> = BTreeSet::new();
     for (holder, object) in doc.objects.iter().filter(|(id, _)| live.contains(id)) {
         for target in references_in(object) {
+            if usage.shared.contains(&target) && !usage.holders.contains(holder) {
+                foreign.extend(c.files.keys().copied());
+            }
             // Programme concerné par cette référence, et le citer est-il permis à `holder` ?
             let (file, allowed) = if c.files.contains_key(&target) {
                 (Some(target), c.descriptors.get(holder) == Some(&target))
@@ -729,11 +819,11 @@ fn plan_subset(c: &Candidates, file: ObjectId, drawn: &BTreeSet<u16>) -> Option<
         }
         // Paires (CID, nouveau glyphe) des CID dont le glyphe est gardé.
         let pairs: Vec<(u16, u16)> = match &font.map {
-            None => sorted
+            CidMap::Identity => sorted
                 .iter()
                 .filter_map(|gid| Some((*gid, remapper.get(*gid)?)))
                 .collect(),
-            Some(map) => map
+            CidMap::Table(map) => map
                 .iter()
                 .enumerate()
                 .filter(|(_, gid)| glyphs.contains(gid))
@@ -763,18 +853,17 @@ fn plan_subset(c: &Candidates, file: ObjectId, drawn: &BTreeSet<u16>) -> Option<
     })
 }
 
-/// Écrit le sous-ensemble : programme (Flate, `/Length1`), tables `/CIDToGIDMap` et
-/// `/CIDSet`, noms étiquetés (`/BaseFont`, `/FontName`). `/W`, `/DW` et `/ToUnicode`
-/// restent tels quels : ils sont indexés par CID, et les CID ne changent pas.
+/// Écrit le sous-ensemble : tables `/CIDToGIDMap` et `/CIDSet`, noms étiquetés
+/// (`/BaseFont`, `/FontName`), puis programme (Flate, `/Length1`). `/W`, `/DW` et
+/// `/ToUnicode` restent tels quels : ils sont indexés par CID, et les CID ne changent pas.
+///
+/// Invariant : aucune étape ne peut échouer (pas de `?`, pas de retour anticipé ; les
+/// objets visés ont été trouvés par [`find_candidates`] dans ce même document). Le plan
+/// s'applique donc en entier : un programme réduit avec l'ancienne table (ou l'inverse)
+/// dessinerait les mauvais glyphes. Le programme est écrit **en dernier**, quand tout ce
+/// qui le décrit est en place. Qui voudrait un jour ajouter ici une étape faillible doit
+/// d'abord tout préparer dans [`Plan`] (c'est son rôle), pas interrompre cette écriture.
 fn apply_plan(doc: &mut Document, c: &Candidates, file: ObjectId, plan: Plan) {
-    let length1 = i64::try_from(plan.program.len()).unwrap_or(i64::MAX);
-    doc.objects.insert(
-        file,
-        Object::Stream(compressed(
-            Dictionary::from_iter(vec![("Length1", Object::Integer(length1))]),
-            plan.program,
-        )),
-    );
     for (cid_font, map) in plan.maps {
         let map_id = doc.add_object(compressed(Dictionary::new(), map));
         if let Ok(dict) = doc.get_dictionary_mut(cid_font) {
@@ -806,6 +895,14 @@ fn apply_plan(doc: &mut Document, c: &Candidates, file: ObjectId, plan: Plan) {
             retag(dict, b"BaseFont", &plan.tag);
         }
     }
+    let length1 = i64::try_from(plan.program.len()).unwrap_or(i64::MAX);
+    doc.objects.insert(
+        file,
+        Object::Stream(compressed(
+            Dictionary::from_iter(vec![("Length1", Object::Integer(length1))]),
+            plan.program,
+        )),
+    );
 }
 
 /// Pose l'étiquette `tag` sur le nom `key` (`DejaVuSans` → `ABCDEF+DejaVuSans`), en
@@ -991,7 +1088,7 @@ mod tests {
             .unwrap()
             .content
             .len();
-        subset_embedded_fonts(&mut doc).unwrap();
+        subset_embedded_fonts(&mut doc);
         let stream = doc.get_object(file).unwrap().as_stream().unwrap();
         let after = stream.content.len();
         assert!(
@@ -1075,7 +1172,7 @@ mod tests {
             .map(|i| format!("{:04X}", i % 65_536))
             .collect();
         let (mut doc, file) = doc_with_full_font(|f| format!("BT /{f} 12 Tf <{all}> Tj ET"));
-        subset_embedded_fonts(&mut doc).unwrap();
+        subset_embedded_fonts(&mut doc);
         let stream = doc.get_object(file).unwrap().as_stream().unwrap();
         let length1 = stream.dict.get(b"Length1").unwrap().as_i64().unwrap();
         // Les ~6 000 glyphes réels sont gardés : un sous-ensemble (tables inutiles au PDF
@@ -1104,7 +1201,7 @@ mod tests {
             .unwrap()
             .set("Encoding", Object::Name(b"UniGB-UCS2-H".to_vec()));
         let before = program(&doc, file);
-        subset_embedded_fonts(&mut doc).unwrap();
+        subset_embedded_fonts(&mut doc);
         assert_eq!(program(&doc, file), before);
     }
 
@@ -1138,7 +1235,7 @@ mod tests {
             .unwrap()
             .set("Contents", Object::Reference(stream));
         let before = program(&doc, file);
-        subset_embedded_fonts(&mut doc).unwrap();
+        subset_embedded_fonts(&mut doc);
         assert_eq!(program(&doc, file), before);
     }
 
@@ -1211,7 +1308,7 @@ mod tests {
             .unwrap()
             .content
             .clone();
-        subset_embedded_fonts(&mut doc).unwrap();
+        subset_embedded_fonts(&mut doc);
         let after = &doc.get_object(file).unwrap().as_stream().unwrap().content;
         assert_eq!(after, &before, "police citée par /DR : intacte");
     }
@@ -1227,7 +1324,7 @@ mod tests {
             .unwrap()
             .content
             .len();
-        subset_embedded_fonts(&mut doc).unwrap();
+        subset_embedded_fonts(&mut doc);
         let after = doc
             .get_object(file)
             .unwrap()
@@ -1236,5 +1333,147 @@ mod tests {
             .content
             .len();
         assert_eq!(after, before);
+    }
+
+    /// Les ressources (en ligne) de la page 1.
+    fn page_resources_mut(doc: &mut Document) -> &mut Dictionary {
+        let page_id = *doc.get_pages().get(&1).unwrap();
+        let page = doc.get_dictionary_mut(page_id).unwrap();
+        let Ok(Object::Dictionary(resources)) = page.get_mut(b"Resources") else {
+            panic!("ressources en ligne attendues");
+        };
+        resources
+    }
+
+    /// La police `Type0` du document de test.
+    fn type0_of(doc: &Document) -> ObjectId {
+        doc.objects
+            .iter()
+            .find(|(_, o)| {
+                o.as_dict()
+                    .is_ok_and(|d| name_of(d, b"Subtype") == Some(b"Type0"))
+            })
+            .map(|(id, _)| *id)
+            .unwrap()
+    }
+
+    /// Revue de la partie D : un état graphique `/ExtGState` portant `/Font` change de police
+    /// **sans** `Tf` ; ses glyphes seraient comptés pour une autre police. La passe renonce.
+    #[test]
+    fn an_extgstate_setting_the_font_leaves_the_font_whole() {
+        let (mut doc, file) = doc_with_full_font(|f| {
+            format!("BT /{f} 12 Tf {} Tj /GS1 gs {} Tj ET", hex("Ω"), hex("Ж"))
+        });
+        let type0 = type0_of(&doc);
+        page_resources_mut(&mut doc).set(
+            "ExtGState",
+            Object::Dictionary(Dictionary::from_iter(vec![(
+                "GS1",
+                Object::Dictionary(Dictionary::from_iter(vec![(
+                    "Font",
+                    Object::Array(vec![Object::Reference(type0), Object::Integer(12)]),
+                )])),
+            )])),
+        );
+        let before = program(&doc, file);
+        subset_embedded_fonts(&mut doc);
+        assert_eq!(program(&doc, file), before, "/ExtGState /Font : intacte");
+    }
+
+    /// Un masque `/SMask` d'état graphique dessine un formulaire (`/G`) que la passe ne lit
+    /// pas : elle renonce. `/SMask /None` (aucun masque) ne gêne pas.
+    #[test]
+    fn an_extgstate_soft_mask_leaves_the_font_whole() {
+        for (mask, whole) in [
+            (Object::Name(b"None".to_vec()), false),
+            (Object::Dictionary(Dictionary::new()), true),
+        ] {
+            let (mut doc, file) =
+                doc_with_full_font(|f| format!("BT /GS1 gs /{f} 12 Tf {} Tj ET", hex("Ω")));
+            page_resources_mut(&mut doc).set(
+                "ExtGState",
+                Object::Dictionary(Dictionary::from_iter(vec![(
+                    "GS1",
+                    Object::Dictionary(Dictionary::from_iter(vec![("SMask", mask)])),
+                )])),
+            );
+            let before = program(&doc, file);
+            subset_embedded_fonts(&mut doc);
+            assert_eq!(program(&doc, file) == before, whole, "masque : {whole}");
+        }
+    }
+
+    /// Revue de la partie D : un dictionnaire `/Font` **indirect** partagé entre la page
+    /// (parcourue) et l'icône `/MK /I` d'un widget (non parcourue) : l'icône dessine « Ж »
+    /// avec la même police. Les porteurs étant comptés objet par objet, la référence passait.
+    #[test]
+    fn a_font_dictionary_shared_with_an_unwalked_icon_leaves_the_font_whole() {
+        let (mut doc, file) = doc_with_full_font(|f| format!("BT /{f} 12 Tf {} Tj ET", hex("Ω")));
+        let fonts = page_resources_mut(&mut doc).get(b"Font").unwrap().clone();
+        let fonts_id = doc.add_object(fonts);
+        page_resources_mut(&mut doc).set("Font", Object::Reference(fonts_id));
+        let icon = doc.add_object(Stream::new(
+            Dictionary::from_iter(vec![
+                ("Type", Object::Name(b"XObject".to_vec())),
+                ("Subtype", Object::Name(b"Form".to_vec())),
+                (
+                    "BBox",
+                    Object::Array(vec![0.into(), 0.into(), 100.into(), 20.into()]),
+                ),
+                (
+                    "Resources",
+                    Object::Dictionary(Dictionary::from_iter(vec![(
+                        "Font",
+                        Object::Reference(fonts_id),
+                    )])),
+                ),
+            ]),
+            format!("BT /U1 12 Tf {} Tj ET", hex("Ж")).into_bytes(),
+        ));
+        let widget = Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Annot".to_vec())),
+            ("Subtype", Object::Name(b"Widget".to_vec())),
+            (
+                "Rect",
+                Object::Array(vec![0.into(), 0.into(), 100.into(), 20.into()]),
+            ),
+            (
+                "MK",
+                Object::Dictionary(Dictionary::from_iter(vec![("I", Object::Reference(icon))])),
+            ),
+        ]);
+        let page_id = *doc.get_pages().get(&1).unwrap();
+        doc.get_dictionary_mut(page_id)
+            .unwrap()
+            .set("Annots", Object::Array(vec![Object::Dictionary(widget)]));
+        let before = program(&doc, file);
+        subset_embedded_fonts(&mut doc);
+        assert_eq!(program(&doc, file), before, "/Font partagé : intacte");
+    }
+
+    /// Une police encore citée par les ressources mais que plus rien ne dessine (texte
+    /// supprimé) : réduite à `.notdef` et l'espace, au lieu de rester entière.
+    #[test]
+    fn a_font_cited_but_no_longer_drawn_is_reduced() {
+        let (mut doc, file) = doc_with_full_font(|_| "q Q".to_string());
+        subset_embedded_fonts(&mut doc);
+        let stream = doc.get_object(file).unwrap().as_stream().unwrap();
+        assert!(stream.content.len() < 40 * 1024, "{}", stream.content.len());
+        let program = crate::crypt::stream_bytes(stream).unwrap();
+        let face = ttf_parser::Face::parse(&program, 0).unwrap();
+        assert_eq!(face.number_of_glyphs(), 2, ".notdef et l'espace");
+    }
+
+    /// Une pile `q` plus profonde que [`MAX_SAVED_STATES`] : la passe renonce.
+    #[test]
+    fn too_many_saved_states_leave_the_font_whole() {
+        let deep = "q ".repeat(MAX_SAVED_STATES + 1);
+        let (mut doc, file) =
+            doc_with_full_font(|f| format!("{deep}BT /{f} 12 Tf {} Tj ET", hex("Ω")));
+        let candidates = find_candidates(&doc).unwrap();
+        assert!(collect_usage(&doc, &candidates).is_none());
+        let before = program(&doc, file);
+        subset_embedded_fonts(&mut doc);
+        assert_eq!(program(&doc, file), before);
     }
 }

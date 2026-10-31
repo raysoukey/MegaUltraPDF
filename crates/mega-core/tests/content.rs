@@ -961,3 +961,113 @@ fn a_space_typed_into_a_reopened_subset_font_is_not_a_box() {
         "{dark} pixels sombres là où l'espace est dessinée"
     );
 }
+
+/// Le fichier `simple.pdf` des fixtures.
+fn simple_pdf() -> Vec<u8> {
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/simple.pdf"
+    ))
+    .unwrap()
+}
+
+/// Revue de la partie D : « enregistrer, insérer de l'Unicode, enregistrer ». Le second
+/// enregistrement réduit la police neuve sans abîmer le sous-ensemble du premier : les deux
+/// textes restent lisibles et dessinés, et aucune police entière ne reste dans le fichier.
+///
+/// Deux programmes, et non un : le fichier rouvert ne porte plus qu'un sous-ensemble sans
+/// « Ж » ; PDFium charge donc une DejaVu neuve pour l'insertion, réduite à son tour.
+#[test]
+fn save_insert_unicode_save_keeps_small_fonts_and_both_texts() {
+    let mut doc = Document::from_bytes(simple_pdf(), None).unwrap();
+    let style = text_style(FontFamily::Unicode, false, false, 24.0);
+    doc.insert_text(0, [100.0, 500.0], "Ω", &style).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("premier.pdf");
+    doc.save_as(&first).unwrap();
+    let mut doc = Document::from_bytes(std::fs::read(&first).unwrap(), None).unwrap();
+    doc.insert_text(0, [100.0, 400.0], "Ж", &style).unwrap();
+    let second = dir.path().join("second.pdf");
+    doc.save_as(&second).unwrap();
+    let bytes = std::fs::read(&second).unwrap();
+    let files = font_files(&lopdf::Document::load_mem(&bytes).unwrap());
+    assert_eq!(files.len(), 2, "{files:?}");
+    let total: usize = files.iter().map(|(_, size)| size).sum();
+    assert!(total < 40 * 1024, "polices : {files:?}");
+    let reopened = Document::from_bytes(bytes, None).unwrap();
+    let text = reopened.page_text(0).unwrap();
+    assert!(text.contains('Ω') && text.contains('Ж'), "{text}");
+    let diff = mega_core::compare::compare_pages(&doc, 0, &reopened, 0, 1.0).unwrap();
+    assert_eq!(diff.differing_pixels, 0, "rendu changé");
+}
+
+/// Revue de la partie D : un texte Unicode inséré puis supprimé ne laisse pas de police
+/// entière. PDFium retire aujourd'hui la police des ressources (l'élagage l'emporte) ; si elle
+/// y restait citée sans être dessinée, la passe la réduirait à `.notdef` et l'espace (voir le
+/// test unitaire `a_font_cited_but_no_longer_drawn_is_reduced` de `cleanup::subset`).
+#[test]
+fn a_deleted_unicode_text_leaves_no_full_font() {
+    let mut doc = Document::from_bytes(simple_pdf(), None).unwrap();
+    let style = text_style(FontFamily::Unicode, false, false, 24.0);
+    doc.insert_text(0, [100.0, 500.0], "Ω", &style).unwrap();
+    let index = doc
+        .page_objects(0)
+        .unwrap()
+        .iter()
+        .position(|o| o.text.as_deref() == Some("Ω"))
+        .unwrap() as u16;
+    doc.apply(&EditCommand::DeleteObject { page: 0, index })
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("supprime.pdf");
+    doc.save_as(&path).unwrap();
+    let files = font_files(&lopdf::Document::load_mem(&std::fs::read(&path).unwrap()).unwrap());
+    for (id, size) in &files {
+        assert!(*size < 40 * 1024, "police {id:?} de {size} octets");
+    }
+}
+
+/// Revue de la partie D : une image insérée (JPEG gardé en DCT, PNG en pixels) se dessine
+/// pareil avant et après l'enregistrement (`compare_pages`).
+#[test]
+fn inserted_images_render_the_same_after_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let jpeg = dir.path().join("photo.jpg");
+    std::fs::write(&jpeg, photo_jpeg(false)).unwrap();
+    let png = dir.path().join("logo.png");
+    let mut rgba = image::RgbaImage::new(120, 80);
+    for (x, y, p) in rgba.enumerate_pixels_mut() {
+        *p = image::Rgba([
+            (x * 2) as u8,
+            (y * 3) as u8,
+            90,
+            if x < 60 { 255 } else { 0 },
+        ]);
+    }
+    rgba.save(&png).unwrap();
+    for path in [jpeg, png] {
+        let mut doc = one_page();
+        insert_file(
+            &mut doc,
+            &path,
+            Rect {
+                x: 100.0,
+                y: 100.0,
+                w: 200.0,
+                h: 150.0,
+            },
+        );
+        let saved = dir.path().join("image.pdf");
+        doc.save_as(&saved).unwrap();
+        let reopened = Document::from_bytes(std::fs::read(&saved).unwrap(), None).unwrap();
+        let diff = mega_core::compare::compare_pages(&doc, 0, &reopened, 0, 1.0).unwrap();
+        assert_eq!(diff.differing_pixels, 0, "{}", path.display());
+        // Et l'image est bien dessinée : la page n'est plus blanche à cet endroit.
+        let render = reopened.render_page(0, 1.0).unwrap();
+        assert!(
+            dark_pixels(&render, 110.0, 110.0, 50.0, 50.0) > 0,
+            "{}",
+            path.display()
+        );
+    }
+}

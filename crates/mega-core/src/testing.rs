@@ -1570,3 +1570,67 @@ pub fn scanned_pdf() -> Vec<u8> {
     doc.save_to(&mut out).expect("sérialisation");
     out
 }
+
+/// Une page avec une note (`secret` dans son `/Contents` et dans un `/StructElem`), un
+/// popup, une réponse `/IRT`, et un `/Encrypt` dont les filtres sont `Identity` : PDFium
+/// l'ouvre, mais `lopdf` ne le relit pas (`crypt::check_crypt_filters`), donc le nettoyage
+/// d'enregistrement ne peut pas s'y appliquer. Sert à prouver qu'une suppression y est
+/// refusée plutôt que de laisser le texte supprimé dans le fichier (audit E1).
+pub fn identity_encrypted_note_pdf(secret: &str) -> Vec<u8> {
+    let content = "BT /F1 24 Tf 72 400 Td (Visible) Tj ET";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R /MarkInfo << /Marked true >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Annots [4 0 R 5 0 R 6 0 R] \
+         /StructParents 0 /Contents 9 0 R /Resources << /Font << /F1 10 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents ({secret}) \
+             /T (Auteur) /Popup 5 0 R /P 3 0 R /StructParent 1 >>"
+        ),
+        "<< /Type /Annot /Subtype /Popup /Rect [300 300 450 400] /Parent 4 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /Contents (Reponse) \
+         /IRT 4 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /StructTreeRoot /K 8 0 R /ParentTree << /Nums [1 8 0 R] >> >>".to_string(),
+        format!(
+            "<< /Type /StructElem /S /Annot /P 7 0 R /Pg 3 0 R /Alt ({secret}) \
+             /K << /Type /OBJR /Obj 4 0 R /Pg 3 0 R >> >>"
+        ),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        "<< /Filter /Standard /V 4 /R 4 /Length 128 /P -4 \
+         /O <566fa873ee33c797cd3b904fdadf814afa34df9a38f6ed41b984e2c6da2aa6f5> \
+         /U <60cb14e897d58381f951427876a7804100000000000000000000000000000000> \
+         /CF << /StdCF << /Type /CryptFilter /CFM /V2 /Length 16 /AuthEvent /DocOpen >> >> \
+         /StmF /Identity /StrF /Identity /EFF /StdCF >>"
+            .to_string(),
+        "<< /Title (Plain title) >>".to_string(),
+    ];
+    let mut out = String::from("%PDF-1.6\n");
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{body}\nendobj\n", i + 1));
+    }
+    let xref = out.len();
+    out.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objects.len() + 1
+    ));
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    let id = "<00112233445566778899aabbccddeeff>";
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R /Info 12 0 R /Encrypt 11 0 R /ID [{id}{id}] >>\n\
+         startxref\n{xref}\n%%EOF\n",
+        objects.len() + 1
+    ));
+    out.into_bytes()
+}

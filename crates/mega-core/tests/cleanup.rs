@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Passe `lopdf` à l'enregistrement : `/InkList` de nos formes, `/AP` des notes, élagage.
 
-use mega_core::testing::sample_pdf;
-use mega_core::{AnnotationKind, Color, Document, Geometry, NewAnnotation, Rect, Style};
+use mega_core::testing::{identity_encrypted_note_pdf, sample_pdf};
+use mega_core::{AnnotationKind, Color, CoreError, Document, Geometry, NewAnnotation, Rect, Style};
 
 fn style() -> Style {
     Style {
@@ -403,4 +403,41 @@ fn group_members_go_with_their_primary_annotation() {
         reopened.annotations(0).unwrap().is_empty(),
         "membre du groupe parti aussi"
     );
+}
+
+#[test]
+fn deleting_an_annotation_on_an_uncleanable_file_is_refused() {
+    let mut doc = Document::from_bytes(identity_encrypted_note_pdf("SECRET-ZX9"), None).unwrap();
+    let err = doc.delete_annotation(0, 0).unwrap_err();
+    assert!(matches!(err, CoreError::InvalidOperation(m) if m.contains("suppression est refusée")));
+}
+
+#[test]
+fn adding_an_annotation_on_an_uncleanable_file_still_works() {
+    let mut doc = Document::from_bytes(identity_encrypted_note_pdf("x"), None).unwrap();
+    let note = NewAnnotation {
+        kind: AnnotationKind::Rect,
+        geometry: Geometry::Rect {
+            rect: Rect {
+                x: 100.0,
+                y: 100.0,
+                w: 50.0,
+                h: 50.0,
+            },
+        },
+        style: style(),
+        contents: String::new(),
+        author: String::new(),
+    };
+    assert!(doc.add_annotation(0, &note).is_ok());
+}
+
+#[test]
+fn can_clean_distinguishes_identity_filters_from_plain_files() {
+    // Avant A2 ; devient vrai après A2 (passe-plat) : le test est alors inversé dans A2.
+    assert!(!mega_core::cleanup::can_clean(
+        &identity_encrypted_note_pdf("x"),
+        None
+    ));
+    assert!(mega_core::cleanup::can_clean(&sample_pdf(1, "t"), None));
 }

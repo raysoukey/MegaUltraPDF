@@ -433,6 +433,7 @@ impl Document {
         patch: &AnnotationPatch,
     ) -> CoreResult<u16> {
         self.mark_changed();
+        self.ensure_cleanable()?;
         let current = self
             .annotations(page)?
             .into_iter()
@@ -640,6 +641,7 @@ impl Document {
     /// Supprime l'annotation `index` de la page.
     pub fn delete_annotation(&mut self, page: u16, index: u16) -> CoreResult<()> {
         self.mark_changed();
+        self.ensure_cleanable()?;
         let _guard = engine::guard();
         let page_index = self.checked_index_unlocked(page)?;
         let mut pdf_page = self.inner().pages().get(page_index)?;
@@ -663,6 +665,7 @@ impl Document {
     /// marquages de texte ne se déplacent pas (ils suivent le texte).
     pub fn set_annotation_rect(&mut self, page: u16, index: u16, rect: Rect) -> CoreResult<u16> {
         self.mark_changed();
+        self.ensure_cleanable()?;
         let current = self
             .annotations(page)?
             .into_iter()

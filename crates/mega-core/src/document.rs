@@ -207,6 +207,21 @@ impl Document {
         self.changed = true;
     }
 
+    /// Refuse une opération qui supprime ou remplace du contenu si le nettoyage à
+    /// l'enregistrement ne pourra pas retirer ce qui est supprimé (audit E1).
+    ///
+    /// À appeler **avant** `engine::guard()` : `to_bytes` prend le verrou, non réentrant.
+    pub(crate) fn ensure_cleanable(&self) -> CoreResult<()> {
+        if crate::cleanup::can_clean(&self.to_bytes()?, self.password()) {
+            return Ok(());
+        }
+        Err(CoreError::InvalidOperation(
+            "ce fichier ne peut pas être nettoyé après une suppression (chiffrement ou \
+             structure que lopdf ne relit pas) : la suppression est refusée, l'ajout reste possible"
+                .to_string(),
+        ))
+    }
+
     /// Octets du fichier tel qu'il a été chargé ou enregistré, même si le document a été
     /// modifié depuis : c'est sur eux que se vérifient les signatures numériques.
     pub fn file_bytes(&self) -> &[u8] {

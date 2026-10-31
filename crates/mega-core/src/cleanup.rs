@@ -60,6 +60,21 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     Ok(out)
 }
 
+/// Vrai si [`before_save`] pourra nettoyer ces octets : `lopdf` doit les relire (et les
+/// déchiffrer avec `password`).
+///
+/// Pourquoi : `FPDF_SaveAsCopy` recopie tous les objets, y compris ceux qu'une suppression a
+/// rendus orphelins (le texte d'une annotation supprimée resterait en clair dans le fichier,
+/// audit E1) ; seul l'élagage `lopdf` de `before_save` les retire. Quand `lopdf` ne relit pas
+/// le fichier (filtres `Identity`, structure qu'il refuse), `before_save` écrit les octets de
+/// PDFium tels quels : on refuse alors les suppressions (`Document::ensure_cleanable`).
+///
+/// Exposée uniquement pour les tests d'intégration, comme [`before_save`].
+#[doc(hidden)]
+pub fn can_clean(bytes: &[u8], password: Option<&str>) -> bool {
+    crate::crypt::LopdfSession::load(bytes, password).is_ok()
+}
+
 /// Octets **bruts** (encore compressés, déjà déchiffrés) des flux de contenu de chaque page,
 /// dans l'ordre des pages.
 ///

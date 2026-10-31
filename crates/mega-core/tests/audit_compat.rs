@@ -631,47 +631,6 @@ fn rich_catalog_pdf(header: &str, catalog_version: Option<&str>) -> Vec<u8> {
     assemble(header, &objects, "/Info 28 0 R")
 }
 
-/// `note_with_popup_pdf` plus un `/Encrypt` dont les filtres sont `Identity` : PDFium l'ouvre,
-/// `crypt::check_crypt_filters` le refuse, donc `before_save` tombe dans son repli.
-fn identity_encrypted_note_pdf(secret: &str) -> Vec<u8> {
-    let objects: Vec<Vec<u8>> = vec![
-        s("<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R /MarkInfo << /Marked true >> >>"),
-        s("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-        s(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Annots [4 0 R 5 0 R 6 0 R] \
-           /StructParents 0 /Contents 9 0 R /Resources << /Font << /F1 10 0 R >> >> >>",
-        ),
-        s(&format!(
-            "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents ({secret}) \
-             /T (Auteur) /Popup 5 0 R /P 3 0 R /StructParent 1 >>"
-        )),
-        s("<< /Type /Annot /Subtype /Popup /Rect [300 300 450 400] /Parent 4 0 R /P 3 0 R >>"),
-        s(
-            "<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /Contents (Reponse) /IRT 4 0 R /P 3 0 R >>",
-        ),
-        s("<< /Type /StructTreeRoot /K 8 0 R /ParentTree << /Nums [1 8 0 R] >> >>"),
-        s(&format!(
-            "<< /Type /StructElem /S /Annot /P 7 0 R /Pg 3 0 R /Alt ({secret}) \
-             /K << /Type /OBJR /Obj 4 0 R /Pg 3 0 R >> >>"
-        )),
-        stream("", b"BT /F1 24 Tf 72 400 Td (Visible) Tj ET"),
-        s("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
-        // 11 Encrypt (identique à testing::attachments_only_encrypted_pdf)
-        s("<< /Filter /Standard /V 4 /R 4 /Length 128 /P -4 \
-           /O <566fa873ee33c797cd3b904fdadf814afa34df9a38f6ed41b984e2c6da2aa6f5> \
-           /U <60cb14e897d58381f951427876a7804100000000000000000000000000000000> \
-           /CF << /StdCF << /Type /CryptFilter /CFM /V2 /Length 16 /AuthEvent /DocOpen >> >> \
-           /StmF /Identity /StrF /Identity /EFF /StdCF >>"),
-        s("<< /Title (Plain title) >>"),
-    ];
-    let id = "<00112233445566778899aabbccddeeff>";
-    assemble(
-        "1.6",
-        &objects,
-        &format!("/Info 12 0 R /Encrypt 11 0 R /ID [{id}{id}]"),
-    )
-}
-
 /// Chaîne de `depth` nœuds `/Pages` imbriqués, attributs hérités à différents niveaux.
 fn deep_pages_pdf(depth: usize) -> Vec<u8> {
     // 1 Catalog, 2 Font, 3 Contents, 4..4+depth-1 nœuds, dernier = page.
@@ -1170,7 +1129,7 @@ fn e1_catalog_preservation() {
 fn e2_cleanup_fallback_and_redaction() {
     let secret = "SECRET-ZX9";
     guarded("E2", || {
-        let input = identity_encrypted_note_pdf(secret);
+        let input = mega_core::testing::identity_encrypted_note_pdf(secret);
         save("E2-entree", &input);
         verdict(
             "E2",

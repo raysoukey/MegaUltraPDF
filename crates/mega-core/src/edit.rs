@@ -836,6 +836,8 @@ impl Document {
         let bytes = {
             let guard = engine::guard();
             let clean = engine::load_bytes(&guard, dirty, self.password())?;
+            // Les marquages et widgets sans apparence en reçoivent une avant l'écriture.
+            crate::annotations::ensure_appearances(&clean)?;
             let bytes = clean.save_to_bytes()?;
             self.replace_inner(clean);
             bytes

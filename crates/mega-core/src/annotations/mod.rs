@@ -393,15 +393,8 @@ impl Document {
             .get(self.checked_index_unlocked(page)?)?;
         // Un marquage fraîchement créé n'a pas encore d'apparence (PDFium la génère au
         // premier rendu) : sa couleur serait inconnue. Un rendu minuscule la fait naître.
-        let needs_appearance = page
-            .annotations()
-            .iter()
-            .any(|a| kind_of(&a).is_text_markup() && a.objects().is_empty());
-        if needs_appearance {
-            let config = pdfium_render::prelude::PdfRenderConfig::new()
-                .set_target_width(8)
-                .render_annotations(true);
-            page.render_with_config(&config)?;
+        if lacks_markup_appearance(&page) {
+            tiny_render(&page)?;
         }
         let frame = frame_of(&page);
         page.annotations()
@@ -853,6 +846,45 @@ pub(crate) fn union(rects: &[Rect]) -> Rect {
         w: x1 - x0,
         h: y1 - y0,
     }
+}
+
+/// Vrai si la page porte un marquage de texte (surlignage, souligné…) sans apparence : PDFium
+/// ne la génère qu'au premier rendu.
+fn lacks_markup_appearance(page: &pdfium_render::prelude::PdfPage<'_>) -> bool {
+    page.annotations()
+        .iter()
+        .any(|a| kind_of(&a).is_text_markup() && a.objects().is_empty())
+}
+
+/// Rendu minuscule (8 px) qui force PDFium à écrire les apparences manquantes, widgets
+/// compris (environnement de formulaire chargé).
+fn tiny_render(page: &pdfium_render::prelude::PdfPage<'_>) -> CoreResult<()> {
+    let config = pdfium_render::prelude::PdfRenderConfig::new()
+        .set_target_width(8)
+        .render_form_data(true)
+        .render_annotations(true);
+    page.render_with_config(&config)?;
+    Ok(())
+}
+
+/// Fait écrire par PDFium les apparences qui manquent encore avant l'enregistrement :
+/// marquages de texte (ISO 32000-2 §12.5.5 et PDF/A-2 6.3.3 exigent un `/AP`) et widgets de
+/// formulaire (sans quoi `/NeedAppearances` ne pourrait pas être retiré, audit E7 et E11).
+/// L'appelant tient le verrou PDFium.
+pub(crate) fn ensure_appearances(
+    document: &pdfium_render::prelude::PdfDocument<'_>,
+) -> CoreResult<()> {
+    for page in document.pages().iter() {
+        let needs = lacks_markup_appearance(&page)
+            || page
+                .annotations()
+                .iter()
+                .any(|a| a.annotation_type() == PdfPageAnnotationType::Widget);
+        if needs {
+            tiny_render(&page)?;
+        }
+    }
+    Ok(())
 }
 
 /// Genre d'une annotation d'après son sous-type PDF ; `Ink` et `Stamp` sont affinés par

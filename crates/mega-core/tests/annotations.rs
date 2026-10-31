@@ -1043,3 +1043,117 @@ fn popups_are_not_listed() {
             .any(|a| a.index == 5 && a.kind == AnnotationKind::Note)
     );
 }
+
+// ---- Lot 14 : apparence des marquages écrite sans lecture préalable (audit E11) ----------
+
+/// Enregistre `doc` sans l'avoir lu ni rendu et rend le flux `/AP /N` de chaque annotation
+/// (`None` si elle n'en a pas), par type (`/Subtype`).
+fn saved_appearances(doc: &mut Document) -> Vec<(String, Option<String>)> {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sortie.pdf");
+    doc.save_as(&out).unwrap();
+    let lo = lopdf::Document::load_mem(&std::fs::read(&out).unwrap()).unwrap();
+    let page = *lo.get_pages().values().next().unwrap();
+    let annots = lo.get_dictionary(page).unwrap().get(b"Annots").unwrap();
+    let (_, annots) = lo.dereference(annots).unwrap();
+    annots
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            let (_, a) = lo.dereference(a).unwrap();
+            let dict = a.as_dict().unwrap();
+            let subtype = String::from_utf8_lossy(dict.get(b"Subtype").unwrap().as_name().unwrap())
+                .into_owned();
+            let stream = dict
+                .get(b"AP")
+                .ok()
+                .and_then(|ap| lo.dereference(ap).ok())
+                .and_then(|(_, ap)| ap.as_dict().ok()?.get(b"N").ok().cloned())
+                .and_then(|n| lo.dereference(&n).ok().map(|(_, n)| n.clone()))
+                .and_then(|n| {
+                    let s = n.as_stream().ok()?;
+                    // Le flux et son dictionnaire (ressources comprises) en texte.
+                    Some(format!(
+                        "{:?}{}",
+                        s.dict,
+                        String::from_utf8_lossy(&s.content)
+                    ))
+                });
+            (subtype, stream)
+        })
+        .collect()
+}
+
+#[test]
+fn highlight_added_then_saved_has_an_appearance_stream() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "ap"), None).unwrap();
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Highlight,
+            Geometry::Quads {
+                rects: vec![rect(100.0, 500.0, 200.0, 20.0)],
+            },
+            style((255, 255, 0)),
+            "",
+        ),
+    )
+    .unwrap();
+    let found = saved_appearances(&mut doc);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (subtype, stream) = &found[0];
+    assert_eq!(subtype, "Highlight");
+    let stream = stream.as_deref().expect("/AP /N absent");
+    assert!(
+        stream.contains("Multiply") || stream.contains("BM"),
+        "mode de fusion absent : {stream}"
+    );
+}
+
+#[test]
+fn other_text_markups_added_then_saved_have_an_appearance_stream() {
+    for (kind, name) in [
+        (AnnotationKind::Underline, "Underline"),
+        (AnnotationKind::StrikeOut, "StrikeOut"),
+        (AnnotationKind::Squiggly, "Squiggly"),
+    ] {
+        let mut doc = Document::from_bytes(sample_pdf(1, "ap"), None).unwrap();
+        doc.add_annotation(
+            0,
+            &new(
+                kind,
+                Geometry::Quads {
+                    rects: vec![rect(100.0, 500.0, 200.0, 20.0)],
+                },
+                style((255, 0, 0)),
+                "",
+            ),
+        )
+        .unwrap();
+        let found = saved_appearances(&mut doc);
+        assert_eq!(found[0].0, name);
+        assert!(found[0].1.is_some(), "{name} sans /AP /N");
+    }
+}
+
+/// Une note (`/Text`) n'a toujours pas d'apparence : le lecteur dessine l'icône lui-même.
+#[test]
+fn a_text_note_still_has_no_appearance_after_save() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "ap"), None).unwrap();
+    doc.add_annotation(
+        0,
+        &new(
+            AnnotationKind::Note,
+            Geometry::Rect {
+                rect: rect(100.0, 700.0, 0.0, 0.0),
+            },
+            style((255, 255, 0)),
+            "Bonjour",
+        ),
+    )
+    .unwrap();
+    let found = saved_appearances(&mut doc);
+    assert_eq!(found[0].0, "Text");
+    assert!(found[0].1.is_none(), "{found:?}");
+}

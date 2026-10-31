@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { watchScreenDensity } from '$lib/state/screen.svelte';
+  import { copyText } from '$lib/logic/clipboard';
   import { onMount } from 'svelte';
   import { pickPdfFiles, setTesseractPath, startupFiles, takePendingPaths } from '$lib/api';
   import type { Annotation } from '$lib/api';
@@ -197,12 +198,8 @@
     const boxes = doc.textLayers[doc.selection.page] ?? [];
     const text = selectedText(boxes, doc.selection.from, doc.selection.to);
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      showNotice(t.copied);
-    } catch {
-      // presse-papiers indisponible : rien à faire
-    }
+    // Repli sur l'ancienne commande `copy`, puis avis visible si rien n'a marché (Lot 13).
+    showNotice((await copyText(text)) ? t.copied : t.copyFailed, 3000);
   }
 
   function onKeydown(e: KeyboardEvent) {

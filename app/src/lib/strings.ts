@@ -158,6 +158,7 @@ export const fr = {
   aboutNotices:
     'Les textes complets des licences sont livrés avec l’application : THIRD_PARTY_LICENSES.md (composants tiers) et la notice placée à côté de la bibliothèque PDFium.',
   renderFailed: 'Page impossible à afficher',
+  copyFailed: 'Copie impossible : le presse-papiers est refusé par le système.',
   propPdfa: 'Conformité déclarée',
   pdfaNone: 'Aucune',
   pdfaNoLongerGuaranteed: (claim: string) =>
@@ -771,6 +772,7 @@ export const en: Strings = {
   aboutNotices:
     'The full licence texts ship with the application: THIRD_PARTY_LICENSES.md (third-party components) and the notice next to the PDFium library.',
   renderFailed: 'This page cannot be displayed',
+  copyFailed: 'Copy failed: the system refused access to the clipboard.',
   propPdfa: 'Declared conformance',
   pdfaNone: 'None',
   pdfaNoLongerGuaranteed: (claim: string) =>

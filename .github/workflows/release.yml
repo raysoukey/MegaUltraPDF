@@ -1,5 +1,5 @@
 # Paquets installables (Lot 7) : NSIS + MSI + zip portable (Windows), deb + AppImage (Linux),
-# dmg (macOS, Apple Silicon). Déclenché par une étiquette `v*` ou à la main ; les fichiers
+# dmg (macOS universel : Intel et Apple Silicon, Lot 13). Déclenché par une étiquette `v*` ou à la main ; les fichiers
 # sont joints à une release GitHub **brouillon**, publiée ensuite à la main.
 # Paquets non signés : avertissement SmartScreen (Windows) et Gatekeeper (macOS) attendus.
 name: Release
@@ -65,10 +65,15 @@ jobs:
         include:
           - os: windows-latest
             bundles: nsis,msi
+            target: ""
           - os: ubuntu-22.04
             bundles: deb,appimage
+            target: ""
+          # Binaire universel (Lot 13) : les deux architectures dans le même .dmg ; la
+          # bibliothèque PDFium épinglée pour macOS est déjà universelle.
           - os: macos-latest
             bundles: dmg
+            target: universal-apple-darwin
     steps:
       - uses: actions/checkout@v4
 
@@ -79,6 +84,8 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -97,7 +104,21 @@ jobs:
       - name: Construire les paquets
         # `release` = `tauri build --config src-tauri/tauri.release.conf.json` : prépare PDFium
         # (`cargo xtask stage-pdfium`) et l'embarque dans les ressources.
-        run: pnpm --dir app release --bundles ${{ matrix.bundles }}
+        run: pnpm --dir app release --bundles ${{ matrix.bundles }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      - name: Vérifier le binaire universel (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          archs=$(lipo -archs target/universal-apple-darwin/release/mega-app)
+          echo "architectures : $archs"
+          case "$archs" in *x86_64*arm64*|*arm64*x86_64*) ;; *) echo "::error::binaire non universel : $archs"; exit 1 ;; esac
+          lipo -archs app/src-tauri/resources/pdfium/libpdfium.dylib
+
+      - name: Vérifier le paquet Debian
+        if: runner.os == 'Linux'
+        run: |
+          dpkg -I target/release/bundle/deb/*.deb | tee deb-info.txt
+          grep -q "Recommends:.*tesseract-ocr" deb-info.txt || { echo "::error::Recommends tesseract-ocr absent"; exit 1; }
 
       - name: Zip portable (Windows)
         if: runner.os == 'Windows'
@@ -122,6 +143,7 @@ jobs:
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
             target/release/bundle/dmg/*.dmg
+            target/universal-apple-darwin/release/bundle/dmg/*.dmg
             MegaUltraPDF_*_portable.zip
 
   publish:

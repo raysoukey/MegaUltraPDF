@@ -46,15 +46,18 @@
     "windows": {
       "nsis": {
         "installerHooks": "windows/hooks.nsh"
-      }
+      },
+      "webviewInstallMode": { "type": "embedBootstrapper" }
     },
     "linux": {
       "deb": {
-        "desktopTemplate": "linux/MegaUltraPDF.desktop"
+        "desktopTemplate": "linux/MegaUltraPDF.desktop",
+        "recommends": ["tesseract-ocr", "tesseract-ocr-fra"]
       }
     },
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "minimumSystemVersion": "10.15"
     },
     "license": "GPL-3.0-or-later",
     "icon": [

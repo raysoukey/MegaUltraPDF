@@ -516,3 +516,31 @@ fn user_unit_accepts_reals_and_is_bounded() {
     assert_eq!(unit(lopdf::Object::Real(-2.0)), None);
     assert_eq!(unit(lopdf::Object::Integer(1)), None);
 }
+
+#[test]
+fn stray_ampersands_and_unknown_entities_stay_literal() {
+    assert_eq!(
+        xmp_title("Q&amp;A café et plus ; fin").as_deref(),
+        Some("Q&A café et plus ; fin")
+    );
+    // Un `&` isolé (XML invalide, mais fréquent) ne mange pas le texte qui suit.
+    assert_eq!(
+        xmp_title("Q&A café et plus ; fin").as_deref(),
+        Some("Q&A café et plus ; fin")
+    );
+    assert_eq!(xmp_title("R&D;").as_deref(), Some("R&D;"));
+    assert_eq!(xmp_title("caf&#233;").as_deref(), Some("café"));
+}
+
+#[test]
+fn a_long_run_of_ampersands_is_decoded_in_linear_time() {
+    // Plus de 12 octets avant tout `;` et un caractère multi-octet : l'ancien code cherchait
+    // dans tout le reste du texte à chaque `&`.
+    let body = "&é".repeat(100_000);
+    let title = xmp_title(&body).unwrap();
+    assert_eq!(
+        title.chars().count(),
+        mega_core::properties::MAX_METADATA_CHARS
+    );
+    assert!(title.starts_with("&é&é"));
+}

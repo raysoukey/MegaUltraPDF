@@ -269,7 +269,7 @@ fn xmp_li(xmp: &str, tag: &str, prefer_default: bool) -> Option<String> {
 /// section CDATA ne la coupe pas). Partagé par `xmp_value` et `xmp_text`.
 fn xmp_raw<'a>(xmp: &'a str, name: &str) -> Option<&'a str> {
     let attribute = ['"', '\''].into_iter().find_map(|quote| {
-        let start = format!("{name}={quote}");
+        let start = format!(" {name}={quote}");
         let from = xmp.find(&start)? + start.len();
         Some(&xmp[from..from + xmp[from..].find(quote)?])
     });
@@ -317,38 +317,53 @@ fn clean_xmp_text(raw: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Ajoute à `out` le texte `raw` dont les entités XML sont décodées ; une entité inconnue
-/// ou un point de code invalide (`&#0;`, `&#xD800;`) est écarté.
+/// Ajoute à `out` le texte `raw` dont les entités XML sont décodées. Une entité inconnue ou
+/// mal formée (`R&D;`, `&` sans `;` proche) reste telle quelle ; un numérique bien formé mais
+/// invalide (`&#0;`, `&#xD800;`) est écarté.
 fn decode_entities(raw: &str, out: &mut String) {
+    // Longueur maximale d'une entité acceptée, en OCTETS : la recherche du `;` est bornée
+    // (pas de balayage quadratique sur un flux hostile) et tombe sur une frontière de
+    // caractère, `;` étant ASCII.
+    const MAX_ENTITY_BYTES: usize = 12;
     let mut rest = raw;
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        // Une entité tient en peu de caractères : on ne cherche `;` que près de l'esperluette.
-        let Some(semi) = rest.get(..12).unwrap_or(rest).find(';') else {
+        let semi = rest
+            .as_bytes()
+            .iter()
+            .take(MAX_ENTITY_BYTES)
+            .position(|b| *b == b';');
+        let Some(semi) = semi else {
             out.push('&');
             rest = &rest[1..];
             continue;
         };
         let body = &rest[1..semi];
         let decoded = match body {
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" => Some('\''),
-            "amp" => Some('&'),
+            "lt" => Some(Some('<')),
+            "gt" => Some(Some('>')),
+            "quot" => Some(Some('"')),
+            "apos" => Some(Some('\'')),
+            "amp" => Some(Some('&')),
             _ => body.strip_prefix('#').and_then(|num| {
                 let code = match num.strip_prefix(['x', 'X']) {
                     Some(hex) => u32::from_str_radix(hex, 16).ok()?,
                     None => num.parse().ok()?,
                 };
-                char::from_u32(code)
+                Some(char::from_u32(code))
             }),
         };
-        if let Some(c) = decoded {
-            out.push(c);
+        match decoded {
+            Some(c) => {
+                out.extend(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
         }
-        rest = &rest[semi + 1..];
     }
     out.push_str(rest);
 }

@@ -596,6 +596,21 @@ fn can_clean_distinguishes_identity_filters_from_plain_files() {
     assert!(mega_core::cleanup::can_clean(&sample_pdf(1, "t"), None));
 }
 
+/// Revue du Lot 14 (M13) : après une suppression, `save_as` d'un fichier que le nettoyage
+/// traite réussit, et le drapeau retombe.
+#[test]
+fn saving_a_cleanable_file_after_a_deletion_succeeds() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/simple.pdf");
+    let mut doc = Document::open(path, None).unwrap();
+    doc.delete_pages(&[1]).unwrap();
+    assert!(doc.needs_cleanup());
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sans-p2.pdf");
+    doc.save_as(&out).unwrap();
+    assert!(!doc.needs_cleanup());
+    assert_eq!(Document::open(&out, None).unwrap().page_count(), 2);
+}
+
 /// `sample_pdf` réécrit par `lopdf` avec l'en-tête `version` (et, si demandé, `/Version` du
 /// catalogue) : PDFium, lui, ne sait écrire que 1.0 à 1.7.
 fn sample_with_header(version: &str, catalog_version: Option<&str>) -> Vec<u8> {

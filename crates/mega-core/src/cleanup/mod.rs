@@ -28,13 +28,31 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 ///
 /// Pourquoi : quand `lopdf` ne relit pas le fichier, `before_save` rend les octets de PDFium
 /// tels quels, orphelins compris ; l'appelant qui vient de supprimer quelque chose doit le
-/// savoir pour refuser d'écrire un fichier où la suppression survivrait (audit E1).
+/// savoir pour refuser d'écrire un fichier où la suppression survivrait (audit E1). Les
+/// appelants du crate passent par [`Saved::into_checked`], qui fait cette vérification.
+///
+/// \[Apprentissage\] `#[must_use]` : le compilateur avertit si une valeur de ce type est
+/// ignorée (calculée puis jetée sans être lue), ce qui serait ici un nettoyage oublié.
+#[must_use]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Saved {
     /// Les octets prêts à écrire.
     pub bytes: Vec<u8>,
     /// Faux si `before_save` a dû se rabattre sur les octets de PDFium sans nettoyage.
     pub cleaned: bool,
+}
+
+impl Saved {
+    /// Les octets à écrire, après `refuse_if_uncleaned` : refusés si une suppression a eu
+    /// lieu (`needs_cleanup`) et que le nettoyage n'a pas pu s'appliquer. `what` ouvre le
+    /// message d'erreur (« enregistrement refusé »…).
+    ///
+    /// Pourquoi : un seul chemin des octets vers le disque pour tous les appelants de
+    /// production ; lire `bytes` directement permettrait d'oublier la vérification.
+    pub(crate) fn into_checked(self, needs_cleanup: bool, what: &str) -> CoreResult<Vec<u8>> {
+        refuse_if_uncleaned(needs_cleanup, &self, what)?;
+        Ok(self.bytes)
+    }
 }
 
 /// Octets prêts à écrire : notes sans apparence imposée, `/InkList` sur les formes, objets
@@ -108,11 +126,7 @@ pub fn before_save(
 /// Refuse d'écrire `saved` quand une suppression a eu lieu (`needs_cleanup`) et que le
 /// nettoyage n'a pas pu s'appliquer : les restes de ce qui a été supprimé survivraient (E1).
 /// `what` ouvre le message (« enregistrement refusé », « protection refusée »…).
-pub(crate) fn refuse_if_uncleaned(
-    needs_cleanup: bool,
-    saved: &Saved,
-    what: &str,
-) -> CoreResult<()> {
+fn refuse_if_uncleaned(needs_cleanup: bool, saved: &Saved, what: &str) -> CoreResult<()> {
     if needs_cleanup && !saved.cleaned {
         return Err(CoreError::InvalidOperation(format!(
             "{what} : le nettoyage n'a pas pu s'appliquer après une suppression ; \
@@ -1111,6 +1125,27 @@ mod refuse_tests {
             .to_string();
         assert!(message.contains("protection refusée"), "{message}");
         assert!(!message.contains("  "), "pas d'espaces répétés : {message}");
+    }
+
+    /// Revue du Lot 14 (I2, M13) : `into_checked` est le seul chemin des appelants de
+    /// production vers les octets ; un repli non nettoyé après une suppression est refusé.
+    #[test]
+    fn into_checked_refuses_an_uncleaned_fallback_after_a_deletion() {
+        let fallback = || Saved {
+            bytes: b"brut".to_vec(),
+            cleaned: false,
+        };
+        let err = fallback()
+            .into_checked(true, "enregistrement refusé")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("enregistrement refusé"), "{err}");
+        assert_eq!(fallback().into_checked(false, "x").unwrap(), b"brut");
+        let cleaned = Saved {
+            bytes: b"propre".to_vec(),
+            cleaned: true,
+        };
+        assert_eq!(cleaned.into_checked(true, "x").unwrap(), b"propre");
     }
 }
 

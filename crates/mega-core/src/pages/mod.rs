@@ -164,9 +164,8 @@ impl Document {
         let copied = self.copy_pages_raw(pages)?;
         let carried = with_catalogs(copied, &[(source, pages)])?;
         // Document neuf assemblé par PDFium : jamais chiffré.
-        let saved = crate::cleanup::before_save(&carried, None, self.file_version())?;
-        crate::cleanup::refuse_if_uncleaned(self.needs_cleanup, &saved, "extraction refusée")?;
-        Ok(saved.bytes)
+        crate::cleanup::before_save(&carried, None, self.file_version())?
+            .into_checked(self.needs_cleanup, "extraction refusée")
     }
 
     /// Copie **brute** par PDFium des pages `pages` (dans l'ordre donné) dans un document neuf,
@@ -263,10 +262,8 @@ pub fn merge(docs: &[&Document]) -> CoreResult<Vec<u8>> {
     let carried = with_catalogs(copied, &sources)?;
     // Le plus récent des en-têtes sources : la fusion ne doit pas rabaisser la version.
     let version = docs.iter().filter_map(|d| d.file_version()).max();
-    let saved = crate::cleanup::before_save(&carried, None, version)?;
     let deleted = docs.iter().any(|d| d.needs_cleanup);
-    crate::cleanup::refuse_if_uncleaned(deleted, &saved, "fusion refusée")?;
-    Ok(saved.bytes)
+    crate::cleanup::before_save(&carried, None, version)?.into_checked(deleted, "fusion refusée")
 }
 
 /// Fusion **brute** par PDFium (document neuf, pages de chaque source à la suite), sérialisée :

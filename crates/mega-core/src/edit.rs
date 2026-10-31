@@ -835,11 +835,11 @@ impl Document {
             bytes
         };
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
-        let saved = crate::cleanup::before_save(&bytes, self.password(), self.file_version())?;
-        // Une suppression a eu lieu et le nettoyage n'a pas pu retirer ses restes : écrire les
-        // octets de PDFium ferait survivre ce que l'utilisateur a supprimé (audit E1).
-        crate::cleanup::refuse_if_uncleaned(self.needs_cleanup, &saved, "enregistrement refusé")?;
-        Ok(saved.bytes)
+        // Si une suppression a eu lieu et que le nettoyage n'a pas pu retirer ses restes,
+        // écrire les octets de PDFium ferait survivre ce que l'utilisateur a supprimé : refus
+        // (audit E1).
+        crate::cleanup::before_save(&bytes, self.password(), self.file_version())?
+            .into_checked(self.needs_cleanup, "enregistrement refusé")
     }
 
     /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.

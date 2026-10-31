@@ -79,6 +79,26 @@ pub enum CoreError {
         bytes: u64,
     },
 
+    /// Le fichier à remplacer est en lecture seule (audit du Lot 13, P4).
+    #[error(
+        "Ce fichier est en lecture seule : utilisez « Enregistrer sous » pour l'écrire ailleurs."
+    )]
+    FileReadOnly,
+
+    /// Le fichier à remplacer est ouvert par une autre application qui en interdit l'écriture
+    /// (Acrobat, un traitement de texte…) (audit du Lot 13, P4).
+    #[error(
+        "Ce fichier est utilisé par une autre application : fermez-la, ou utilisez          « Enregistrer sous »."
+    )]
+    FileLocked,
+
+    /// Le dossier de destination n'accepte pas l'écriture (droits, support en lecture seule)
+    /// (audit du Lot 13, P4).
+    #[error(
+        "Impossible d'écrire dans ce dossier : utilisez « Enregistrer sous » pour choisir un          autre emplacement."
+    )]
+    FolderNotWritable,
+
     /// Le rendu demandé dépasserait la taille d'image maximale autorisée.
     #[error(
         "Rendu trop grand : {width_px} × {height_px} px (maximum {} Mpx). Réduisez l'échelle.",

@@ -858,24 +858,101 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> CoreResult<()> {
     } else {
         path.to_path_buf()
     };
+    let existing = std::fs::metadata(&target).ok();
+    // Lecture seule : refusé partout. (Sous Unix, renommer par-dessus passerait outre.)
+    if existing
+        .as_ref()
+        .is_some_and(|m| m.permissions().readonly())
+    {
+        return Err(CoreError::FileReadOnly);
+    }
     let dir = target
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+    // Forme canonique du dossier : sous Windows, `\\?\C:\…`, qui lève la limite des 260
+    // caractères (MAX_PATH) pour le temporaire et le renommage final (audit du Lot 13, P6).
+    let dir = std::fs::canonicalize(&dir).map_err(folder_error)?;
+    let target = match target.file_name() {
+        Some(name) => dir.join(name),
+        None => target,
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // Plusieurs noms pour un même fichier (liens physiques) : renommer en créerait un
+        // nouveau et détacherait les autres noms. On écrit donc en place, après une copie de
+        // sécurité.
+        if existing.as_ref().is_some_and(|m| m.nlink() > 1) {
+            return write_in_place(&target, &dir, bytes);
+        }
+    }
     let mut builder = tempfile::Builder::new();
     builder.prefix(".megaultrapdf-").suffix(".tmp");
     // Sous POSIX, le temporaire naît en 0600 ; le fichier remplacé garderait ce mode.
     // On reprend les permissions de la cible existante (fichier partagé, exécutable…).
     #[cfg(unix)]
-    if let Ok(meta) = std::fs::metadata(&target) {
+    if let Some(meta) = &existing {
         builder.permissions(meta.permissions());
     }
-    let mut temp = builder.tempfile_in(&dir)?;
+    let mut temp = builder.tempfile_in(&dir).map_err(folder_error)?;
     temp.write_all(bytes)?;
     temp.as_file().sync_all()?;
     // `persist` échoue si la cible est un dossier : le temporaire est alors supprimé
     // (il part avec l'erreur) et la cible n'est pas touchée.
-    temp.persist(&target).map_err(|e| CoreError::Io(e.error))?;
+    temp.persist(&target).map_err(|e| {
+        let error = e.error;
+        let locked = matches!(error.raw_os_error(), Some(32 | 33))
+            || (error.kind() == std::io::ErrorKind::PermissionDenied && existing.is_some());
+        if locked {
+            // Partage refusé par l'application qui a ouvert le fichier (Windows : codes 32,
+            // 33, ou « accès refusé » sur un fichier qui n'est pas en lecture seule).
+            CoreError::FileLocked
+        } else {
+            folder_error(error)
+        }
+    })?;
+    Ok(())
+}
+
+/// Erreur d'accès au dossier de destination : « dossier interdit en écriture » si c'est un
+/// refus de droits, l'erreur d'entrée/sortie d'origine sinon.
+fn folder_error(error: std::io::Error) -> CoreError {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        CoreError::FolderNotWritable
+    } else {
+        CoreError::Io(error)
+    }
+}
+
+/// Écrit `bytes` **dans** le fichier `target` existant (Unix, fichier à liens physiques) :
+/// une copie de sécurité synchronisée est faite d'abord dans le même dossier ; si l'écriture
+/// échoue, l'original est remis depuis elle. La copie est supprimée à la fin.
+#[cfg(unix)]
+fn write_in_place(target: &Path, dir: &Path, bytes: &[u8]) -> CoreResult<()> {
+    let backup = tempfile::Builder::new()
+        .prefix(".megaultrapdf-")
+        .suffix(".bak")
+        .tempfile_in(dir)
+        .map_err(folder_error)?;
+    std::fs::copy(target, backup.path())?;
+    backup.as_file().sync_all()?;
+    let written = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(target)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    if let Err(error) = written {
+        // Remise de l'original ; la copie de sécurité reste si même cela échoue.
+        if std::fs::copy(backup.path(), target).is_ok() {
+            return Err(CoreError::Io(error));
+        }
+        let _ = backup.keep();
+        return Err(CoreError::Io(error));
+    }
     Ok(())
 }

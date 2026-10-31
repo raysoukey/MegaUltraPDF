@@ -130,7 +130,7 @@ impl Document {
             if usize::from(to) > remaining {
                 return Err(CoreError::PageOutOfRange {
                     index: to,
-                    count: remaining as u16,
+                    count: u16::try_from(remaining).unwrap_or(u16::MAX),
                 });
             }
             count

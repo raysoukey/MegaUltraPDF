@@ -539,18 +539,6 @@ fn push_to_array(
     Ok(())
 }
 
-/// Version déclarée par l'en-tête `%PDF-M.m` (`None` si l'en-tête est illisible).
-fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
-    // L'en-tête peut suivre des octets parasites : les lecteurs le cherchent dans les
-    // 1024 premiers octets (§7.5.2, note).
-    let head = &bytes[..bytes.len().min(1024 + 8)];
-    let at = head.windows(5).position(|w| w == b"%PDF-")?;
-    if at > 1024 {
-        return None;
-    }
-    parse_version(head.get(at + 5..at + 8)?)
-}
-
 /// `M.m` → `(M, m)` (chiffres uniques, comme le sont toutes les versions PDF).
 fn parse_version(text: &[u8]) -> Option<(u8, u8)> {
     match text {
@@ -610,7 +598,9 @@ pub(crate) fn sign_bytes(
         .and_then(|c| c.get(b"Version").ok())
         .and_then(|v| v.as_name().ok())
         .and_then(parse_version);
-    let effective_version = header_version(base).max(catalog_version);
+    // L'en-tête peut suivre des octets parasites (§7.5.2, note) : `crypt::header_version` le
+    // cherche dans les 1024 premiers octets.
+    let effective_version = crate::crypt::header_version(base).max(catalog_version);
     let field_name = (1..)
         .map(|n| format!("Signature{n}"))
         .find(|n| !names.contains(n))
@@ -965,6 +955,7 @@ mod tests {
     /// §7.5.2, toléré par les lecteurs).
     #[test]
     fn header_version_is_found_after_leading_junk() {
+        use crate::crypt::header_version;
         assert_eq!(header_version(b"%PDF-1.4\n"), Some((1, 4)));
         assert_eq!(
             header_version(b"\xEF\xBB\xBFjunk\n%PDF-1.3\n"),

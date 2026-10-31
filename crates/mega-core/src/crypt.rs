@@ -383,6 +383,9 @@ pub(crate) fn raise_header_version(bytes: &[u8], min_version: Option<(u8, u8)>) 
     if let (Some(min), Some(current)) = (min_version, header_version(bytes))
         // [Apprentissage] Les tuples se comparent champ par champ : (2, 0) > (1, 7).
         && min > current
+        // Une composante à deux chiffres ne tient pas dans un octet `M` ou `n`.
+        && min.0 <= 9
+        && min.1 <= 9
         && let Some(pos) = out[..out.len().min(1024)]
             .windows(5)
             .position(|w| w == b"%PDF-")
@@ -415,6 +418,20 @@ mod header_tests {
             b"%PDF-1.7\nx"
         );
         assert_eq!(raise_header_version(b"%PDF-1.7\nx", None), b"%PDF-1.7\nx");
+    }
+
+    /// Revue du Lot 14 (M1) : une version à deux chiffres ne s'écrit pas dans les trois octets
+    /// `M.n` (`b'0' + 12` n'est pas un chiffre) ; l'en-tête reste tel quel.
+    #[test]
+    fn raise_header_version_ignores_a_multi_digit_component() {
+        assert_eq!(
+            raise_header_version(b"%PDF-1.4\nx", Some((1, 12))),
+            b"%PDF-1.4\nx"
+        );
+        assert_eq!(
+            raise_header_version(b"%PDF-1.4\nx", Some((250, 0))),
+            b"%PDF-1.4\nx"
+        );
     }
 }
 

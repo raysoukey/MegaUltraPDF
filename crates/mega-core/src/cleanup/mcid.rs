@@ -8,15 +8,17 @@
 //!
 //! Règle conservatrice : un contenu balisé peut vivre dans un XObject formulaire. On ne retire
 //! donc rien (1) pour un `/MCR` qui porte `/Stm` (flux de contenu autre que celui de la page),
-//! (2) pour une page dont le contenu décodé emploie l'opérateur `Do` (un XObject peut y
-//! porter des MCID), ni (3) pour une page illisible. On ne retire que ce qui est prouvé absent.
+//! (2) pour une page dont le contenu décodé dessine par `Do` un XObject **formulaire** (ou un
+//! XObject introuvable dans ses ressources, qui pourrait en être un) ; une image (`/Subtype
+//! /Image`) ne porte pas de contenu balisé et laisse la page concluante ; ni (3) pour une page
+//! illisible. On ne retire que ce qui est prouvé absent.
 //! Un élément de structure écrit en dictionnaire direct dans le `/K` d'un autre n'est pas
 //! parcouru, et les nœuds `/Kids` directs du `/ParentTree` non plus.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use lopdf::content::Content;
-use lopdf::{Dictionary, Document, Object, ObjectId};
+use lopdf::{Document, Object, ObjectId};
 
 /// Profondeur maximale suivie dans l'arbre de structure et l'arbre de numéros.
 const MAX_DEPTH: usize = 64;
@@ -32,17 +34,17 @@ fn page_mcids(doc: &Document) -> BTreeMap<ObjectId, BTreeSet<i64>> {
         let Ok(content) = Content::decode(&bytes) else {
             continue;
         };
-        // Un XObject appelé par `Do` peut contenir des MCID : page non concluante.
-        if content.operations.iter().any(|o| o.operator == "Do") {
+        if draws_a_form(doc, page_id, &content) {
             continue;
         }
-        let properties = page_properties(doc, page_id);
+        let properties = page_resources(doc, page_id, b"Properties");
         let mut found = BTreeSet::new();
         for op in content.operations.iter().filter(|o| o.operator == "BDC") {
             let mcid = match op.operands.get(1) {
                 Some(Object::Dictionary(d)) => d.get(b"MCID").ok().and_then(|m| m.as_i64().ok()),
                 Some(Object::Name(name)) => properties
                     .get(name)
+                    .and_then(|o| o.as_dict().ok())
                     .and_then(|d| d.get(b"MCID").ok())
                     .and_then(|m| m.as_i64().ok()),
                 _ => None,
@@ -54,8 +56,36 @@ fn page_mcids(doc: &Document) -> BTreeMap<ObjectId, BTreeSet<i64>> {
     out
 }
 
-/// Dictionnaires de `/Resources /Properties` de la page (nom de propriété -> dictionnaire).
-fn page_properties(doc: &Document, page_id: ObjectId) -> BTreeMap<Vec<u8>, Dictionary> {
+/// Vrai si le contenu de la page dessine par `Do` un XObject qui peut porter des MCID : un
+/// formulaire, ou un nom introuvable dans les ressources (prudence). Une image n'en porte pas.
+fn draws_a_form(doc: &Document, page_id: ObjectId, content: &Content) -> bool {
+    let mut calls = content.operations.iter().filter(|o| o.operator == "Do");
+    let Some(first) = calls.next() else {
+        return false;
+    };
+    let xobjects = page_resources(doc, page_id, b"XObject");
+    let is_image = |name: &Object| {
+        name.as_name()
+            .ok()
+            .and_then(|name| xobjects.get(name))
+            .and_then(|x| x.as_stream().ok())
+            .is_some_and(|x| {
+                x.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Image".as_slice())
+            })
+    };
+    std::iter::once(first)
+        .chain(calls)
+        .any(|op| !op.operands.first().is_some_and(is_image))
+}
+
+/// Entrées de la catégorie `category` (`/Properties`, `/XObject`) des ressources de la page,
+/// héritées comprises : nom -> objet (référence suivie). La définition la plus proche de la
+/// page l'emporte.
+fn page_resources<'a>(
+    doc: &'a Document,
+    page_id: ObjectId,
+    category: &[u8],
+) -> BTreeMap<Vec<u8>, &'a Object> {
     let mut out = BTreeMap::new();
     let Ok((resources, ids)) = doc.get_page_resources(page_id) else {
         return out;
@@ -64,18 +94,18 @@ fn page_properties(doc: &Document, page_id: ObjectId) -> BTreeMap<Vec<u8>, Dicti
         .into_iter()
         .chain(ids.into_iter().filter_map(|id| doc.get_dictionary(id).ok()));
     for resources in dicts {
-        let Ok(props) = resources.get(b"Properties") else {
+        let Ok(entries) = resources.get(category) else {
             continue;
         };
-        let Ok((_, props)) = doc.dereference(props) else {
+        let Ok((_, entries)) = doc.dereference(entries) else {
             continue;
         };
-        let Ok(props) = props.as_dict() else {
+        let Ok(entries) = entries.as_dict() else {
             continue;
         };
-        for (name, value) in props.iter() {
-            if let Ok((_, Object::Dictionary(d))) = doc.dereference(value) {
-                out.entry(name.clone()).or_insert_with(|| d.clone());
+        for (name, value) in entries.iter() {
+            if let Ok((_, object)) = doc.dereference(value) {
+                out.entry(name.clone()).or_insert(object);
             }
         }
     }
@@ -286,7 +316,7 @@ fn null_entries(entries: &mut [Object], indices: &BTreeSet<usize>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lopdf::{Stream, dictionary};
+    use lopdf::{Dictionary, Stream, dictionary};
 
     /// Document balisé : une page par contenu, un `/StructTreeRoot` sans enfant.
     fn tagged(contents: &[&str], props: Option<Dictionary>) -> (Document, Vec<ObjectId>, ObjectId) {
@@ -452,8 +482,42 @@ mod tests {
         assert_eq!(doc.objects, before);
     }
 
+    /// Ajoute à la page `page` un XObject `name` de sous-type `subtype`.
+    fn add_xobject(doc: &mut Document, page: ObjectId, name: &str, subtype: &str) {
+        let xobject = doc.add_object(Stream::new(
+            dictionary! { "Type" => "XObject", "Subtype" => subtype },
+            Vec::new(),
+        ));
+        let page = doc.get_dictionary_mut(page).unwrap();
+        let mut resources = page.get(b"Resources").unwrap().as_dict().unwrap().clone();
+        resources.set("XObject", dictionary! { name => xobject });
+        page.set("Resources", resources);
+    }
+
+    /// Revue du Lot 14 : une image appelée par `Do` ne porte pas de contenu balisé ; la page
+    /// reste concluante et l'orphelin est retiré.
     #[test]
-    fn a_page_calling_do_is_never_pruned() {
+    fn a_page_drawing_an_image_is_pruned_normally() {
+        let (mut doc, pages, root) = tagged(&["/P <</MCID 0>> BDC EMC /Im0 Do"], None);
+        add_xobject(&mut doc, pages[0], "Im0", "Image");
+        let e = elem(&mut doc, root, pages[0], 1.into());
+        prune_orphan_mcids(&mut doc);
+        assert_eq!(k_of(&doc, e), None);
+    }
+
+    /// Un XObject formulaire peut porter des MCID de la page : page non concluante.
+    #[test]
+    fn a_page_drawing_a_form_xobject_is_never_pruned() {
+        let (mut doc, pages, root) = tagged(&["/P <</MCID 0>> BDC EMC /Fm0 Do"], None);
+        add_xobject(&mut doc, pages[0], "Fm0", "Form");
+        let e = elem(&mut doc, root, pages[0], 1.into());
+        prune_orphan_mcids(&mut doc);
+        assert_eq!(k_of(&doc, e), Some(1.into()));
+    }
+
+    /// Un XObject introuvable dans les ressources pourrait être un formulaire : prudence.
+    #[test]
+    fn a_page_drawing_an_unknown_xobject_is_never_pruned() {
         let (mut doc, pages, root) = tagged(&["/P <</MCID 0>> BDC EMC /Fm0 Do"], None);
         let e = elem(&mut doc, root, pages[0], 1.into());
         prune_orphan_mcids(&mut doc);

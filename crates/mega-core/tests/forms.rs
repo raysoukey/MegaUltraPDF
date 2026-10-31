@@ -534,3 +534,51 @@ fn cyrillic_field_value_is_utf16() {
         Some("Привет")
     );
 }
+
+// --- Lot 14 : /NeedAppearances retiré quand les apparences existent (audit E7) ------------
+
+/// `/NeedAppearances` du `/AcroForm` d'un PDF enregistré (`None` s'il est absent).
+fn need_appearances_in(bytes: &[u8]) -> Option<bool> {
+    let lo = lopdf::Document::load_mem(bytes).unwrap();
+    let (_, acro) = lo
+        .dereference(lo.catalog().unwrap().get(b"AcroForm").ok()?)
+        .ok()?;
+    acro.as_dict()
+        .ok()?
+        .get(b"NeedAppearances")
+        .ok()?
+        .as_bool()
+        .ok()
+}
+
+#[test]
+fn need_appearances_is_dropped_when_every_widget_has_an_appearance() {
+    let fixture = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/form.pdf"),
+    )
+    .unwrap();
+    for (source, bytes) in [
+        ("form.pdf", fixture),
+        ("sans /NeedAppearances", form_pdf_without_need_appearances()),
+    ] {
+        for render_first in [false, true] {
+            let what = format!("{source}, rendu avant : {render_first}");
+            let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+            doc.set_field_value(0, 0, &text("Dupont")).unwrap();
+            if render_first {
+                doc.render_page(0, 0.5).unwrap();
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let out = dir.path().join("sortie.pdf");
+            doc.save_as(&out).unwrap();
+            let saved = std::fs::read(&out).unwrap();
+            assert_eq!(need_appearances_in(&saved), None, "{what}");
+            let again = Document::from_bytes(saved, None).unwrap();
+            assert_eq!(
+                again.form_fields(0).unwrap()[0].value.as_deref(),
+                Some("Dupont"),
+                "{what}"
+            );
+        }
+    }
+}

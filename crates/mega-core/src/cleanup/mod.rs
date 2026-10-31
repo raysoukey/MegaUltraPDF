@@ -103,6 +103,7 @@ pub fn before_save(
     // `/StructTreeRoot`, la passe ne fait rien.
     mcid::prune_orphan_mcids(doc);
     dedupe_font_files(doc);
+    drop_need_appearances(doc);
     // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
     crate::properties::stamp_mod_date(doc);
     let pages_before = doc.get_pages().len();
@@ -124,6 +125,99 @@ pub fn before_save(
         bytes: out,
         cleaned: true,
     })
+}
+
+/// Retire `/NeedAppearances true` de l'`/AcroForm` quand **chaque** widget de chaque page a une
+/// apparence `/AP /N` utilisable (un flux, ou un sous-dictionnaire qui contient l'état `/AS`
+/// du widget). PDFium régénère les apparences des champs remplis ; la clé, elle, resterait :
+/// PDF/A-2 l'interdit (6.4.1) et Acrobat propose d'enregistrer à chaque ouverture (audit E7).
+/// Un seul widget sans apparence suffit à la garder : elle est alors ce qui le fait dessiner.
+pub(crate) fn drop_need_appearances(doc: &mut Document) {
+    let Some(acro_id) = acroform_holder(doc) else {
+        return;
+    };
+    let needs = match &acro_id {
+        AcroForm::Indirect(id) => doc.get_dictionary(*id).ok(),
+        AcroForm::Direct => doc
+            .catalog()
+            .ok()
+            .and_then(|c| c.get(b"AcroForm").ok())
+            .and_then(|a| a.as_dict().ok()),
+    }
+    .and_then(|d| d.get(b"NeedAppearances").ok())
+    .and_then(|v| v.as_bool().ok());
+    if needs != Some(true) {
+        return;
+    }
+    let all_drawn = doc.get_pages().into_values().all(|page| {
+        let Some((_, annots)) = page_annots(doc, page) else {
+            return true;
+        };
+        annots.iter().all(|a| {
+            let Ok((_, obj)) = doc.dereference(a) else {
+                return true;
+            };
+            let Ok(dict) = obj.as_dict() else {
+                return true;
+            };
+            dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Widget")
+                || has_normal_appearance(doc, dict)
+        })
+    });
+    if !all_drawn {
+        return;
+    }
+    match acro_id {
+        AcroForm::Indirect(id) => {
+            if let Ok(d) = doc.get_dictionary_mut(id) {
+                d.remove(b"NeedAppearances");
+            }
+        }
+        AcroForm::Direct => {
+            if let Ok(Object::Dictionary(d)) =
+                doc.catalog_mut().and_then(|c| c.get_mut(b"AcroForm"))
+            {
+                d.remove(b"NeedAppearances");
+            }
+        }
+    }
+}
+
+/// Où vit le dictionnaire `/AcroForm` : objet indirect, ou direct dans le catalogue.
+enum AcroForm {
+    Indirect(ObjectId),
+    Direct,
+}
+
+fn acroform_holder(doc: &Document) -> Option<AcroForm> {
+    match doc.catalog().ok()?.get(b"AcroForm").ok()? {
+        Object::Reference(id) => Some(AcroForm::Indirect(*id)),
+        Object::Dictionary(_) => Some(AcroForm::Direct),
+        _ => None,
+    }
+}
+
+/// Vrai si `/AP /N` du widget est un flux, ou un sous-dictionnaire qui contient son état `/AS`.
+fn has_normal_appearance(doc: &Document, widget: &Dictionary) -> bool {
+    let Some(ap) = widget
+        .get(b"AP")
+        .ok()
+        .and_then(|a| doc.dereference(a).ok())
+        .and_then(|(_, a)| a.as_dict().ok())
+    else {
+        return false;
+    };
+    let Some((_, normal)) = ap.get(b"N").ok().and_then(|n| doc.dereference(n).ok()) else {
+        return false;
+    };
+    match normal {
+        Object::Stream(_) => true,
+        Object::Dictionary(states) => widget
+            .get(b"AS")
+            .and_then(Object::as_name)
+            .is_ok_and(|state| states.has(state)),
+        _ => false,
+    }
 }
 
 /// Refuse d'écrire `saved` quand une suppression a eu lieu (`needs_cleanup`) et que le
@@ -1255,5 +1349,92 @@ mod dead_destination_tests {
                 Object::Reference((22, 0))
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod need_appearances_tests {
+    use super::*;
+    use lopdf::{Stream, dictionary};
+
+    /// Un document à une page dont les widgets (un par élément de `widgets`) portent les
+    /// dictionnaires donnés, avec `/NeedAppearances true` dans l'`/AcroForm` (direct ou non).
+    fn form(widgets: Vec<Dictionary>, indirect_acroform: bool) -> Document {
+        let mut doc = Document::with_version("1.7");
+        let refs: Vec<Object> = widgets
+            .into_iter()
+            .map(|mut w| {
+                w.set("Type", "Annot");
+                w.set("Subtype", "Widget");
+                Object::Reference(doc.add_object(w))
+            })
+            .collect();
+        let pages = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+            "Annots" => refs,
+        });
+        doc.objects.insert(
+            pages,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1
+            }),
+        );
+        let acro = dictionary! { "Fields" => Vec::<Object>::new(), "NeedAppearances" => true };
+        let acro: Object = if indirect_acroform {
+            doc.add_object(acro).into()
+        } else {
+            Object::Dictionary(acro)
+        };
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => pages, "AcroForm" => acro
+        });
+        doc.trailer.set("Root", catalog);
+        doc
+    }
+
+    fn with_ap() -> Dictionary {
+        let stream = Stream::new(Dictionary::new(), b"q Q".to_vec());
+        dictionary! { "AP" => dictionary! { "N" => Object::Stream(stream) } }
+    }
+
+    fn has_key(doc: &Document) -> bool {
+        let acro = doc.catalog().unwrap().get(b"AcroForm").unwrap();
+        let (_, acro) = doc.dereference(acro).unwrap();
+        acro.as_dict().unwrap().has(b"NeedAppearances")
+    }
+
+    #[test]
+    fn the_key_goes_when_every_widget_is_drawn() {
+        for indirect in [false, true] {
+            let mut doc = form(vec![with_ap(), with_ap()], indirect);
+            drop_need_appearances(&mut doc);
+            assert!(!has_key(&doc), "indirect : {indirect}");
+        }
+    }
+
+    #[test]
+    fn the_key_stays_when_a_widget_has_no_appearance() {
+        let mut doc = form(vec![with_ap(), dictionary! {}], false);
+        drop_need_appearances(&mut doc);
+        assert!(has_key(&doc));
+    }
+
+    #[test]
+    fn a_state_dictionary_must_contain_the_current_state() {
+        let states = |as_state: &str| {
+            let on = Stream::new(Dictionary::new(), b"q Q".to_vec());
+            dictionary! {
+                "AS" => Object::Name(as_state.as_bytes().to_vec()),
+                "AP" => dictionary! { "N" => dictionary! { "Yes" => Object::Stream(on) } },
+            }
+        };
+        let mut doc = form(vec![states("Yes")], false);
+        drop_need_appearances(&mut doc);
+        assert!(!has_key(&doc));
+        let mut doc = form(vec![states("Off")], false);
+        drop_need_appearances(&mut doc);
+        assert!(has_key(&doc), "état /Off sans apparence");
     }
 }

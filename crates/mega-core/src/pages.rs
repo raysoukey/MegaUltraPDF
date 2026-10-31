@@ -47,8 +47,8 @@ impl Document {
 
     /// Supprime les pages `pages`. Refuse de supprimer la dernière page du document.
     pub fn delete_pages(&mut self, pages: &[u16]) -> CoreResult<()> {
-        self.mark_changed();
         self.ensure_cleanable()?;
+        self.mark_changed();
         let _guard = engine::guard();
         let indices = self.unique_indices_unlocked(pages)?;
         if indices.len() >= self.count_unlocked() as usize {

@@ -410,6 +410,15 @@ fn deleting_an_annotation_on_an_uncleanable_file_is_refused() {
     let mut doc = Document::from_bytes(identity_encrypted_note_pdf("SECRET-ZX9"), None).unwrap();
     let err = doc.delete_annotation(0, 0).unwrap_err();
     assert!(matches!(err, CoreError::InvalidOperation(m) if m.contains("suppression est refusée")));
+    // `is_modified` suit l'historique, pas le drapeau `changed` : `save_as` recopie les octets
+    // d'origine tels quels tant que rien n'a changé.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sortie.pdf");
+    doc.save_as(&out).unwrap();
+    assert_eq!(
+        std::fs::read(&out).unwrap(),
+        identity_encrypted_note_pdf("SECRET-ZX9")
+    );
 }
 
 #[test]

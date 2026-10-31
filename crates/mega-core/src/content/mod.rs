@@ -294,8 +294,8 @@ impl Document {
 
     /// Supprime l'objet `index` de la page (les index suivants reculent d'un cran).
     pub fn delete_object(&mut self, page: u16, index: u16) -> CoreResult<()> {
-        self.mark_changed();
         self.ensure_cleanable()?;
+        self.mark_changed();
         self.check_page_editable(page)?;
         let _guard = engine::guard();
         let mut pdf_page = self
@@ -313,8 +313,8 @@ impl Document {
     /// Déplace l'objet `index` de `(dx, dy)` points, en axes **affichés** (sur une page
     /// tournée, « vers la droite à l'écran » reste vers la droite à l'écran).
     pub fn move_object(&mut self, page: u16, index: u16, dx: f32, dy: f32) -> CoreResult<()> {
-        self.mark_changed();
         self.ensure_cleanable()?;
+        self.mark_changed();
         if !(dx.is_finite() && dy.is_finite()) {
             return Err(invalid("déplacement invalide"));
         }
@@ -340,8 +340,8 @@ impl Document {
     /// mise à l'échelle puis translation de sa matrice, en espace utilisateur (pages tournées
     /// comprises). Refuse un rectangle vide ou non fini, et un objet sans étendue.
     pub fn resize_object(&mut self, page: u16, index: u16, rect: Rect) -> CoreResult<()> {
-        self.mark_changed();
         self.ensure_cleanable()?;
+        self.mark_changed();
         let finite = [rect.x, rect.y, rect.w, rect.h]
             .iter()
             .all(|v| v.is_finite());

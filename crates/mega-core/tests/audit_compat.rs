@@ -23,6 +23,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use lopdf::dictionary;
 use lopdf::{Dictionary, Document as Lo, Object, ObjectId};
 use mega_core::Document;
 use mega_core::digital_signature::{SignAppearance, SignOptions, SigningIdentity};
@@ -2766,4 +2767,239 @@ fn l19_corpus_text() {
             verdict(&tag, &format!("search_page {needle:?}"), hits);
         });
     }
+}
+
+// --- E20 : remesures demandées par la relecture normative -----------------------------------
+
+/// Une page avec deux objets texte, chacun dans son propre `BDC /MCID`, pour mesurer ce que
+/// `regenerate_content` garde quand l'objet supprimé n'est pas le seul de la page.
+fn two_marked_objects_pdf() -> Vec<u8> {
+    let mut doc = Lo::with_version("1.7");
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+    });
+    let content = b"/P <</MCID 0>> BDC BT /F1 14 Tf 50 700 Td (Un) Tj ET EMC\n\
+        /P <</MCID 1>> BDC BT /F1 14 Tf 50 650 Td (Deux) Tj ET EMC\n";
+    let stream = doc.add_object(lopdf::Stream::new(dictionary! {}, content.to_vec()));
+    let pages_id = doc.new_object_id();
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        "Contents" => stream, "StructParents" => 0,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+        }),
+    );
+    let catalog = doc.add_object(dictionary! {
+        "Type" => "Catalog", "Pages" => pages_id,
+        "MarkInfo" => dictionary! { "Marked" => true },
+    });
+    doc.trailer.set("Root", catalog);
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+#[test]
+#[ignore = "banc de mesure, lancer avec --ignored"]
+fn e20_remeasures() {
+    let _ = IGNORE;
+    // E20a : déplacer la page 1 (liens, BDC, /StructParents) en dernier.
+    guarded("E20a-move-p1-last", || {
+        let input = rich_catalog_pdf("1.7", None);
+        let mut doc = Document::from_bytes(input.clone(), None).unwrap();
+        apply(
+            &mut doc,
+            serde_json::json!({"kind": "move_pages", "pages": [0], "to": 2}),
+        )
+        .unwrap();
+        let out = save_doc("E20a-move-p1-last", &mut doc);
+        measure_catalog("E20a-move-p1-last", &input, &out, None);
+        let doc = Document::from_bytes(out.clone(), None).unwrap();
+        verdict(
+            "E20a-move-p1-last",
+            "texte p3 (ex-p1)",
+            doc.page_text(2).unwrap_or_default(),
+        );
+        let links: Vec<String> = doc
+            .links(2)
+            .unwrap()
+            .iter()
+            .map(|l| format!("{:?}", l.target))
+            .collect();
+        verdict(
+            "E20a-move-p1-last",
+            "liens p3 (ex-p1)",
+            format!("{links:?}"),
+        );
+        verdict(
+            "E20a-move-p1-last",
+            "annotations p3 (ex-p1)",
+            doc.annotations(2).map(|a| a.len()).unwrap_or(usize::MAX),
+        );
+        let d = lo(&out);
+        let ids = page_ids(&d);
+        let c = d.get_page_content(ids[2]);
+        verdict(
+            "E20a-move-p1-last",
+            "p3 : BDC/EMC/MCID",
+            format!(
+                "BDC {} EMC {} MCID {}",
+                contains(&c, "BDC"),
+                contains(&c, "EMC"),
+                contains(&c, "MCID")
+            ),
+        );
+    });
+
+    // E20b : supprimer un objet sur une page qui en a deux, chacun balisé.
+    guarded("E20b-delete-one-of-two", || {
+        let input = two_marked_objects_pdf();
+        let mut doc = Document::from_bytes(input, None).unwrap();
+        apply(
+            &mut doc,
+            serde_json::json!({"kind": "delete_object", "page": 0, "index": 0}),
+        )
+        .unwrap();
+        let out = save_doc("E20b-delete-one-of-two", &mut doc);
+        let d = lo(&out);
+        let c = d.get_page_content(page_ids(&d)[0]);
+        verdict(
+            "E20b-delete-one-of-two",
+            "contenu régénéré",
+            String::from_utf8_lossy(&c).replace('\n', " "),
+        );
+        verdict(
+            "E20b-delete-one-of-two",
+            "MCID 0 / MCID 1 / Deux",
+            format!(
+                "{} / {} / {}",
+                contains(&c, "MCID 0"),
+                contains(&c, "MCID 1"),
+                contains(&c, "Deux")
+            ),
+        );
+    });
+
+    // E20c : page supprimée mais encore citée par un signet et une destination nommée.
+    guarded("E20c-delete-cited-page", || {
+        let input = rich_catalog_pdf("1.7", None);
+        let mut doc = Document::from_bytes(input, None).unwrap();
+        apply(
+            &mut doc,
+            serde_json::json!({"kind": "delete_pages", "pages": [1]}),
+        )
+        .unwrap();
+        let out = save_doc("E20c-delete-cited-page", &mut doc);
+        let d = lo(&out);
+        let tree = page_ids(&d);
+        let page_dicts: Vec<ObjectId> = d
+            .objects
+            .iter()
+            .filter(|(_, o)| {
+                o.as_dict()
+                    .ok()
+                    .and_then(|x| x.get(b"Type").ok())
+                    .and_then(|t| t.as_name().ok())
+                    == Some(b"Page".as_slice())
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        verdict(
+            "E20c-delete-cited-page",
+            "pages dans l arbre / dictionnaires de page",
+            format!("{} / {}", tree.len(), page_dicts.len()),
+        );
+        let ghosts: Vec<bool> = page_dicts
+            .iter()
+            .filter(|id| !tree.contains(id))
+            .map(|id| {
+                let c = d.get_page_content(*id);
+                String::from_utf8_lossy(&c).contains("Page 2")
+            })
+            .collect();
+        verdict(
+            "E20c-delete-cited-page",
+            "page fantôme contenant « Page 2 »",
+            format!("{ghosts:?}"),
+        );
+    });
+
+    // E20d : /Parent des widgets après merge (champ parent/enfant style iText).
+    guarded("E20d-merge-widget-parent", || {
+        let a = Document::from_bytes(testing::form_parent_kid_pdf(), None).unwrap();
+        let b = Document::from_bytes(fixture_bytes("simple.pdf"), None).unwrap();
+        let out = mega_core::pages::merge(&[&b, &a]).unwrap();
+        save("E20d-merge-widget-parent", &out);
+        let d = lo(&out);
+        let mut report = Vec::new();
+        for pid in page_ids(&d) {
+            for ann in annots(&d, pid) {
+                if ann.get(b"Subtype").ok().and_then(|s| s.as_name().ok())
+                    != Some(b"Widget".as_slice())
+                {
+                    continue;
+                }
+                let parent = ann.get(b"Parent").ok().map(|p| deref(&d, p));
+                let desc = match parent {
+                    Some(Object::Dictionary(pd)) => format!(
+                        "Parent -> dict avec /T {} /FT {}",
+                        pd.has(b"T"),
+                        pd.has(b"FT")
+                    ),
+                    Some(o) => format!("Parent -> {o:?}"),
+                    None => "sans /Parent".into(),
+                };
+                let name = ann
+                    .get(b"T")
+                    .ok()
+                    .and_then(|t| t.as_str().ok())
+                    .map(|t| String::from_utf8_lossy(t).into_owned());
+                report.push(format!("widget /T {name:?} : {desc}"));
+            }
+        }
+        verdict("E20d-merge-widget-parent", "widgets", format!("{report:?}"));
+        let doc = Document::from_bytes(out, None).unwrap();
+        let fields: Vec<String> = (0..doc.page_count())
+            .flat_map(|p| doc.form_fields(p).unwrap_or_default())
+            .map(|f| format!("{}={:?}", f.name, f.value))
+            .collect();
+        verdict(
+            "E20d-merge-widget-parent",
+            "form_fields (PDFium)",
+            format!("{fields:?}"),
+        );
+    });
+
+    // E20e : chaîne UTF-8 avec BOM (PDF 2.0) dans /Info /Title.
+    guarded("E20e-utf8-bom-title", || {
+        let mut d = lo(&fixture_bytes("simple.pdf"));
+        let info_id = d.trailer.get(b"Info").unwrap().as_reference().unwrap();
+        if let Ok(Object::Dictionary(info)) = d.get_object_mut(info_id) {
+            info.set(
+                "Title",
+                Object::String(
+                    b"\xEF\xBB\xBFCaf\xC3\xA9".to_vec(),
+                    lopdf::StringFormat::Literal,
+                ),
+            );
+        }
+        let mut bytes = Vec::new();
+        d.save_to(&mut bytes).unwrap();
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        verdict(
+            "E20e-utf8-bom-title",
+            "properties().title (attendu Café)",
+            format!("{:?}", doc.properties().map(|p| p.title)),
+        );
+        verdict(
+            "E20e-utf8-bom-title",
+            "Document::title() (PDFium)",
+            format!("{:?}", doc.title()),
+        );
+    });
 }

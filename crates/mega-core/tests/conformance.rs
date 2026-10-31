@@ -244,6 +244,17 @@ fn annotations_and_content_produce_conforming_files() {
     image::RgbImage::from_pixel(40, 20, image::Rgb([10, 120, 200]))
         .save(&png)
         .unwrap();
+    // E9 (Lot 14) : une image transparente (vrai `/SMask`) et un JPEG gardé en `/DCTDecode`.
+    let png_alpha = dir.path().join("image-alpha.png");
+    let mut rgba = image::RgbaImage::new(40, 20);
+    for (x, _y, p) in rgba.enumerate_pixels_mut() {
+        *p = image::Rgba([20, 120, 200, if x < 20 { 255 } else { 0 }]);
+    }
+    rgba.save(&png_alpha).unwrap();
+    let jpg = dir.path().join("image.jpg");
+    image::RgbImage::from_pixel(40, 20, image::Rgb([200, 30, 30]))
+        .save(&jpg)
+        .unwrap();
     let attached = dir.path().join("note.txt");
     std::fs::write(&attached, "pièce jointe").unwrap();
     let cases: Vec<(&str, &str, Vec<serde_json::Value>)> = vec![
@@ -319,6 +330,22 @@ fn annotations_and_content_produce_conforming_files() {
             vec![
                 json!({"kind": "insert_image", "page": 0, "rect": rect(100.0, 100.0, 120.0, 60.0),
                         "path": png.to_string_lossy()}),
+            ],
+        ),
+        (
+            "image insérée transparente (PNG RVBA)",
+            "simple.pdf",
+            vec![
+                json!({"kind": "insert_image", "page": 0, "rect": rect(100.0, 100.0, 120.0, 60.0),
+                        "path": png_alpha.to_string_lossy()}),
+            ],
+        ),
+        (
+            "image insérée JPEG sur page tournée",
+            "rotated.pdf",
+            vec![
+                json!({"kind": "insert_image", "page": 0, "rect": rect(50.0, 50.0, 120.0, 60.0),
+                        "path": jpg.to_string_lossy()}),
             ],
         ),
         (

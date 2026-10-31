@@ -439,6 +439,248 @@ fn insert_image_refuses_more_than_sixteen_megapixels() {
     }
 }
 
+// --- Lot 14 (audit E9) : image insérée par lopdf ------------------------------------------
+
+/// Insère le fichier `path` sur la page de `doc`, dans `rect` (espace affiché).
+fn insert_file(doc: &mut Document, path: &std::path::Path, rect: Rect) {
+    doc.apply(&EditCommand::InsertImage {
+        page: 0,
+        rect,
+        path: path.to_string_lossy().into_owned(),
+    })
+    .unwrap();
+}
+
+/// Les objets image (`/Subtype /Image`, masques compris) d'un PDF sérialisé.
+fn image_objects(bytes: &[u8]) -> (lopdf::Document, Vec<lopdf::ObjectId>) {
+    let doc = lopdf::Document::load_mem(bytes).unwrap();
+    let ids = doc
+        .objects
+        .iter()
+        .filter(|(_, o)| {
+            o.as_stream()
+                .ok()
+                .and_then(|s| s.dict.get(b"Subtype").ok())
+                .and_then(|t| t.as_name().ok())
+                == Some(b"Image".as_slice())
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    (doc, ids)
+}
+
+fn name_entry(stream: &lopdf::Stream, key: &[u8]) -> Option<Vec<u8>> {
+    stream
+        .dict
+        .get(key)
+        .ok()
+        .and_then(|v| v.as_name().ok())
+        .map(<[u8]>::to_vec)
+}
+
+/// Un JPEG « photo » (dégradés et motif, ~15 Ko comme dans l'audit E8).
+fn photo_jpeg(gray: bool) -> Vec<u8> {
+    let mut img = image::RgbImage::new(200, 150);
+    for (x, y, p) in img.enumerate_pixels_mut() {
+        *p = image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x * y) % 256) as u8]);
+    }
+    let mut out = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85);
+    if gray {
+        encoder
+            .encode_image(&image::DynamicImage::ImageRgb8(img).to_luma8())
+            .unwrap();
+    } else {
+        encoder.encode_image(&img).unwrap();
+    }
+    out
+}
+
+/// E9 : un JPEG entre dans le fichier **tel quel** (`/DCTDecode`, octets d'origine), sans
+/// masque : PDFium le réencodait en Flate (15 Ko → 85 Ko) avec un `/SMask` opaque inutile.
+#[test]
+fn inserted_jpeg_keeps_dct_encoding_and_has_no_smask() {
+    let dir = tempfile::tempdir().unwrap();
+    for (gray, space) in [(false, &b"DeviceRGB"[..]), (true, &b"DeviceGray"[..])] {
+        let jpeg = photo_jpeg(gray);
+        let path = dir.path().join(format!("photo-{gray}.jpg"));
+        std::fs::write(&path, &jpeg).unwrap();
+        let mut doc = one_page();
+        let before = doc.to_bytes().unwrap();
+        insert_file(
+            &mut doc,
+            &path,
+            Rect {
+                x: 100.0,
+                y: 100.0,
+                w: 200.0,
+                h: 150.0,
+            },
+        );
+        let out = doc.to_bytes().unwrap();
+        let growth = out.len().saturating_sub(before.len());
+        assert!(
+            growth < jpeg.len() * 6 / 5 + 3 * 1024,
+            "gris {gray} : +{growth} octets pour un JPEG de {}",
+            jpeg.len()
+        );
+        let (lo, ids) = image_objects(&out);
+        assert_eq!(ids.len(), 1, "gris {gray} : une seule image, aucun masque");
+        let image = lo.get_object(ids[0]).unwrap().as_stream().unwrap();
+        assert_eq!(
+            name_entry(image, b"Filter").as_deref(),
+            Some(&b"DCTDecode"[..])
+        );
+        assert_eq!(name_entry(image, b"ColorSpace").as_deref(), Some(space));
+        assert_eq!(image.content, jpeg, "gris {gray} : octets d'origine");
+        assert!(!image.dict.has(b"SMask"), "gris {gray}");
+        // Posée et ajustée comme avant : 200 × 150 dans 200 × 150.
+        let placed = doc.last_image_bounds(0).unwrap().unwrap();
+        assert!(
+            close(placed.x, 100.0, 0.5)
+                && close(placed.y, 100.0, 0.5)
+                && close(placed.w, 200.0, 0.5)
+                && close(placed.h, 150.0, 0.5),
+            "{placed:?}"
+        );
+        doc.undo().unwrap();
+        assert_eq!(image_objects(&doc.to_bytes().unwrap()).1.len(), 0);
+    }
+}
+
+/// Une image transparente garde sa transparence : un vrai masque `/SMask` (DeviceGray).
+#[test]
+fn inserted_png_with_alpha_gets_a_real_smask() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("logo.png");
+    let mut rgba = image::RgbaImage::new(200, 150);
+    for (x, _y, p) in rgba.enumerate_pixels_mut() {
+        *p = image::Rgba([20, 120, 200, if x < 100 { 255 } else { 0 }]);
+    }
+    rgba.save(&path).unwrap();
+    let mut doc = one_page();
+    insert_file(
+        &mut doc,
+        &path,
+        Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 200.0,
+            h: 150.0,
+        },
+    );
+    let (lo, ids) = image_objects(&doc.to_bytes().unwrap());
+    assert_eq!(ids.len(), 2, "l'image et son masque");
+    let main = ids
+        .iter()
+        .map(|id| lo.get_object(*id).unwrap().as_stream().unwrap())
+        .find(|s| s.dict.has(b"SMask"))
+        .expect("une image porte un /SMask");
+    assert_eq!(
+        name_entry(main, b"ColorSpace").as_deref(),
+        Some(&b"DeviceRGB"[..])
+    );
+    let mask_id = main.dict.get(b"SMask").unwrap().as_reference().unwrap();
+    let mask = lo.get_object(mask_id).unwrap().as_stream().unwrap();
+    assert_eq!(
+        name_entry(mask, b"ColorSpace").as_deref(),
+        Some(&b"DeviceGray"[..])
+    );
+    let alpha = mask.decompressed_content().unwrap();
+    assert_eq!(alpha.len(), 200 * 150);
+    assert_eq!(alpha[0], 255, "moitié gauche opaque");
+    assert_eq!(alpha[199], 0, "moitié droite transparente");
+}
+
+/// Un PNG RVBA entièrement opaque n'a pas de masque : il ne servirait à rien.
+#[test]
+fn inserted_opaque_png_has_no_smask() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("opaque.png");
+    image::RgbaImage::from_pixel(80, 40, image::Rgba([200, 30, 30, 255]))
+        .save(&path)
+        .unwrap();
+    let mut doc = one_page();
+    insert_file(
+        &mut doc,
+        &path,
+        Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 80.0,
+            h: 40.0,
+        },
+    );
+    let (lo, ids) = image_objects(&doc.to_bytes().unwrap());
+    assert_eq!(ids.len(), 1, "aucun masque");
+    let image = lo.get_object(ids[0]).unwrap().as_stream().unwrap();
+    assert!(!image.dict.has(b"SMask"));
+    assert_eq!(
+        name_entry(image, b"Filter").as_deref(),
+        Some(&b"FlateDecode"[..])
+    );
+    assert_eq!(image.decompressed_content().unwrap().len(), 80 * 40 * 3);
+}
+
+/// Pixels sombres du rendu `img` dans le rectangle `(x, y, w, h)` (points, espace affiché,
+/// rendu à l'échelle 1).
+fn dark_pixels(img: &mega_core::RenderedPage, x: f32, y: f32, w: f32, h: f32) -> usize {
+    let mut n = 0;
+    for py in (img.height_px as f32 - y - h) as u32..(img.height_px as f32 - y) as u32 {
+        for px in x as u32..(x + w) as u32 {
+            let i = ((py * img.width_px + px) * 4) as usize;
+            if img.rgba[i] < 128 {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// ADR-0010 : sur une page `/Rotate 90` (affichée 600 × 400), l'image tombe dans le rectangle
+/// **affiché** et reste droite à l'écran (moitié noire à gauche, moitié blanche à droite).
+#[test]
+fn inserted_image_on_a_rotated_page_lands_at_the_displayed_rectangle() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("moitie.png");
+    let mut img = image::RgbImage::from_pixel(300, 100, image::Rgb([255, 255, 255]));
+    for (x, _y, p) in img.enumerate_pixels_mut() {
+        if x < 150 {
+            *p = image::Rgb([0, 0, 0]);
+        }
+    }
+    img.save(&path).unwrap();
+    let mut doc = Document::from_bytes(rotated_pdf(), None).unwrap();
+    insert_file(
+        &mut doc,
+        &path,
+        Rect {
+            x: 50.0,
+            y: 50.0,
+            w: 240.0,
+            h: 80.0,
+        },
+    );
+    let render = doc.render_page(0, 1.0).unwrap();
+    assert_eq!((render.width_px, render.height_px), (600, 400));
+    let inner = 110 * 70;
+    let left = dark_pixels(&render, 55.0, 55.0, 110.0, 70.0);
+    assert!(
+        left * 100 >= inner * 95,
+        "moitié gauche noire : {left}/{inner}"
+    );
+    assert_eq!(
+        dark_pixels(&render, 175.0, 55.0, 110.0, 70.0),
+        0,
+        "moitié droite blanche"
+    );
+    assert_eq!(
+        dark_pixels(&render, 300.0, 150.0, 180.0, 80.0),
+        0,
+        "rien ailleurs"
+    );
+}
+
 // --- Lot 9 : police sous-ensemble (B22), redimensionnement (B31) -------------------------
 
 #[test]

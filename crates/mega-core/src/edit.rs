@@ -596,11 +596,10 @@ impl Document {
             return Err(e);
         }
         // Par prudence, même si la commande a déjà appelé `mark_changed` : la lecture `lopdf`
-        // gardée pour la couche de texte ne décrit plus le document.
+        // gardée ne décrit plus le document. Si `changed_document` la remplit, c'est depuis le
+        // document modifié (la commande a appelé `mark_changed`, invariant du crate).
         self.clear_lopdf_cache();
         let changed_document = command.changed_document(self);
-        // `changed_document` a pu remplir ce cache alors que `changed` était encore faux.
-        self.clear_lopdf_cache();
         if !changed_document {
             // Rien n'a changé (aucun mot reconnu, par exemple) : pas d'étape d'historique.
             self.changed = changed_before;

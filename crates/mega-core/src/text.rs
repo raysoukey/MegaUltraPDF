@@ -5,8 +5,6 @@
 //! porte un objet texte, le sous-module `tounicode` les retrouve par les `/ToUnicode` des
 //! polices (audit L2 : police CID CFF en OpenType dont PDFium ne trouve pas les glyphes).
 
-use std::borrow::Cow;
-
 use pdfium_render::prelude::{PdfPage, PdfPageObject, PdfPageObjectsCommon};
 use serde::{Deserialize, Serialize};
 
@@ -194,37 +192,11 @@ impl Document {
         Ok((chars, false))
     }
 
-    /// Le document **courant** lu avec `lopdf`, gardé (`Document::lopdf_cache`) jusqu'à la
-    /// prochaine modification : un long document ne se relit pas à chaque page. `None` si
-    /// `lopdf` ne sait pas le lire.
-    ///
-    /// Les octets lus sont ceux du fichier tant que rien n'a changé, sinon une sérialisation
-    /// par PDFium (après un caviardage, on doit voir la page caviardée, pas l'originale).
-    pub(crate) fn lopdf_view(&self) -> Option<&lopdf::Document> {
-        if self.lopdf_cache.get().is_none() {
-            // [Apprentissage] `Cow` (« copie à l'écriture ») : soit un emprunt des octets du
-            // fichier, soit des octets fraîchement produits, sans copier les premiers.
-            let bytes: Cow<'_, [u8]> = if self.changed {
-                Cow::Owned(self.to_bytes().ok()?)
-            } else {
-                Cow::Borrowed(&self.file_bytes)
-            };
-            let loaded = crate::crypt::load_limited(&bytes, self.password()).ok();
-            // Déjà rempli entre-temps ? Impossible ici (`&self` sur un seul fil), et sans gravité.
-            let _ = self.lopdf_cache.set(loaded);
-        }
-        self.lopdf_cache.get().and_then(Option::as_ref)
-    }
-
     /// Repli de la couche de texte (audit L2) : les caractères de la page `index` retrouvés
     /// par les `/ToUnicode` de ses polices, lues avec `lopdf` (module `tounicode`, limites
-    /// dans sa documentation), en espace affiché et dans l'ordre de dessin.
-    ///
-    /// Les octets lus sont ceux du document **courant** : ceux du fichier tant que rien n'a
-    /// changé, sinon une sérialisation par PDFium (après un caviardage, le contrôle doit voir
-    /// la page caviardée, pas l'originale). La lecture `lopdf` est gardée
-    /// (`Document::lopdf_cache`) jusqu'à la prochaine modification : un long document ne se
-    /// relit pas à chaque page.
+    /// dans sa documentation), en espace affiché et dans l'ordre de dessin. Le document lu est
+    /// le document **courant**, gardé par [`Document::lopdf_view`] (qui prend le jeton PDFium :
+    /// jamais sous `engine::guard()`).
     ///
     /// Un fichier que `lopdf` ne sait pas lire ne donne aucun caractère : c'est un repli, il
     /// n'ajoute pas de cas d'erreur. De même si `lopdf` et PDFium ne comptent pas le même
@@ -609,24 +581,6 @@ fn page_blocks(drawn: &[DrawnChar]) -> Vec<crate::reading_order::Block> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Le repli lit le fichier avec `lopdf` une seule fois : deux lectures de la page
-    /// réutilisent le même document gardé, et une modification l'oublie.
-    #[test]
-    fn the_fallback_reads_the_file_once_until_a_change() {
-        let mut doc = Document::from_bytes(crate::testing::opentype_cff_cid_pdf(), None).unwrap();
-        assert!(doc.lopdf_cache.get().is_none());
-        assert_eq!(doc.page_text(0).unwrap().trim(), "除");
-        let first = std::ptr::from_ref(doc.lopdf_cache.get().unwrap().as_ref().unwrap());
-        assert_eq!(doc.page_text(0).unwrap().trim(), "除");
-        let second = std::ptr::from_ref(doc.lopdf_cache.get().unwrap().as_ref().unwrap());
-        assert_eq!(first, second, "relu au lieu d'être réutilisé");
-        doc.mark_changed();
-        assert!(doc.lopdf_cache.get().is_none());
-        // Relu depuis le document courant (sérialisé par PDFium, puisqu'il a « changé »).
-        assert_eq!(doc.page_text(0).unwrap().trim(), "除");
-        assert!(doc.lopdf_cache.get().is_some());
-    }
 
     fn r(x: f32) -> Rect {
         Rect {

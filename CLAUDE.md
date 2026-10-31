@@ -194,7 +194,8 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   renumérotation** ; l'en-tête est reposé depuis `file_version` (PDFium n'écrit que 1.x). Report du
   catalogue : `pages/carry` (jamais de JavaScript, `/AA`, `/MarkInfo`) ; `move_pages` réordonne `/Kids`
   par `lopdf`. MCID orphelins (`cleanup/mcid`) : rien pour un `/MCR` à `/Stm` ni une page qui dessine
-  un XObject formulaire.
+  un XObject formulaire. `Document::lopdf_view()` garde une lecture lopdf en cache (≈ taille du fichier)
+  jusqu'à la prochaine édition ; elle prend le jeton PDFium, jamais sous `engine::guard()`.
 - Fermeture (correctif 0.12.1) : avec un `onCloseRequested` dans l'interface, Tauri ne ferme plus la
   fenêtre lui-même, l'API JS appelle `window.destroy()` : la capacité **`core:window:allow-destroy`**
   est obligatoire (test `window-close.test.ts`), sinon la fenêtre ne se ferme jamais. Les scénarios

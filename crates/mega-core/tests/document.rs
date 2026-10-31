@@ -593,3 +593,25 @@ fn opentype_cff_cid_fallback_matches_pdfium_on_rotated_pages() {
         }
     }
 }
+
+/// Relecture de la partie B : la lecture `lopdf` gardée pour le repli est oubliée par une
+/// modification **directe** (chemin du CLI, sans `apply`). L'objet texte déplacé reste
+/// illisible pour PDFium : le repli le relit, à sa nouvelle place et non à l'ancienne.
+///
+/// Supprimer ou caviarder l'objet ne prouverait rien ici : sans objet texte sur la page, le
+/// repli n'est même pas consulté.
+#[test]
+fn the_fallback_sees_a_direct_edit() {
+    let mut doc = Document::from_bytes(mega_core::testing::opentype_cff_cid_pdf(), None).unwrap();
+    let before = doc.text_boxes(0).unwrap();
+    assert_eq!(before.len(), 1, "cache rempli : {before:?}");
+    doc.move_object(0, 0, 30.0, 20.0).unwrap();
+    let after = doc.text_boxes(0).unwrap();
+    assert_eq!(after.len(), 1, "{after:?}");
+    assert_eq!(after[0].ch, '除');
+    let (a, b) = (before[0].rect, after[0].rect);
+    assert!(
+        (b.x - a.x - 30.0).abs() < 0.5 && (b.y - a.y - 20.0).abs() < 0.5,
+        "{a:?} puis {b:?}"
+    );
+}

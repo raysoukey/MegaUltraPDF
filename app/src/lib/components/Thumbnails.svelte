@@ -314,7 +314,7 @@
             src={pageUrl(
               doc.summary.id,
               i,
-              renderScale(scaleFor(i), screen.dpr),
+              renderScale(scaleFor(i), screen.dpr, doc.summary.pages[i]),
               doc.rotation,
               doc.generation,
               'thumbnail',

@@ -36,7 +36,7 @@
     pageUrl(
       doc.summary.id,
       index,
-      renderScale(doc.scale, screen.dpr),
+      renderScale(doc.scale, screen.dpr, page),
       doc.rotation,
       doc.generation,
       priority,

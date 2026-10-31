@@ -39,3 +39,19 @@ describe('renderScale', () => {
     expect(renderScale(1, 10)).toBe(3);
   });
 });
+
+describe('renderScale and the render budget', () => {
+  const a4 = { width_pt: 595, height_pt: 842 };
+  const a0 = { width_pt: 2384, height_pt: 3370 };
+  it('lowers the density so a big page stays under 50 Mpx (review of PR C)', () => {
+    const s = renderScale(2, 2, a0);
+    expect(a0.width_pt * a0.height_pt * s * s).toBeLessThanOrEqual(50_000_000);
+    expect(s).toBeGreaterThanOrEqual(2);
+  });
+  it('keeps the full density when the page fits', () => {
+    expect(renderScale(1.5, 2, a4)).toBe(3);
+  });
+  it('never goes below the CSS scale, even when that already exceeds the budget', () => {
+    expect(renderScale(4, 2, a0)).toBe(4);
+  });
+});

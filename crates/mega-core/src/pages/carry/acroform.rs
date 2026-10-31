@@ -139,7 +139,8 @@ pub(crate) fn carry_acroform(
             };
             let mut field = Dictionary::new();
             for (key, value) in original.iter() {
-                if key.as_slice() != b"Kids" && key.as_slice() != b"Parent" {
+                // `/AA` : pas d'import de script (formatage, frappe, calcul).
+                if !matches!(key.as_slice(), b"Kids" | b"Parent" | b"AA") {
                     let value = clone_object(src, dst, value, map, cache);
                     field.set(key.clone(), value);
                 }
@@ -148,6 +149,8 @@ pub(crate) fn carry_acroform(
             dst.objects.insert(target, Object::Dictionary(field));
         }
         if let Ok(dict) = dst.get_dictionary_mut(target) {
+            // Le widget copié par PDFium garde ses scripts : on ne les importe pas.
+            dict.remove(b"AA");
             match parent {
                 Some(parent) => dict.set("Parent", parent),
                 None => {

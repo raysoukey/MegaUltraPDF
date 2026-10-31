@@ -90,7 +90,7 @@ pub(crate) fn carry_page_labels(
                 .get(b"St")
                 .and_then(Object::as_i64)
                 .unwrap_or(1)
-                .saturating_add(page - start);
+                .saturating_add(page.saturating_sub(*start));
             labels.push((at, shifted(range, number)));
             previous = Some((r, page));
         }

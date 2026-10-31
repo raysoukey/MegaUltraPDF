@@ -51,6 +51,10 @@ pub(crate) const MAX_DEPTH: usize = 64;
 pub(crate) struct PageMap {
     /// (page source, page cible), dans l'ordre des pages copiées.
     pairs: Vec<(ObjectId, ObjectId)>,
+    /// Index de `pairs` par page source (la première copie) : [`PageMap::target`] est appelé
+    /// pour chaque référence clonée, une recherche linéaire serait quadratique sur une grosse
+    /// fusion.
+    index: HashMap<ObjectId, ObjectId>,
 }
 
 impl PageMap {
@@ -65,7 +69,7 @@ impl PageMap {
     ) -> PageMap {
         let src_ids: Vec<ObjectId> = src.get_pages().into_values().collect();
         let dst_ids: Vec<ObjectId> = dst.get_pages().into_values().collect();
-        let pairs = src_pages
+        let pairs: Vec<(ObjectId, ObjectId)> = src_pages
             .iter()
             .enumerate()
             .filter_map(|(i, &page)| {
@@ -74,16 +78,23 @@ impl PageMap {
                 Some((from, to))
             })
             .collect();
-        PageMap { pairs }
+        PageMap::new(pairs)
+    }
+
+    /// Correspondance à partir de ses paires ; une page copiée deux fois désigne sa première
+    /// copie.
+    fn new(pairs: Vec<(ObjectId, ObjectId)>) -> PageMap {
+        let mut index = HashMap::new();
+        for &(from, to) in &pairs {
+            index.entry(from).or_insert(to);
+        }
+        PageMap { pairs, index }
     }
 
     /// Copie de la page source `src`, si elle a été copiée (la première, si elle l'a été
     /// plusieurs fois).
     pub(crate) fn target(&self, src: ObjectId) -> Option<ObjectId> {
-        self.pairs
-            .iter()
-            .find(|(from, _)| *from == src)
-            .map(|(_, to)| *to)
+        self.index.get(&src).copied()
     }
 }
 
@@ -199,14 +210,17 @@ const NOT_RENUMBERED: [&[u8]; 3] = [b"Parent", b"Prev", b"First"];
 /// calque de `/OCProperties` est celui que citent les pages).
 ///
 /// Rend les doublons (copie en trop → copie retenue) : l'extraction copie les pages une à une,
-/// et PDFium recopie alors un objet partagé (police, calque) une fois par page.
+/// et PDFium recopie alors un objet partagé (police, calque) une fois par page. Une annotation
+/// n'est jamais fusionnée avec une autre copie : une page extraite deux fois (`[0, 0]`) garde
+/// ses propres annotations, rendues à part (`repeated`) pour que leur `/Parent` soit réparé.
 fn pair_copies(
     src: &LoDocument,
     dst: &LoDocument,
     map: &PageMap,
     cache: &mut HashMap<ObjectId, ObjectId>,
-) -> HashMap<ObjectId, ObjectId> {
+) -> Copies {
     let mut duplicates = HashMap::new();
+    let mut repeated = Vec::new();
     let mut stack: Vec<(&Object, &Object)> = Vec::new();
     for &(from, to) in &map.pairs {
         let (Ok(page), Ok(copy)) = (src.get_dictionary(from), dst.get_dictionary(to)) else {
@@ -228,7 +242,12 @@ fn pair_copies(
                     continue;
                 }
                 if let Some(&known) = cache.get(from) {
-                    if known != *to {
+                    if known == *to {
+                        continue;
+                    }
+                    if src.get_dictionary(*from).is_ok_and(is_annotation) {
+                        repeated.push((*from, *to));
+                    } else {
                         duplicates.entry(*to).or_insert(known);
                     }
                     continue;
@@ -250,7 +269,23 @@ fn pair_copies(
             _ => {}
         }
     }
-    duplicates
+    Copies {
+        duplicates,
+        repeated,
+    }
+}
+
+/// Ce que [`pair_copies`] a trouvé en plus de `cache`.
+struct Copies {
+    /// Copie en trop d'un objet partagé → copie retenue.
+    duplicates: HashMap<ObjectId, ObjectId>,
+    /// (annotation source, copie supplémentaire) d'une page copiée plusieurs fois.
+    repeated: Vec<(ObjectId, ObjectId)>,
+}
+
+/// Une annotation : un dictionnaire qui porte `/Subtype` et `/Rect` (§12.5.2).
+fn is_annotation(dict: &Dictionary) -> bool {
+    dict.has(b"Subtype") && dict.has(b"Rect")
 }
 
 /// Empile les valeurs de même clé de `a` (source) et `b` (copie), sauf les clés que PDFium ne
@@ -310,8 +345,10 @@ fn fix_annotations(
     map: &PageMap,
     cache: &mut HashMap<ObjectId, ObjectId>,
     named: &dests::Named,
+    repeated: &[(ObjectId, ObjectId)],
 ) {
     let mut copies: Vec<(ObjectId, ObjectId)> = cache.iter().map(|(&a, &b)| (a, b)).collect();
+    copies.extend_from_slice(repeated);
     // Ordre fixe (celui d'une `HashMap` varie d'une exécution à l'autre) : à entrée égale,
     // les objets créés reçoivent les mêmes numéros, et le fichier produit est le même.
     copies.sort_unstable();
@@ -319,7 +356,7 @@ fn fix_annotations(
         let Ok(annotation) = src.get_dictionary(from) else {
             continue;
         };
-        if !annotation.has(b"Subtype") || !annotation.has(b"Rect") {
+        if !is_annotation(annotation) {
             continue;
         }
         if annotation.has(b"Parent") {
@@ -344,7 +381,7 @@ fn fix_annotations(
 }
 
 /// Reporte les entrées simples du catalogue (`/Lang`, `/ViewerPreferences`, `/PageMode`,
-/// `/PageLayout`, `/Metadata`, `/OutputIntents`, `/MarkInfo`) et les pièces jointes
+/// `/PageLayout`, `/Metadata`, `/OutputIntents`) et les pièces jointes
 /// (`/Names /EmbeddedFiles`). Lors d'une fusion, la première source qui porte une entrée
 /// l'emporte ; une pièce jointe dont le nom est déjà pris est renommée (`notes (2).txt`).
 ///
@@ -355,14 +392,15 @@ pub(crate) fn carry_simple(
     map: &PageMap,
     cache: &mut HashMap<ObjectId, ObjectId>,
 ) {
-    const KEYS: [&str; 7] = [
+    // Pas `/MarkInfo` : `/Marked true` sans `/StructTreeRoot` (jamais reporté) déclarerait
+    // balisé un document qui ne l'est plus (PDF/UA, PDF/A-1a).
+    const KEYS: [&str; 6] = [
         "Lang",
         "ViewerPreferences",
         "PageMode",
         "PageLayout",
         "Metadata",
         "OutputIntents",
-        "MarkInfo",
     ];
     let Ok(catalog) = src.catalog() else {
         return;
@@ -463,10 +501,10 @@ pub(crate) fn carry_catalog(
 ) {
     let map = PageMap::by_index(src, dst, src_pages, dst_first);
     let mut cache = HashMap::new();
-    let duplicates = pair_copies(src, dst, &map, &mut cache);
-    unify_duplicates(dst, &duplicates);
+    let copies = pair_copies(src, dst, &map, &mut cache);
+    unify_duplicates(dst, &copies.duplicates);
     let named = dests::named_destinations(src);
-    fix_annotations(src, dst, &map, &mut cache, &named);
+    fix_annotations(src, dst, &map, &mut cache, &named, &copies.repeated);
     carry_simple(src, dst, &map, &mut cache);
     carry_acroform(src, dst, &map, &mut cache, field_suffix);
     carry_named_dests(src, dst, &map, &mut cache);
@@ -660,7 +698,6 @@ mod tests {
             &["Metadata"],
             &["OutputIntents"],
             &["OCProperties"],
-            &["MarkInfo"],
         ] {
             assert!(has_key_path(&dst, path), "{path:?} manque après le report");
         }
@@ -669,6 +706,8 @@ mod tests {
             &["OpenAction"],
             &["AA"],
             &["StructTreeRoot"],
+            // `/Marked true` sans arbre de structure serait une fausse déclaration (PDF/UA).
+            &["MarkInfo"],
         ] {
             assert!(
                 !has_key_path(&dst, path),
@@ -759,7 +798,7 @@ mod tests {
             Object::Dictionary(dictionary! { "Next" => first, "Self" => previous }),
         );
         let mut dst = LoDocument::with_version("1.7");
-        let map = PageMap { pairs: Vec::new() };
+        let map = PageMap::new(Vec::new());
         let mut cache = std::collections::HashMap::new();
         let cloned = clone_object(&src, &mut dst, &Object::Reference(first), &map, &mut cache);
         assert_eq!(
@@ -910,5 +949,110 @@ mod tests {
             labels(&dst),
             [(0, "r".into(), 1), (1, "D".into(), 1), (3, "D".into(), 4)]
         );
+    }
+
+    /// `form_parent_kid_pdf` dont le champ **et** le widget portent un script `/AA`.
+    fn form_with_scripts() -> Vec<u8> {
+        let mut doc = lo(&testing::form_parent_kid_pdf());
+        let script = || {
+            Object::Dictionary(dictionary! {
+                "K" => dictionary! { "S" => Object::Name(b"JavaScript".to_vec()),
+                                     "JS" => Object::string_literal("app.alert(1);") }
+            })
+        };
+        for id in [(5, 0), (6, 0)] {
+            doc.get_dictionary_mut(id).unwrap().set("AA", script());
+        }
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn field_and_widget_scripts_are_not_carried() {
+        let bytes = form_with_scripts();
+        let src = lo(&bytes);
+        let mut dst = raw_copy(bytes, &[0]);
+        carry_catalog(&src, &mut dst, &[0], 0, None);
+        assert_eq!(top_level_names(&dst), ["nom"]);
+        for object in dst.objects.values() {
+            let Ok(dict) = object.as_dict() else {
+                continue;
+            };
+            let widget = dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Widget");
+            let field = dict.has(b"FT") || dict.has(b"T");
+            assert!(
+                !((widget || field) && dict.has(b"AA")),
+                "script reporté : {dict:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hostile_page_label_start_does_not_overflow() {
+        let mut doc = lo(&testing::rich_catalog_pdf("1.7", None));
+        let nums = vec![
+            Object::Integer(i64::MIN),
+            Object::Dictionary(
+                dictionary! { "S" => Object::Name(b"D".to_vec()), "St" => i64::MAX },
+            ),
+        ];
+        doc.catalog_mut()
+            .unwrap()
+            .set("PageLabels", dictionary! { "Nums" => nums });
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let src = lo(&bytes);
+        let mut dst = raw_copy(bytes, &[2]);
+        carry_catalog(&src, &mut dst, &[2], 0, None);
+        assert_eq!(labels(&dst), [(0, "D".into(), i64::MAX)]);
+    }
+
+    #[test]
+    fn a_page_extracted_twice_keeps_distinct_annotations() {
+        let bytes = testing::rich_catalog_pdf("1.7", None);
+        let src = lo(&bytes);
+        let mut dst = raw_copy(bytes, &[0, 0]);
+        carry_catalog(&src, &mut dst, &[0, 0], 0, None);
+        let annots = |page: ObjectId| -> Vec<Object> {
+            dst.get_dictionary(page)
+                .unwrap()
+                .get(b"Annots")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .clone()
+        };
+        let ids = pages(&dst);
+        let (first, second) = (annots(ids[0]), annots(ids[1]));
+        assert_eq!(first.len(), 4);
+        assert!(
+            first.iter().all(|a| !second.contains(a)),
+            "annotations partagées : {first:?} / {second:?}"
+        );
+    }
+
+    #[test]
+    fn named_destinations_follow_their_copied_page() {
+        let bytes = testing::rich_catalog_pdf("1.7", None);
+        let src = lo(&bytes);
+        let mut dst = raw_copy(bytes, &[1]);
+        carry_catalog(&src, &mut dst, &[1], 0, None);
+        let page = Object::Reference(pages(&dst)[0]);
+        let names = dict(&dst, dst.catalog().unwrap().get(b"Names").unwrap());
+        let tree = dict(&dst, names.get(b"Dests").unwrap());
+        let entries = tree.get(b"Names").unwrap().as_array().unwrap();
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert_eq!(text(&entries[0]), "chap2");
+        assert_eq!(entries[1].as_array().unwrap()[0], page);
+        // `/chap3` mène à la page 3, non copiée : pas de `/Dests` du tout.
+        assert!(!has_key_path(&dst, &["Dests"]));
+        let mut dst = raw_copy(testing::rich_catalog_pdf("1.7", None), &[2]);
+        carry_catalog(&src, &mut dst, &[2], 0, None);
+        let dests = dict(&dst, dst.catalog().unwrap().get(b"Dests").unwrap());
+        assert_eq!(dests.len(), 1);
+        let chap3 = dests.get(b"chap3").unwrap().as_array().unwrap();
+        assert_eq!(chap3[0], Object::Reference(pages(&dst)[0]));
+        assert!(!has_key_path(&dst, &["Names", "Dests"]), "chap2 non copiée");
     }
 }

@@ -7,7 +7,8 @@ vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: (p: string, s: string) => `http://${s}.localhost/${encodeURIComponent(p)}`,
 }));
 
-import { pagePath, pageUrl } from './pageUrl';
+import { pagePath, pageUrl, renderScale } from './pageUrl';
+import { MAX_SCALE } from './logic/zoom';
 
 describe('pageUrl', () => {
   it('builds the backend path', () => {
@@ -24,5 +25,33 @@ describe('pageUrl', () => {
     expect(pageUrl(3, 0, 1.5)).toBe(
       'http://mega.localhost/page%2F3%2F0?scale=1.5&rot=0&gen=0&prio=visible',
     );
+  });
+});
+
+describe('renderScale', () => {
+  it('renders at the screen resolution on a high-DPI display (Lot 13)', () => {
+    expect(renderScale(1.5, 2)).toBe(3);
+    expect(renderScale(1, 1.25)).toBe(1.25);
+  });
+  it('never asks for less than the CSS size nor more than the backend cap', () => {
+    expect(renderScale(1, 0.5)).toBe(1);
+    expect(renderScale(6, 2)).toBe(MAX_SCALE);
+    expect(renderScale(1, 10)).toBe(3);
+  });
+});
+
+describe('renderScale and the render budget', () => {
+  const a4 = { width_pt: 595, height_pt: 842 };
+  const a0 = { width_pt: 2384, height_pt: 3370 };
+  it('lowers the density so a big page stays under 50 Mpx (review of PR C)', () => {
+    const s = renderScale(2, 2, a0);
+    expect(a0.width_pt * a0.height_pt * s * s).toBeLessThanOrEqual(50_000_000);
+    expect(s).toBeGreaterThanOrEqual(2);
+  });
+  it('keeps the full density when the page fits', () => {
+    expect(renderScale(1.5, 2, a4)).toBe(3);
+  });
+  it('never goes below the CSS scale, even when that already exceeds the budget', () => {
+    expect(renderScale(4, 2, a0)).toBe(4);
   });
 });

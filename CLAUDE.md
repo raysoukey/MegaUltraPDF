@@ -179,6 +179,13 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   SASLprep (PDFium ne le normalise pas). La recherche passe par `text_boxes` (ordre de lecture),
   jamais par la recherche de PDFium. `reading_order::layout_chars` (droite à gauche) et
   `vertical_runs` (CJK vertical). `DocumentProperties::pdfa` : déclaration, pas vérification.
+- Plateforme (Lot 13, PR C) : réordonner les miniatures se fait par **événements pointeur**
+  (`logic/reorder.ts`), jamais par glisser-déposer HTML5, que Tauri intercepte sous Windows ; un
+  scénario CDP ne fabrique jamais de `DragEvent`, ce qui cachait le défaut. Rendu à la densité
+  d'écran : `renderScale(scale, screen.dpr)` (`state/screen.svelte.ts`), étape `deviceScale` des
+  scénarios. Copie : `logic/clipboard.ts` (repli et avis). Enregistrement : erreurs
+  `FileReadOnly` / `FileLocked` / `FolderNotWritable`, dossier canonique (chemins > 260 car.).
+  **Jamais** de vraie souris ni de vrai clavier simulés sur le poste (l'utilisateur s'en sert).
 - Fermeture (correctif 0.12.1) : avec un `onCloseRequested` dans l'interface, Tauri ne ferme plus la
   fenêtre lui-même, l'API JS appelle `window.destroy()` : la capacité **`core:window:allow-destroy`**
   est obligatoire (test `window-close.test.ts`), sinon la fenêtre ne se ferme jamais. Les scénarios

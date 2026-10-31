@@ -7,7 +7,7 @@
     "label": "trois vignettes"
   },
   {
-    "eval": "(() => { const th = document.querySelectorAll('.thumb'); const spacer = document.querySelector('.list').firstElementChild; window.__dt = new DataTransfer(); th[2].dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: window.__dt })); const a = th[0].getBoundingClientRect(); const b = th[1].getBoundingClientRect(); window.__drop = { x: a.left + 10, y: (a.bottom + b.top) / 2 }; window.__gap = [a.bottom, b.top]; spacer.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.__dt, clientX: window.__drop.x, clientY: window.__drop.y })); return true; })()",
+    "eval": "(() => { const th = document.querySelectorAll('.thumb'); const c = th[2].getBoundingClientRect(); const a = th[0].getBoundingClientRect(); const b = th[1].getBoundingClientRect(); window.__drop = { x: c.left + 10, y: (a.bottom + b.top) / 2 }; window.__gap = [a.bottom, b.top]; window.__ev = (type, y) => th[2].dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: window.__drop.x, clientY: y })); window.__ev('pointerdown', c.top + c.height / 2); window.__ev('pointermove', c.top + c.height / 2 - 20); window.__ev('pointermove', window.__drop.y); return true; })()",
     "label": "glisser la page 3 au-dessus de l'interstice entre les vignettes 1 et 2"
   },
   {
@@ -18,7 +18,7 @@
     "label": "l'indicateur de dépôt est entre les vignettes 1 et 2 (pas à la fin)"
   },
   {
-    "eval": "(() => { const spacer = document.querySelector('.list').firstElementChild; spacer.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__dt, clientX: window.__drop.x, clientY: window.__drop.y })); return true; })()",
+    "eval": "(() => { window.__ev('pointerup', window.__drop.y); return true; })()",
     "label": "déposer"
   },
   {

@@ -57,7 +57,10 @@ impl From<CoreError> for AppError {
             CoreError::WrongPassword => ErrorKind::WrongPassword,
             CoreError::InvalidPdf(_) => ErrorKind::InvalidPdf,
             CoreError::PageOutOfRange { .. } => ErrorKind::NotFound,
-            CoreError::Io(_) => ErrorKind::Io,
+            CoreError::Io(_)
+            | CoreError::FileReadOnly
+            | CoreError::FileLocked
+            | CoreError::FolderNotWritable => ErrorKind::Io,
             CoreError::RenderTooLarge { .. } | CoreError::FileTooLarge { .. } => {
                 ErrorKind::InvalidPdf
             }

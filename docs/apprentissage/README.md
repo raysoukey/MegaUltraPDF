@@ -18,6 +18,7 @@ fiche par concept. Les commentaires `[Apprentissage]` dans le code renvoient ici
 - [Lot 10 — Fonctionnalités restantes](lot-10.md)
 - [Lot 11 — Lecteur PDF par défaut](lot-11.md)
 - [Lot 12 — Identité visuelle](lot-12.md)
+- [Lot 13 — Robustesse et compatibilité](lot-13.md)
 
 ## Fiches concept (`/concept <nom>` pour en ajouter une)
 

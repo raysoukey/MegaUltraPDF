@@ -79,6 +79,26 @@ pub enum CoreError {
         bytes: u64,
     },
 
+    /// Le fichier à remplacer est en lecture seule (audit du Lot 13, P4).
+    #[error(
+        "Ce fichier est en lecture seule : utilisez « Enregistrer sous » pour l'écrire ailleurs."
+    )]
+    FileReadOnly,
+
+    /// Le fichier à remplacer est ouvert par une autre application qui en interdit l'écriture
+    /// (Acrobat, un traitement de texte…) (audit du Lot 13, P4).
+    #[error(
+        "Ce fichier est utilisé par une autre application : fermez-la, ou utilisez « Enregistrer sous »."
+    )]
+    FileLocked,
+
+    /// Le dossier de destination n'accepte pas l'écriture (droits, support en lecture seule)
+    /// (audit du Lot 13, P4).
+    #[error(
+        "Impossible d'écrire dans ce dossier : utilisez « Enregistrer sous » pour choisir un autre emplacement."
+    )]
+    FolderNotWritable,
+
     /// Le rendu demandé dépasserait la taille d'image maximale autorisée.
     #[error(
         "Rendu trop grand : {width_px} × {height_px} px (maximum {} Mpx). Réduisez l'échelle.",
@@ -203,6 +223,30 @@ impl From<PdfiumError> for CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Relecture de la PR C du Lot 13 : un message coupé sur deux lignes du source gardait
+    /// une suite d'espaces au milieu de la phrase. Aucun message ne doit en contenir.
+    #[test]
+    fn messages_have_no_runs_of_spaces() {
+        let errors = [
+            CoreError::FileReadOnly,
+            CoreError::FileLocked,
+            CoreError::FolderNotWritable,
+            CoreError::Aborted,
+            CoreError::FileTooLarge {
+                bytes: 3_000_000_000,
+            },
+            CoreError::UnsupportedEncryption("par certificat".to_string()),
+            CoreError::Timeout {
+                operation: "OCR".to_string(),
+                seconds: 300,
+            },
+        ];
+        for e in errors {
+            let text = e.to_string();
+            assert!(!text.contains("  "), "{text:?}");
+        }
+    }
 
     #[test]
     fn missing_library_error_mentions_xtask() {

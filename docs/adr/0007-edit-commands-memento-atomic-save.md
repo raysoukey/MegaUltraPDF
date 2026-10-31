@@ -71,8 +71,23 @@ historique ni aucune écriture sûre.
 - Un document issu d'une fusion n'existe pas sur disque : `mark_never_saved` le rend
   « modifié » jusqu'à « Enregistrer sous », quoi qu'on annule.
 - `write_atomically` conserve les permissions du fichier remplacé (POSIX) et suit les liens
-  symboliques ; `split_to_dir` refuse d'écraser un fichier existant (sauf `--force` au CLI)
-  et un préfixe qui sort du dossier.
+  symboliques. Depuis le Lot 13 (audit P4, P6) :
+  - un fichier en lecture seule est refusé (`CoreError::FileReadOnly`) ;
+  - un fichier verrouillé par une autre application donne `FileLocked` ;
+  - un dossier interdit en écriture donne `FolderNotWritable`.
+
+  Chaque message propose « Enregistrer sous ». Le dossier est rendu canonique (`\\?\` sous
+  Windows), ce qui permet d'enregistrer au-delà de 260 caractères. Sous Unix, un fichier à
+  plusieurs liens physiques est écrit **en place** après une copie de sécurité synchronisée,
+  pour que les autres noms voient la nouvelle version.
+
+  **Exception assumée** : sous Windows, les ACL explicites et les flux de données alternatifs
+  (ADS) du fichier remplacé sont perdus au renommage. Les garder demanderait `ReplaceFileW`,
+  donc du code `unsafe`, interdit dans ce projet.
+  Limite : un fichier à liens physiques (Unix) n'est pas remplacé atomiquement ; un arrêt du
+  système pendant l'écriture peut le laisser tronqué, la copie de sécurité restant à côté.
+- `split_to_dir` refuse d'écraser un fichier existant (sauf `--force` au CLI) et un préfixe
+  qui sort du dossier.
 - `move_pages` est implémenté par copie depuis un instantané puis suppression
   (`pdfium-render` n'expose pas `FPDF_MovePages`) : les signets qui visaient les pages
   déplacées peuvent être perdus. Documenté, à revoir avec `lopdf` (ADR-0003).

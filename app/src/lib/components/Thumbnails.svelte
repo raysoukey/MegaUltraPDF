@@ -1,9 +1,12 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { pickPdfFiles, pickSavePath } from '$lib/api';
   import { rotatedSize } from '$lib/logic/geometry';
   import { clickSelection, moveTarget, shiftAfterInsert, slotAtY } from '$lib/logic/pageselection';
-  import { pageUrl } from '$lib/pageUrl';
+  import { edgeScroll, isDrag } from '$lib/logic/reorder';
+  import { pageUrl, renderScale } from '$lib/pageUrl';
+  import { screen } from '$lib/state/screen.svelte';
   import {
     applyEdit,
     extractTo,
@@ -21,9 +24,13 @@
   let height = $state(0);
   // Point de départ du Maj+clic ; local au composant (pas besoin de survivre à l'onglet).
   let anchor = $state<number | null>(null);
-  // Glisser-déposer : créneau d'insertion survolé (0..page_count), ou null.
+  // Glisser pour réordonner (événements pointeur, Lot 13) : créneau d'insertion survolé
+  // (0..page_count), ou null ; appui en cours (vignette, position de départ).
   let dropSlot = $state<number | null>(null);
   let dragging = $state(false);
+  let press: { index: number; x: number; y: number } | null = null;
+  // Un glisser se termine par un `click` sur la vignette de départ : à ignorer.
+  let swallowClick = false;
 
   const selected = $derived(new Set(doc.selectedPages));
   const count = $derived(doc.selectedPages.length);
@@ -81,6 +88,10 @@
   });
 
   function onClick(e: MouseEvent, i: number) {
+    if (swallowClick) {
+      swallowClick = false;
+      return;
+    }
     const next = clickSelection(doc.selectedPages, anchor, i, {
       ctrl: e.ctrlKey || e.metaKey,
       shift: e.shiftKey,
@@ -136,27 +147,75 @@
     await extractTo(doc, pages, path);
   }
 
-  // ---- Glisser-déposer HTML5 ----
-  function onDragStart(e: DragEvent, i: number) {
-    if (!selected.has(i)) {
-      anchor = i;
-      setSelectedPages(doc, [i]);
-    }
-    dragging = true;
-    e.dataTransfer?.setData('text/plain', String(i));
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-  }
-  function onDragOver(e: DragEvent, i: number) {
-    if (!dragging) return;
-    e.preventDefault();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const after = e.clientY - rect.top > rect.height / 2;
-    dropSlot = after ? i + 1 : i;
-  }
-  function onDrop(e: DragEvent) {
-    e.preventDefault();
-    const slot = dropSlot;
+  // ---- Glisser pour réordonner (événements pointeur) ----
+  // Le glisser-déposer HTML5 ne fonctionne pas sous Windows : Tauri intercepte le
+  // glisser-déposer natif de la fenêtre (dépôt de fichiers). Voir `logic/reorder.ts`.
+  // Après l'appui, mouvements et relâchement s'écoutent sur la **fenêtre** : la vignette de
+  // départ peut sortir de la liste virtualisée (démontée) pendant le défilement, et le
+  // relâchement peut avoir lieu n'importe où (relecture de la PR C du Lot 13).
+  function onPointerDown(e: PointerEvent, i: number) {
+    // Un nouvel appui annule un « clic à ignorer » et un glisser restés en suspens.
+    swallowClick = false;
+    stopListening();
     endDrag();
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    press = { index: i, x: e.clientX, y: e.clientY };
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', cancelDrag);
+    window.addEventListener('keydown', onDragKey);
+  }
+  function stopListening() {
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', cancelDrag);
+    window.removeEventListener('keydown', onDragKey);
+  }
+  function onPointerMove(e: PointerEvent) {
+    if (!press) return;
+    // Bouton relâché hors de la fenêtre (le `pointerup` s'est perdu) : glisser abandonné.
+    if (e.buttons === 0) {
+      cancelDrag();
+      return;
+    }
+    if (!dragging) {
+      if (!isDrag(press.x, press.y, e.clientX, e.clientY)) return;
+      dragging = true;
+      if (!selected.has(press.index)) {
+        anchor = press.index;
+        setSelectedPages(doc, [press.index]);
+      }
+    }
+    if (!list) return;
+    const area = list.getBoundingClientRect();
+    // Près d'un bord, la liste défile : on atteint une page lointaine en glissant.
+    list.scrollTop += edgeScroll(e.clientY, area.top, area.bottom);
+    // Hors de la liste, aucun emplacement : relâcher là ne déplace rien.
+    const inside =
+      e.clientX >= area.left &&
+      e.clientX <= area.right &&
+      e.clientY >= area.top &&
+      e.clientY <= area.bottom;
+    const top = list.firstElementChild?.getBoundingClientRect().top ?? 0;
+    dropSlot = inside
+      ? slotAtY(
+          e.clientY - top,
+          tops,
+          tops.map((_, i) => heightFor(i)),
+        )
+      : null;
+  }
+  function onPointerUp() {
+    const slot = dropSlot;
+    const moved = dragging;
+    press = null;
+    stopListening();
+    endDrag();
+    if (!moved) return;
+    // Le `click` qui suit un glisser arrive dans la même tâche que `pointerup` : on l'ignore,
+    // puis on oublie la consigne (un clic au clavier plus tard doit passer).
+    swallowClick = true;
+    setTimeout(() => (swallowClick = false), 0);
     if (slot === null) return;
     const to = moveTarget(doc.summary.page_count, doc.selectedPages, slot);
     if (to === null) return;
@@ -170,10 +229,25 @@
         );
     });
   }
+  /** Échap pendant un glisser : abandon, rien ne bouge. */
+  function onDragKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && dragging) {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelDrag();
+    }
+  }
+  function cancelDrag() {
+    press = null;
+    stopListening();
+    endDrag();
+  }
   function endDrag() {
     dragging = false;
     dropSlot = null;
   }
+  // Composant démonté au milieu d'un glisser (onglet fermé) : plus d'écoute sur la fenêtre.
+  onDestroy(stopListening);
 </script>
 
 <div class="panel">
@@ -218,21 +292,6 @@
     aria-label={t.thumbnails}
     tabindex="-1"
     onscroll={() => (scrollTop = list?.scrollTop ?? 0)}
-    ondragover={(e) => {
-      if (!dragging) return;
-      e.preventDefault();
-      // Entre deux vignettes (ou sous la dernière) : l'emplacement le plus proche (A22).
-      const spacer = list?.firstElementChild;
-      if (e.target === list || e.target === spacer) {
-        const top = spacer?.getBoundingClientRect().top ?? 0;
-        dropSlot = slotAtY(
-          e.clientY - top,
-          tops,
-          tops.map((_, i) => heightFor(i)),
-        );
-      }
-    }}
-    ondrop={onDrop}
   >
     <div class="spacer" style:height="{total}px">
       {#each visible as i (i)}
@@ -247,14 +306,19 @@
           aria-selected={selected.has(i)}
           aria-label={t.pageOf(i + 1, doc.summary.page_count)}
           aria-current={i === doc.page ? 'page' : undefined}
-          draggable="true"
+          draggable="false"
           onclick={(e) => onClick(e, i)}
-          ondragstart={(e) => onDragStart(e, i)}
-          ondragover={(e) => onDragOver(e, i)}
-          ondragend={endDrag}
+          onpointerdown={(e) => onPointerDown(e, i)}
         >
           <img
-            src={pageUrl(doc.summary.id, i, scaleFor(i), doc.rotation, doc.generation, 'thumbnail')}
+            src={pageUrl(
+              doc.summary.id,
+              i,
+              renderScale(scaleFor(i), screen.dpr, doc.summary.pages[i]),
+              doc.rotation,
+              doc.generation,
+              'thumbnail',
+            )}
             alt=""
             width={THUMB_WIDTH}
             height={heightFor(i)}

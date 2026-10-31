@@ -1,92 +1,295 @@
 [
-  { "wait": 1500 },
-  { "assert": "document.querySelectorAll('.thumb').length === 3", "label": "trois vignettes" },
-  { "assert": "document.querySelector('button[title^=\"Annuler\"]').disabled === true", "label": "rien à annuler au départ" },
-
-  { "eval": "(() => { const th = document.querySelectorAll('.thumb'); th[0].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); th[1].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return document.querySelectorAll('.thumb.selected').length; })()", "label": "Ctrl+clic sur les pages 1 et 2" },
-  { "assert": "document.querySelectorAll('.thumb.selected').length === 2", "label": "deux vignettes sélectionnées" },
-  { "click": "button[title='Pivoter à droite']" },
-  { "wait": 1500 },
-  { "assert": "document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')", "label": "onglet marqué modifié" },
-  { "assert": "(() => { const im = document.querySelectorAll('.thumb img'); return im[0].width > im[0].height && im[2].width < im[2].height; })()", "label": "pages 1-2 en paysage, page 3 inchangée" },
-  { "assert": "document.querySelector('button[title^=\"Annuler : Pivoter 2 pages\"]') !== null", "label": "libellé d'annulation « Pivoter 2 pages »" },
-  { "shot": "01-rotation.png" },
-
-  { "eval": "(() => { const th = document.querySelectorAll('.thumb'); const dt = new DataTransfer(); th[0].dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt })); const r = th[2].getBoundingClientRect(); const y = r.bottom - 5; th[2].dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + 10, clientY: y })); const ind = document.querySelector('.drop-indicator') !== null; th[2].dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + 10, clientY: y })); return 'indicateur : ' + ind; })()", "label": "glisser la sélection (pages 1-2) après la page 3" },
-  { "wait": 1800 },
-  { "assert": "document.querySelector('button[title^=\"Annuler : Déplacer\"]') !== null", "label": "libellé d'annulation « Déplacer »" },
-  { "key": "f", "ctrl": true },
-  { "wait": 400 },
-  { "type": "Page 3" },
-  { "wait": 1500 },
-  { "assert": "document.querySelector('.searchbar .count').textContent.includes('/ 1') && document.querySelector('input[aria-label=\"Numéro de page\"]').value === '1'", "label": "« Page 3 » est maintenant la page 1 (recherche rechargée)" },
-  { "key": "Escape" },
-  { "wait": 300 },
-  { "assert": "[...document.querySelectorAll('.thumb.selected span')].map(s => s.textContent).join() === '2,3'", "label": "les pages déplacées restent sélectionnées (en 2 et 3)" },
-  { "shot": "02-deplacement.png" },
-
-  { "eval": "(() => { document.querySelectorAll('.thumb')[1].click(); return true; })()", "label": "clic simple sur la page 2" },
-  { "click": "button[title='Supprimer']" },
-  { "wait": 1500 },
-  { "assert": "document.querySelectorAll('.thumb').length === 2 && document.body.innerText.includes('/ 2')", "label": "suppression : 2 pages" },
-  { "key": "z", "ctrl": true },
-  { "wait": 1500 },
-  { "assert": "document.querySelectorAll('.thumb').length === 3", "label": "Ctrl+Z : 3 pages" },
-  { "assert": "document.querySelector('button[title^=\"Annuler : Déplacer\"]') !== null && document.querySelector('button[title^=\"Rétablir : Supprimer 1 page\"]') !== null", "label": "libellés : annuler « Déplacer », rétablir « Supprimer 1 page »" },
-  { "key": "y", "ctrl": true },
-  { "wait": 1500 },
-  { "assert": "document.querySelectorAll('.thumb').length === 2", "label": "Ctrl+Y : 2 pages" },
-  { "key": "z", "ctrl": true },
-  { "wait": 1500 },
-  { "assert": "document.querySelectorAll('.thumb').length === 3", "label": "Ctrl+Z : 3 pages à nouveau" },
-  { "shot": "03-annuler-retablir.png" },
-
-  { "click": "button[title='Insérer une page vide après']" },
-  { "wait": 1500 },
-  { "assert": "document.querySelectorAll('.thumb').length === 4", "label": "page vide insérée : 4 pages" },
-  { "key": "z", "ctrl": true },
-  { "wait": 1500 },
-  { "assert": "document.querySelectorAll('.thumb').length === 3", "label": "insertion annulée" },
-
-  { "key": "s", "ctrl": true },
-  { "wait": 800 },
-  { "assert": "document.body.innerText.includes('Document enregistré')", "label": "message « Document enregistré »" },
-  { "assert": "!document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')", "label": "marque « modifié » disparue" },
-  { "shot": "04-enregistre.png" },
-
-  { "key": "m", "ctrl": true },
-  { "wait": 500 },
-  { "assert": "document.querySelector('#merge-title') !== null && document.querySelector('[role=dialog] button.primary').disabled", "label": "dialogue Fusionner ouvert, bouton inactif sans fichiers" },
-  { "shot": "05-fusionner.png" },
-  { "key": "Escape" },
-  { "wait": 300 },
-  { "key": "d", "ctrl": true, "shift": true },
-  { "wait": 1200 },
-  { "assert": "document.querySelector('#split-title') !== null && document.querySelector('.preview').textContent.includes('3 fichiers seront produits')", "label": "dialogue Scinder : aperçu « 3 fichiers »" },
-  { "eval": "(() => { const r = document.querySelector('input[value=ranges]'); r.click(); const i = document.querySelector('input[placeholder^=\"ex.\"]'); i.value = '1,2-3'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()", "label": "mode plages « 1,2-3 »" },
-  { "wait": 1000 },
-  { "assert": "document.querySelector('.preview').textContent.includes('2 fichiers seront produits')", "label": "aperçu « 2 fichiers »" },
-  { "eval": "(() => { const i = document.querySelector('input[placeholder^=\"ex.\"]'); i.value = '9'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()", "label": "plage invalide « 9 »" },
-  { "wait": 1000 },
-  { "assert": "document.querySelector('.preview .error') !== null && document.querySelector('[type=submit]').disabled", "label": "erreur affichée, bouton Scinder inactif" },
-  { "shot": "06-scinder.png" },
-  { "key": "Escape" },
-  { "wait": 300 },
-
-  { "click": "button[title='Pivoter à droite']" },
-  { "wait": 1200 },
-  { "assert": "document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')", "label": "nouvelle modification" },
-  { "key": "w", "ctrl": true },
-  { "wait": 400 },
-  { "assert": "document.querySelector('[role=alertdialog]') !== null && document.body.innerText.includes('Modifications non enregistrées')", "label": "confirmation de fermeture affichée" },
-  { "shot": "07-confirmation.png" },
-  { "eval": "(() => { [...document.querySelectorAll('[role=alertdialog] button')].find(b => b.textContent.trim() === 'Annuler').click(); return true; })()", "label": "clic « Annuler »" },
-  { "wait": 300 },
-  { "assert": "document.querySelector('[role=alertdialog]') === null && document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').length === 1", "label": "annuler garde l'onglet" },
-  { "key": "w", "ctrl": true },
-  { "wait": 400 },
-  { "eval": "(() => { [...document.querySelectorAll('[role=alertdialog] button')].find(b => b.textContent.trim() === 'Ne pas enregistrer').click(); return true; })()", "label": "clic « Ne pas enregistrer »" },
-  { "wait": 800 },
-  { "assert": "document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').length === 0 && document.body.innerText.includes('Aucun document ouvert')", "label": "onglet fermé sans enregistrer" },
-  { "shot": "08-ferme.png" }
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 3",
+    "label": "trois vignettes"
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler\"]').disabled === true",
+    "label": "rien à annuler au départ"
+  },
+  {
+    "eval": "(() => { const th = document.querySelectorAll('.thumb'); th[0].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); th[1].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return document.querySelectorAll('.thumb.selected').length; })()",
+    "label": "Ctrl+clic sur les pages 1 et 2"
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb.selected').length === 2",
+    "label": "deux vignettes sélectionnées"
+  },
+  {
+    "click": "button[title='Pivoter à droite']"
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')",
+    "label": "onglet marqué modifié"
+  },
+  {
+    "assert": "(() => { const im = document.querySelectorAll('.thumb img'); return im[0].width > im[0].height && im[2].width < im[2].height; })()",
+    "label": "pages 1-2 en paysage, page 3 inchangée"
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Pivoter 2 pages\"]') !== null",
+    "label": "libellé d'annulation « Pivoter 2 pages »"
+  },
+  {
+    "shot": "01-rotation.png"
+  },
+  {
+    "eval": "(() => { const list = document.querySelector('.panel .list'); let th = document.querySelectorAll('.thumb'); const a = th[0].getBoundingClientRect(); const x = a.left + 10, y0 = a.top + a.height / 2; const ev = (el, type, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })); ev(th[0], 'pointerdown', y0); ev(th[0], 'pointermove', y0 + 10); list.scrollTop = list.scrollHeight; const third = [...document.querySelectorAll('.thumb')].find((b) => b.getAttribute('aria-label').startsWith('Page 3 ')); const r = third.getBoundingClientRect(); const lr = list.getBoundingClientRect(); const y = Math.min(r.bottom - 5, lr.bottom - 40); ev(document.body, 'pointermove', y); const ind = document.querySelector('.drop-indicator') !== null; ev(document.body, 'pointerup', y); return 'indicateur : ' + ind; })()",
+    "label": "glisser la sélection (pages 1-2) après la page 3"
+  },
+  {
+    "wait": 1800
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Déplacer\"]') !== null",
+    "label": "libellé d'annulation « Déplacer »"
+  },
+  {
+    "key": "f",
+    "ctrl": true
+  },
+  {
+    "wait": 400
+  },
+  {
+    "type": "Page 3"
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.includes('/ 1') && document.querySelector('input[aria-label=\"Numéro de page\"]').value === '1'",
+    "label": "« Page 3 » est maintenant la page 1 (recherche rechargée)"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "[...document.querySelectorAll('.thumb.selected span')].map(s => s.textContent).join() === '2,3'",
+    "label": "les pages déplacées restent sélectionnées (en 2 et 3)"
+  },
+  {
+    "shot": "02-deplacement.png"
+  },
+  {
+    "eval": "(() => { document.querySelectorAll('.thumb')[1].click(); return true; })()",
+    "label": "clic simple sur la page 2"
+  },
+  {
+    "click": "button[title='Supprimer']"
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 2 && document.body.innerText.includes('/ 2')",
+    "label": "suppression : 2 pages"
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 3",
+    "label": "Ctrl+Z : 3 pages"
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Déplacer\"]') !== null && document.querySelector('button[title^=\"Rétablir : Supprimer 1 page\"]') !== null",
+    "label": "libellés : annuler « Déplacer », rétablir « Supprimer 1 page »"
+  },
+  {
+    "key": "y",
+    "ctrl": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 2",
+    "label": "Ctrl+Y : 2 pages"
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 3",
+    "label": "Ctrl+Z : 3 pages à nouveau"
+  },
+  {
+    "shot": "03-annuler-retablir.png"
+  },
+  {
+    "click": "button[title='Insérer une page vide après']"
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 4",
+    "label": "page vide insérée : 4 pages"
+  },
+  {
+    "key": "z",
+    "ctrl": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 3",
+    "label": "insertion annulée"
+  },
+  {
+    "key": "s",
+    "ctrl": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "document.body.innerText.includes('Document enregistré')",
+    "label": "message « Document enregistré »"
+  },
+  {
+    "assert": "!document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')",
+    "label": "marque « modifié » disparue"
+  },
+  {
+    "shot": "04-enregistre.png"
+  },
+  {
+    "key": "m",
+    "ctrl": true
+  },
+  {
+    "wait": 500
+  },
+  {
+    "assert": "document.querySelector('#merge-title') !== null && document.querySelector('[role=dialog] button.primary').disabled",
+    "label": "dialogue Fusionner ouvert, bouton inactif sans fichiers"
+  },
+  {
+    "shot": "05-fusionner.png"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "key": "d",
+    "ctrl": true,
+    "shift": true
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('#split-title') !== null && document.querySelector('.preview').textContent.includes('3 fichiers seront produits')",
+    "label": "dialogue Scinder : aperçu « 3 fichiers »"
+  },
+  {
+    "eval": "(() => { const r = document.querySelector('input[value=ranges]'); r.click(); const i = document.querySelector('input[placeholder^=\"ex.\"]'); i.value = '1,2-3'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()",
+    "label": "mode plages « 1,2-3 »"
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "assert": "document.querySelector('.preview').textContent.includes('2 fichiers seront produits')",
+    "label": "aperçu « 2 fichiers »"
+  },
+  {
+    "eval": "(() => { const i = document.querySelector('input[placeholder^=\"ex.\"]'); i.value = '9'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()",
+    "label": "plage invalide « 9 »"
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "assert": "document.querySelector('.preview .error') !== null && document.querySelector('[type=submit]').disabled",
+    "label": "erreur affichée, bouton Scinder inactif"
+  },
+  {
+    "shot": "06-scinder.png"
+  },
+  {
+    "key": "Escape"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "click": "button[title='Pivoter à droite']"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')",
+    "label": "nouvelle modification"
+  },
+  {
+    "key": "w",
+    "ctrl": true
+  },
+  {
+    "wait": 400
+  },
+  {
+    "assert": "document.querySelector('[role=alertdialog]') !== null && document.body.innerText.includes('Modifications non enregistrées')",
+    "label": "confirmation de fermeture affichée"
+  },
+  {
+    "shot": "07-confirmation.png"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=alertdialog] button')].find(b => b.textContent.trim() === 'Annuler').click(); return true; })()",
+    "label": "clic « Annuler »"
+  },
+  {
+    "wait": 300
+  },
+  {
+    "assert": "document.querySelector('[role=alertdialog]') === null && document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').length === 1",
+    "label": "annuler garde l'onglet"
+  },
+  {
+    "key": "w",
+    "ctrl": true
+  },
+  {
+    "wait": 400
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=alertdialog] button')].find(b => b.textContent.trim() === 'Ne pas enregistrer').click(); return true; })()",
+    "label": "clic « Ne pas enregistrer »"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').length === 0 && document.body.innerText.includes('Aucun document ouvert')",
+    "label": "onglet fermé sans enregistrer"
+  },
+  {
+    "shot": "08-ferme.png"
+  }
 ]

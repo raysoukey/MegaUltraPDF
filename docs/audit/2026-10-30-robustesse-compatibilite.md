@@ -54,13 +54,13 @@ ailleurs), **M** moyenne (fonction fausse ou inutilisable sur une classe de fich
 
 | # | G | Risque | Preuve (0.12.2) | Correction | Statut |
 |---|---|---|---|---|---|
-| P1 | É | Réordonner les miniatures par glisser-déposer HTML5 : intercepté par le glisser-déposer natif de Tauri sous Windows | `Thumbnails.svelte:146/235`, aucun `dragDropEnabled` | Événements pointeur | PR C |
-| P2 | É | WebView2 téléchargé à l'installation (échec hors ligne) ; macOS Apple Silicon seulement ; pas de version minimale macOS | `tauri.conf.json`, `release.yml:68-75` | Amorce WebView2 embarquée, `.dmg` universel, `minimumSystemVersion` | PR C |
-| P3 | M | Pages floues sur écran à 150 % ou 200 % | `render.rs:77`, `devicePixelRatio` jamais lu | Rendu à l'échelle × DPR | PR C |
-| P4 | M | Enregistrement : message générique pour un fichier en lecture seule, verrouillé ou un dossier interdit ; permissions et liens physiques perdus | `edit.rs:851-881`, `error.rs:62` | Erreurs typées, permissions recopiées, liens physiques préservés (Unix) | PR C |
-| P5 | F | Échec du presse-papiers silencieux | `+page.svelte:198` | Repli et message | PR C |
-| P6 | F | Chemins non UTF-8, longs ou accentués non testés | `commands.rs:181/595` | `PathBuf` côté Rust, tests | PR C |
-| P7 | F | `.deb` sans dépendances explicites | `tauri.conf.json` | `depends`, `recommends: tesseract-ocr` | PR C |
+| P1 | É | Réordonner les miniatures par glisser-déposer HTML5 : intercepté par le glisser-déposer natif de Tauri sous Windows | `Thumbnails.svelte:146/235`, aucun `dragDropEnabled` | Événements pointeur | ✅ corrigé (PR C) |
+| P2 | É | WebView2 téléchargé à l'installation (échec hors ligne) ; macOS Apple Silicon seulement ; pas de version minimale macOS | `tauri.conf.json`, `release.yml:68-75` | Amorce WebView2 embarquée, `.dmg` universel, `minimumSystemVersion` | ✅ corrigé (PR C) : amorce WebView2 (le moteur se télécharge encore s'il manque) |
+| P3 | M | Pages floues sur écran à 150 % ou 200 % | `render.rs:77`, `devicePixelRatio` jamais lu | Rendu à l'échelle × DPR | ✅ corrigé (PR C) |
+| P4 | M | Enregistrement : message générique pour un fichier en lecture seule, verrouillé ou un dossier interdit ; permissions et liens physiques perdus | `edit.rs:851-881`, `error.rs:62` | Erreurs typées, permissions recopiées, liens physiques préservés (Unix) | ✅ corrigé (PR C) : + chemins de plus de 260 caractères |
+| P5 | F | Échec du presse-papiers silencieux | `+page.svelte:198` | Repli et message | ✅ corrigé (PR C) |
+| P6 | F | Chemins non UTF-8, longs ou accentués non testés | `commands.rs:181/595` | `PathBuf` côté Rust, tests | ✅ corrigé (PR C) : non-UTF-8 au démarrage ignoré (limite) |
+| P7 | F | `.deb` sans dépendances explicites | `tauri.conf.json` | `recommends: tesseract-ocr` (les dépendances système sont ajoutées par Tauri) | ✅ corrigé (PR C) |
 
 ## Mesures de la PR A
 
@@ -84,6 +84,16 @@ ailleurs), **M** moyenne (fonction fausse ou inutilisable sur une classe de fich
 - C7 réévalué : PDFium ne retire pas les glyphes sans Unicode, il prend leur code comme
   caractère (texte faux à la copie, sélection continue).
 
+## Mesures de la PR C
+
+- Miniatures : le glisser-déposer HTML5 ne reçoit rien sous Windows (Tauri intercepte le
+  glisser-déposer natif, `dragDropEnabled`). Les scénarios CDP qui fabriquaient des
+  `DragEvent` à la main cachaient le défaut ; réécrit en événements pointeur, scénario
+  `reordonner-miniatures`.
+- Enregistrement sous un chemin de plus de 260 caractères : échouait sous Windows (trouvé par
+  le nouveau test), corrigé par le dossier canonique `\\?\`.
+- Haute résolution vérifiée par émulation de densité (scénario `rendu-hidpi`).
+
 ## Limites assumées
 
 - Sous Windows, les ACL explicites et les flux de données alternatifs d'un fichier remplacé
@@ -92,3 +102,8 @@ ailleurs), **M** moyenne (fonction fausse ou inutilisable sur une classe de fich
 - Un plantage **natif** de PDFium ferme le processus : il n'y a pas d'isolation par processus.
 - Glyphes d'une police CID sans `/ToUnicode` : texte faux à la copie (ADR-0018).
 - Colonnes d'une page de droite à gauche lues de gauche à droite (ADR-0018).
+- Un nom de fichier qui n'est pas de l'UTF-8 valide (Linux), passé au démarrage par le
+  gestionnaire de fichiers, est ignoré : l'interface ne manipule que des chaînes. Le cœur et
+  le CLI l'ouvrent et l'enregistrent.
+- L'amorce WebView2 embarquée télécharge encore le moteur s'il manque (Windows 10 ancien
+  sans réseau) ; seul l'installeur hors ligne de WebView2 (environ 130 Mo de plus) l'éviterait.

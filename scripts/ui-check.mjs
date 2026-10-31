@@ -14,6 +14,7 @@
 //   { "type": "texte" }                    saisie de texte (Input.insertText)
 //   { "drag": "sélecteur", "from": [x, y], "to": [x, y] } glisser souris (coordonnées relatives à l'élément)
 //   { "drag": "sélecteur", "fromFrac": [fx, fy], "toFrac": [fx, fy] } idem, en fractions de sa taille
+//   { "deviceScale": 2 }                  émule une densité d'écran (devicePixelRatio), 0 = rétablir
 //   { "launch": ["a.pdf", …] }          lance une seconde instance de l'application (MEGA_APP_EXE)
 //   { "requestClose": true }             demande la fermeture de la fenêtre (comme la croix ou Alt+F4)
 //   { "expectClosed": 5000, "label": "…" } vérifie que la fenêtre disparaît dans le délai (dernière étape)
@@ -176,6 +177,18 @@ for (const step of scenario) {
     if (!closed) failures++;
     console.log(`${closed ? '✔' : '✘'} ${step.label ?? 'la fenêtre se ferme'} → ${closed}`);
     if (closed) break;
+  } else if (step.deviceScale !== undefined) {
+    // Écran haute résolution (Lot 13) : `devicePixelRatio` change dans la page, comme quand la
+    // fenêtre passe sur un écran à 200 %.
+    if (step.deviceScale === 0) await send('Emulation.clearDeviceMetricsOverride');
+    else
+      await send('Emulation.setDeviceMetricsOverride', {
+        width: 0,
+        height: 0,
+        deviceScaleFactor: step.deviceScale,
+        mobile: false,
+      });
+    console.log(`🖥 densité d'écran : ${step.deviceScale || '(rétablie)'}`);
   } else if (step.media !== undefined) {
     // Émule un média CSS (« print » pour vérifier la feuille d'impression, « » pour revenir).
     await send('Emulation.setEmulatedMedia', { media: step.media });

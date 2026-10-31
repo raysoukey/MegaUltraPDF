@@ -1,0 +1,30 @@
+[
+  {
+    "wait": 2500
+  },
+  {
+    "drag": ".panel .list",
+    "fromFrac": [
+      0.5,
+      0.15
+    ],
+    "toFrac": [
+      0.5,
+      0.97
+    ]
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "assert": "(() => { const b = document.querySelector('button[aria-label^=\"Annuler : \"]'); return (b && b.getAttribute('aria-label').includes('Déplacer')) || 'ERREUR ' + (b ? b.getAttribute('aria-label') : 'aucune édition'); })()",
+    "label": "glisser la première miniature vers le bas déplace la page (annulable)"
+  },
+  {
+    "assert": "(() => { const t = [...document.querySelectorAll('.thumb')].map((b) => b.getAttribute('aria-label')); return document.querySelector('.thumb.current')?.getAttribute('aria-label')?.startsWith('Page ') || 'ERREUR ' + t; })()",
+    "label": "une miniature reste la page courante"
+  },
+  {
+    "shot": "01-apres-glisser.png"
+  }
+]

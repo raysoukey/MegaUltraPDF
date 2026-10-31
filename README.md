@@ -29,14 +29,17 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | 10 | Police Unicode incorporée, caviardage partiel d'images, signature visible, documents chiffrés | ✅ |
 | 11 | Lecteur PDF par défaut : une seule instance (fichiers en onglets), état et bouton dans les préférences | ✅ |
 | 12 | Identité visuelle : icône d'application, icônes d'actions, logo, bannière | ✅ |
+| 13 | Robustesse et compatibilité : audit, fichiers abîmés ou piégés, fuzzing, journal local, sorties vérifiées par qpdf, chiffrements, hébreu/arabe/japonais vertical, PDF/A, écrans haute résolution, paquets | ✅ |
 
 ## Installation
 
 Les paquets sont produits par la CI (`.github/workflows/release.yml`) et joints aux releases
 GitHub : installeur NSIS ou MSI et version portable (zip) pour Windows, deb et AppImage pour
-Linux, dmg pour macOS (Apple Silicon). PDFium est inclus. L'installeur Windows est vérifié
-de bout en bout ; les paquets Linux et macOS sont construits par la CI mais pas encore
-essayés sur une machine réelle.
+Linux, dmg universel pour macOS (Intel et Apple Silicon, macOS 10.15 ou plus récent).
+PDFium est inclus. L'installeur Windows contient l'amorce de WebView2 (le moteur d'affichage,
+déjà présent sur Windows 10 à jour et Windows 11). L'installeur Windows est vérifié de bout en
+bout ; les paquets Linux et macOS sont construits et contrôlés par la CI (architectures,
+dépendances) mais pas encore essayés sur une machine réelle.
 
 Les paquets ne sont **pas signés** : Windows affiche un avertissement SmartScreen
 (« Informations complémentaires » puis « Exécuter quand même ») ; macOS demande d'ouvrir
@@ -79,6 +82,13 @@ pnpm --dir app release --bundles nsis  # seulement l'installeur NSIS
 `release` prépare PDFium (`cargo xtask stage-pdfium`) et l'embarque ; un `pnpm tauri build`
 direct produirait un paquet sans PDFium. Les licences tierces sont regénérées par
 `cargo xtask licenses` (`THIRD_PARTY_LICENSES.md`).
+
+## Journal de diagnostic
+
+En cas d'erreur, MegaUltraPDF écrit une ligne dans un journal **local** (`diagnostic.log`, au
+plus 2 Mo) : date, catégorie, message. Le texte de vos documents n'y figure jamais, et les
+passages entre guillemets et les chemins sont masqués. Rien n'est envoyé nulle part. Aide ▸
+À propos ▸ « Ouvrir le dossier du journal » : vous pouvez le joindre à un signalement.
 
 ## OCR et signature numérique
 

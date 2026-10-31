@@ -19,6 +19,6 @@ Légende : ✅ terminé · 🚧 en cours · ⬜ à venir. Démarrer un lot : `/l
 | 10 | Fonctionnalités restantes | Police Unicode incorporée (DejaVu Sans, Type0), caviardage partiel d'images et de tracés, signature numérique visible, nettoyage des documents chiffrés, OCR en un pas d'annulation, dialogues unifiés, mineurs du Lot 9 ; v0.10.0 | ✅ |
 | 11 | Lecteur par défaut | Une seule instance (fichiers ouverts en onglets), état et bouton « lecteur PDF par défaut » dans les préférences, déclarations des paquets (rôle Editor, Capabilities Windows) ; v0.11.0 | ✅ |
 | 12 | Identité visuelle | Icône d'application, 12 icônes d'actions sans légende (barre d'outils et menus), logo (accueil, À propos), bannière du README ; `cargo xtask brand` ; v0.12.0 | ✅ |
-| 13 | Robustesse et compatibilité | Audit (`docs/audit/`), corpus de PDF malformés, fuzzing, limites de ressources, isolement des pannes, journal local ; sorties vérifiées par qpdf, chiffrements et textes non latins ; miniatures, haute résolution, enregistrement, paquets WebView2 et macOS universel ; v0.13.0 | 🚧 |
+| 13 | Robustesse et compatibilité | Audit (`docs/audit/`), corpus de PDF malformés, fuzzing, limites de ressources, isolement des pannes, journal local ; sorties vérifiées par qpdf, chiffrements et textes non latins ; miniatures, haute résolution, enregistrement, paquets WebView2 et macOS universel ; v0.13.0 | ✅ |
 
 Référence complète : `docs/superpowers/specs/2026-10-26-megaultrapdf-design.md`, §5.

@@ -1,6 +1,6 @@
 {
   "name": "megaultrapdf-app",
-  "version": "0.12.2",
+  "version": "0.13.0",
   "description": "MegaUltraPDF : interface de bureau (Svelte 5 + Tauri 2)",
   "type": "module",
   "scripts": {

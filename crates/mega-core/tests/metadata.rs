@@ -220,3 +220,40 @@ fn mod_date_of_a_user_password_file_is_read() {
         "{date:?}"
     );
 }
+
+/// C6 (audit du Lot 13) : une déclaration PDF/A est lue, et conservée (identification XMP,
+/// `/OutputIntents`) après une modification et après une optimisation, pour que l'application
+/// puisse prévenir que la conformité n'est plus garantie.
+#[test]
+fn a_pdfa_claim_is_detected_and_kept() {
+    let mut doc = Document::from_bytes(mega_core::testing::pdfa_pdf(), None).unwrap();
+    assert_eq!(doc.properties().unwrap().pdfa.as_deref(), Some("PDF/A-2B"));
+    assert_eq!(
+        Document::from_bytes(mega_core::testing::sample_pdf(1, "x"), None)
+            .unwrap()
+            .properties()
+            .unwrap()
+            .pdfa,
+        None
+    );
+    doc.apply(&mega_core::edit::EditCommand::RotatePages {
+        pages: vec![0],
+        quarter_turns: 1,
+    })
+    .unwrap();
+    doc.optimize(&mega_core::OptimizeOptions::default())
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("archive.pdf");
+    doc.save_as(&out).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    let reopened = Document::from_bytes(bytes.clone(), None).unwrap();
+    assert_eq!(
+        reopened.properties().unwrap().pdfa.as_deref(),
+        Some("PDF/A-2B")
+    );
+    let lo = lopdf::Document::load_mem(&bytes).unwrap();
+    let catalog = lo.catalog().unwrap();
+    assert!(catalog.has(b"OutputIntents"), "profil de sortie perdu");
+    assert!(catalog.has(b"Metadata"), "métadonnées XMP perdues");
+}

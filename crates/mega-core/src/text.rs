@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Couche de texte d'une page (caractères positionnés) et recherche.
 
-use pdfium_render::prelude::{PdfSearchDirection, PdfSearchOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
@@ -65,7 +64,7 @@ impl Document {
     /// Tous les caractères de la page `index`, dans l'ordre de lecture, avec leurs numéros de
     /// ligne et de bloc.
     pub fn text_boxes(&self, index: u16) -> CoreResult<Vec<TextBox>> {
-        let drawn = self.drawn_chars(index)?;
+        let drawn = self.reading_chars(index)?;
         let mut boxes = Vec::with_capacity(drawn.len());
         let mut line_number: u32 = 0;
         for (block_number, block) in (0u32..).zip(page_blocks(&drawn)) {
@@ -87,7 +86,7 @@ impl Document {
     /// Tout le texte de la page `index`, dans l'ordre de lecture (export texte) : le même que
     /// celui de la sélection et de la copie.
     pub fn page_text(&self, index: u16) -> CoreResult<String> {
-        let drawn = self.drawn_chars(index)?;
+        let drawn = self.reading_chars(index)?;
         let chars: Vec<char> = drawn.iter().map(|d| d.ch).collect();
         let rects: Vec<Rect> = drawn.iter().map(|d| d.rect).collect();
         Ok(crate::reading_order::blocks_text(
@@ -95,6 +94,14 @@ impl Document {
             &chars,
             &rects,
         ))
+    }
+
+    /// Les caractères que lit la couche de texte : ceux de [`Document::drawn_chars`], où chaque
+    /// espace **ajoutée par PDFium** entre deux mots reçoit l'emprise du blanc qu'elle
+    /// représente (voir [`with_word_spaces`]). Le contrôle après caviardage, lui, garde
+    /// `drawn_chars` : une espace reconstituée n'est pas du texte du fichier.
+    pub(crate) fn reading_chars(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
+        Ok(with_word_spaces(self.drawn_chars(index)?))
     }
 
     /// Les caractères de la page dans l'ordre où le fichier les dessine, en espace affiché.
@@ -133,6 +140,12 @@ impl Document {
     }
 
     /// Cherche `query` dans la page `index`. Une requête vide ne trouve rien.
+    ///
+    /// La recherche parcourt le texte **dans l'ordre de lecture** ([`Document::text_boxes`]),
+    /// comme la sélection et la copie : un mot dessiné à part, une valeur dessinée après son
+    /// libellé ou une expression qui passe à la ligne sont trouvés (audit du Lot 13, C5 ; la
+    /// recherche de PDFium suivait l'ordre de dessin). Un changement de ligne compte comme une
+    /// espace, et plusieurs espaces comme une seule.
     pub fn search_page(
         &self,
         index: u16,
@@ -142,29 +155,143 @@ impl Document {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let _guard = engine::guard();
-        let page = self
-            .inner()
-            .pages()
-            .get(self.checked_index_unlocked(index)?)?;
-        let text = page.text()?;
-        let pdf_options = PdfSearchOptions::new()
-            .match_case(options.match_case)
-            .match_whole_word(options.whole_word);
-        let search = text.search(query, &pdf_options)?;
-        let frame = crate::geometry::frame_of(&page);
-        let hits = search
-            .iter(PdfSearchDirection::SearchForward)
-            .map(|segments| SearchHit {
-                page: index,
-                rects: segments
-                    .iter()
-                    .map(|s| frame.from_user_space(Rect::from_pdf(s.bounds())))
-                    .collect(),
-            })
-            .collect();
-        Ok(hits)
+        let boxes = self.text_boxes(index)?;
+        Ok(find_in_boxes(&boxes, query, options)
+            .into_iter()
+            .map(|rects| SearchHit { page: index, rects })
+            .collect())
     }
+}
+
+/// Donne une emprise aux espaces **sans emprise** que PDFium ajoute entre deux mots
+/// (relecture de la PR B du Lot 13).
+///
+/// Beaucoup de fichiers (pdfTeX, donc LaTeX) séparent les mots par un simple décalage
+/// (crénage `TJ`), sans caractère espace. PDFium ajoute alors une espace de largeur nulle,
+/// que l'ordre de lecture écartait : « Helloworld » à la copie, à l'export et à la recherche.
+/// Chaque espace sans emprise entre deux caractères horizontaux de la même ligne, séparés par
+/// un blanc de mot (au plus une hauteur de caractère), reçoit le rectangle de ce blanc.
+fn with_word_spaces(mut chars: Vec<DrawnChar>) -> Vec<DrawnChar> {
+    for i in 1..chars.len().saturating_sub(1) {
+        let empty = chars[i].rect.w <= 0.0 || chars[i].rect.h <= 0.0;
+        if !(empty && chars[i].ch.is_whitespace()) {
+            continue;
+        }
+        let (prev, next) = (&chars[i - 1], &chars[i + 1]);
+        let same_line = prev.horizontal
+            && next.horizontal
+            && (prev.rect.y - next.rect.y).abs() < 0.5 * prev.rect.h.max(next.rect.h);
+        let left = prev.rect.x + prev.rect.w;
+        // Un blanc de mot, pas une gouttière de colonnes ni une tabulation : au plus une
+        // hauteur de caractère (un espacement de mots courant vaut environ un tiers).
+        let gap = next.rect.x - left;
+        if !same_line || gap <= 0.0 || gap > prev.rect.h || prev.rect.h <= 0.0 {
+            continue;
+        }
+        chars[i].rect = Rect {
+            x: left,
+            y: prev.rect.y,
+            w: next.rect.x - left,
+            h: prev.rect.h,
+        };
+        chars[i].horizontal = true;
+    }
+    chars
+}
+
+/// Un caractère du texte cherché, et la boîte d'où il vient (`None` : espace ajoutée entre
+/// deux lignes ou deux mots sans caractère d'espace).
+type Searchable = (char, Option<usize>);
+
+/// `c` comparable : minuscule si la casse est ignorée, toute espace devient `' '`.
+fn fold(c: char, match_case: bool) -> char {
+    if c.is_whitespace() {
+        ' '
+    } else if match_case {
+        c
+    } else {
+        c.to_lowercase().next().unwrap_or(c)
+    }
+}
+
+/// Le texte des boîtes tel que la recherche le voit : un changement de ligne, ou un grand
+/// blanc sans caractère d'espace (un libellé et sa valeur), donne une espace ; plusieurs
+/// espaces de suite n'en font qu'une (mêmes règles que `reading_order::blocks_text`).
+fn searchable(boxes: &[TextBox], match_case: bool) -> Vec<Searchable> {
+    let mut out: Vec<Searchable> = Vec::with_capacity(boxes.len());
+    for (i, b) in boxes.iter().enumerate() {
+        if let Some(p) = i.checked_sub(1).map(|p| &boxes[p]) {
+            let (a, r) = (&p.rect, &b.rect);
+            let gap = (r.x - (a.x + a.w)).max(a.x - (r.x + r.w));
+            let separated = p.line != b.line || gap > 0.5 * a.h.max(r.h);
+            if separated && out.last().is_some_and(|(c, _)| *c != ' ') {
+                out.push((' ', None));
+            }
+        }
+        let c = fold(b.ch, match_case);
+        if c == ' ' && out.last().is_some_and(|(last, _)| *last == ' ') {
+            continue;
+        }
+        out.push((c, Some(i)));
+    }
+    out
+}
+
+/// Les occurrences de `query` dans les boîtes, chacune en rectangles (un par ligne touchée).
+/// Fonction pure, sans PDFium.
+fn find_in_boxes(boxes: &[TextBox], query: &str, options: &SearchOptions) -> Vec<Vec<Rect>> {
+    let mut needle: Vec<char> = Vec::new();
+    for c in query.trim().chars().map(|c| fold(c, options.match_case)) {
+        if !(c == ' ' && needle.last() == Some(&' ')) {
+            needle.push(c);
+        }
+    }
+    let hay = searchable(boxes, options.match_case);
+    let is_word = |k: usize| hay.get(k).is_some_and(|(c, _)| c.is_alphanumeric());
+    let mut hits = Vec::new();
+    let mut start = 0;
+    while !needle.is_empty() && start + needle.len() <= hay.len() {
+        let end = start + needle.len();
+        let matches = hay[start..end]
+            .iter()
+            .zip(&needle)
+            .all(|((c, _), n)| c == n);
+        let whole = !options.whole_word || (!(start > 0 && is_word(start - 1)) && !is_word(end));
+        if matches && whole {
+            hits.push(line_rects(
+                boxes,
+                hay[start..end].iter().filter_map(|(_, i)| *i),
+            ));
+            start = end;
+        } else {
+            start += 1;
+        }
+    }
+    hits
+}
+
+/// Rectangles qui couvrent les boîtes `indices` : un par ligne (union des boîtes).
+fn line_rects(boxes: &[TextBox], indices: impl Iterator<Item = usize>) -> Vec<Rect> {
+    let mut rects: Vec<Rect> = Vec::new();
+    let mut current_line = None;
+    for i in indices {
+        let r = boxes[i].rect;
+        match rects.last_mut() {
+            Some(last) if current_line == Some(boxes[i].line) => {
+                let right = (last.x + last.w).max(r.x + r.w);
+                let top = (last.y + last.h).max(r.y + r.h);
+                last.x = last.x.min(r.x);
+                last.y = last.y.min(r.y);
+                last.w = right - last.x;
+                last.h = top - last.y;
+            }
+            _ => {
+                rects.push(r);
+                current_line = Some(boxes[i].line);
+            }
+        }
+    }
+    rects
 }
 
 /// Les blocs de lecture de la page : le texte horizontal ordonné par `reading_order::layout`,
@@ -178,11 +305,19 @@ fn page_blocks(drawn: &[DrawnChar]) -> Vec<crate::reading_order::Block> {
         w: 0.0,
         h: 0.0,
     };
-    let horizontal: Vec<Rect> = drawn
+    let chars: Vec<char> = drawn.iter().map(|d| d.ch).collect();
+    let mut horizontal: Vec<Rect> = drawn
         .iter()
         .map(|d| if d.horizontal { d.rect } else { hidden })
         .collect();
-    let mut blocks = crate::reading_order::layout(&horizontal);
+    // Colonnes d'écriture verticale (CJK) : retirées du découpage en lignes horizontales, lues
+    // à part dans leur ordre de dessin (audit du Lot 13, C4).
+    let vertical = crate::reading_order::vertical_runs(&horizontal, &chars);
+    for &i in vertical.iter().flatten() {
+        horizontal[i] = hidden;
+    }
+    let mut blocks = crate::reading_order::layout_chars(&horizontal, &chars);
+    blocks.extend(vertical.into_iter().map(|run| vec![run]));
     let mut run: Vec<usize> = Vec::new();
     let mut run_angle = 0.0;
     for (i, d) in drawn.iter().enumerate() {
@@ -202,4 +337,49 @@ fn page_blocks(drawn: &[DrawnChar]) -> Vec<crate::reading_order::Block> {
         blocks.push(vec![run]);
     }
     blocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drawn(ch: char, x: f32, y: f32) -> DrawnChar {
+        DrawnChar {
+            ch,
+            rect: Rect {
+                x,
+                y,
+                w: 12.0,
+                h: 12.0,
+            },
+            horizontal: true,
+            angle: 0.0,
+        }
+    }
+
+    /// C4 (audit du Lot 13) : une colonne verticale japonaise reste **un** bloc d'une ligne, lu
+    /// de haut en bas, au lieu d'une ligne par caractère ; le texte horizontal ne change pas.
+    #[test]
+    fn a_vertical_cjk_column_is_one_block_read_top_down() {
+        let mut page: Vec<DrawnChar> = "縦書きです"
+            .chars()
+            .enumerate()
+            .map(|(k, c)| drawn(c, 500.0, 700.0 - 13.0 * k as f32))
+            .collect();
+        page.extend(
+            "Titre"
+                .chars()
+                .enumerate()
+                .map(|(k, c)| drawn(c, 100.0 + 7.0 * k as f32, 760.0)),
+        );
+        let blocks = page_blocks(&page);
+        let lines: Vec<String> = blocks
+            .iter()
+            .flatten()
+            .map(|line| line.iter().map(|&i| page[i].ch).collect())
+            .collect();
+        assert!(lines.contains(&"縦書きです".to_string()), "{lines:?}");
+        assert!(lines.contains(&"Titre".to_string()), "{lines:?}");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+    }
 }

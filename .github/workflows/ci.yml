@@ -27,6 +27,24 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential libssl-dev libxdo-dev
           # Tesseract (avec l'anglais) : le test OCR réel de mega-core s'exécute ici (Lot 8).
           sudo apt-get install -y tesseract-ocr
+          # qpdf : contrôle de conformité de nos fichiers (Lot 13, tests/conformance.rs).
+          sudo apt-get install -y qpdf
+
+      - name: qpdf (macOS)
+        if: runner.os == 'macOS'
+        run: brew install qpdf
+
+      - name: qpdf (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install qpdf --no-progress -y
+          # Chemin de qpdf.exe : dans Program Files (installeur), sinon par la commande (shim).
+          $exe = Get-ChildItem 'C:\Program Files' -Filter qpdf.exe -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { $exe = (Get-Command qpdf -ErrorAction SilentlyContinue).Source }
+          if (-not $exe) { throw 'qpdf introuvable après installation' }
+          "MEGA_QPDF=$exe" >> $env:GITHUB_ENV
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -51,6 +69,9 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Rust — tests
         run: cargo test --workspace
+        env:
+          # Sans qpdf, les tests de conformité échouent au lieu d'être sautés (Lot 13).
+          MEGA_REQUIRE_QPDF: "1"
       - name: Rust — cœur sans les options (features désactivées)
         run: cargo check -p mega-core --no-default-features
       - name: Rust — rustdoc

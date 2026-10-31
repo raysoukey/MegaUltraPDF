@@ -96,6 +96,12 @@ impl Document {
         let file_bytes = bytes.clone();
         let guard = engine::guard();
         let inner = match engine::load_bytes(&guard, bytes, password) {
+            // Chiffrement par certificat : aucun mot de passe ne l'ouvrira (C9, Lot 13).
+            Err(_) if uses_certificate_encryption(&file_bytes) => {
+                return Err(CoreError::UnsupportedEncryption(
+                    "par certificat (clé d'un destinataire)".to_string(),
+                ));
+            }
             // PDFium ne distingue pas « pas de mot de passe » de « mauvais mot de passe ».
             Err(CoreError::PasswordRequired) if password.is_some() => {
                 return Err(CoreError::WrongPassword);
@@ -264,4 +270,14 @@ impl Document {
             .as_ref()
             .expect("le document PDFium n'est libéré que dans Drop")
     }
+}
+
+/// Vrai si le fichier déclare un chiffrement par certificat (`/Filter /Adobe.PubSec`,
+/// § 7.6.5) **et aucun** chiffrement standard par mot de passe. Un simple balayage des octets
+/// suffit : on ne l'appelle que si PDFium a déjà refusé le fichier, pour choisir le message.
+/// Un fichier à mot de passe qui mentionne `/Adobe.PubSec` (ancienne révision, commentaire)
+/// reste un fichier à mot de passe (relecture de la PR B du Lot 13).
+fn uses_certificate_encryption(bytes: &[u8]) -> bool {
+    let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    contains(b"/Adobe.PubSec") && !contains(b"/Standard")
 }

@@ -64,6 +64,7 @@ impl From<CoreError> for AppError {
             CoreError::NotFound { .. } => ErrorKind::NotFound,
             CoreError::InvalidPageSpec(_)
             | CoreError::InvalidOperation(_)
+            | CoreError::UnsupportedEncryption(_)
             | CoreError::Timeout { .. } => ErrorKind::InvalidOperation,
             CoreError::Cancelled => ErrorKind::Internal,
             CoreError::LibraryNotFound { .. }

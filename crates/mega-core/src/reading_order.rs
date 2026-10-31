@@ -12,7 +12,8 @@
 use crate::geometry::Rect;
 
 /// Un bloc de texte lu d'un seul tenant : ses lignes, du haut vers le bas, chacune donnée par
-/// les index de ses caractères, de gauche à droite.
+/// les index de ses caractères dans l'ordre de lecture (de gauche à droite, ou de droite à
+/// gauche pour une ligne hébraïque ou arabe passée par [`layout_chars`]).
 pub type Block = Vec<Vec<usize>>;
 
 /// Deux caractères sont sur la même ligne si leurs étendues verticales se recouvrent d'au
@@ -64,6 +65,188 @@ pub fn layout(rects: &[Rect]) -> Vec<Block> {
     let lines = group_lines(rects, visible, h);
     let segments = split_segments(rects, &lines, h);
     xy_cut(&segments, h)
+}
+
+/// Comme [`layout`], avec les caractères : chaque ligne écrite de droite à gauche est remise
+/// dans l'ordre logique (voir [`logical_order`]). La géométrie (lignes, segments, colonnes)
+/// reste calculée de gauche à droite.
+pub fn layout_chars(rects: &[Rect], chars: &[char]) -> Vec<Block> {
+    let mut blocks = layout(rects);
+    for line in blocks.iter_mut().flat_map(|block| block.iter_mut()) {
+        logical_order(line, rects, chars);
+    }
+    blocks
+}
+
+/// Vrai pour un idéogramme ou un caractère des écritures chinoise, japonaise ou coréenne
+/// (dont la ponctuation et les formes pleine chasse), les seules qui s'écrivent aussi en
+/// colonnes verticales.
+fn is_cjk(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x3000..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FFFF
+    )
+}
+
+/// Les colonnes d'**écriture verticale** de la page (audit du Lot 13, C4) : suites d'au moins
+/// trois caractères CJK dessinés d'affilée, sans voisin collé sur leur ligne, chacun **sous** le précédent et à peu près à la
+/// même abscisse. Découpées en lignes horizontales, elles donneraient une ligne d'un caractère
+/// par rangée ; on les lit à part, dans leur ordre de dessin (de haut en bas, colonne par
+/// colonne), comme le texte tourné. Des lettres latines empilées (une colonne de chiffres d'un
+/// tableau) ne sont pas concernées.
+pub fn vertical_runs(rects: &[Rect], chars: &[char]) -> Vec<Vec<usize>> {
+    let below = |a: &Rect, b: &Rect| {
+        let size = a.w.max(b.w).max(a.h).max(b.h);
+        let same_column = ((a.x + a.w / 2.0) - (b.x + b.w / 2.0)).abs() < 0.5 * size;
+        let gap = a.y - (b.y + b.h);
+        same_column && gap > -0.3 * size && gap < 0.5 * size
+    };
+    let mut runs = Vec::new();
+    let mut run: Vec<usize> = Vec::new();
+    for i in 0..rects.len().min(chars.len()) {
+        let fits = is_cjk(chars[i])
+            && usable(&rects[i])
+            && run.last().is_some_and(|&p| below(&rects[p], &rects[i]));
+        if fits {
+            run.push(i);
+            continue;
+        }
+        if run.len() >= MIN_VERTICAL_RUN {
+            runs.push(std::mem::take(&mut run));
+        }
+        run.clear();
+        if is_cjk(chars[i]) && usable(&rects[i]) {
+            run.push(i);
+        }
+    }
+    if run.len() >= MIN_VERTICAL_RUN {
+        runs.push(run);
+    }
+    // Un caractère qui a un voisin collé à sa gauche ou à sa droite, sur sa ligne, appartient
+    // à une ligne horizontale : un titre d'un caractère suivi d'une ligne à la même marge
+    // ressemblerait sinon à une colonne (relecture de la PR B du Lot 13).
+    let side_neighbour = |i: usize| {
+        let r = &rects[i];
+        (0..rects.len().min(chars.len())).any(|j| {
+            let o = &rects[j];
+            let overlap = (r.y + r.h).min(o.y + o.h) - r.y.max(o.y);
+            let gap = (o.x - (r.x + r.w)).max(r.x - (o.x + o.w));
+            j != i && usable(o) && overlap > 0.5 * r.h.min(o.h) && gap < 0.3 * r.w.max(o.w)
+        })
+    };
+    runs.retain(|run| !run.iter().any(|&i| side_neighbour(i)));
+    runs
+}
+
+/// Nombre minimal de caractères empilés pour parler de colonne verticale : deux caractères
+/// l'un sous l'autre arrivent par hasard (fin d'une ligne, début de la suivante).
+const MIN_VERTICAL_RUN: usize = 3;
+
+/// Sens d'un caractère pour la lecture (version simplifiée de l'algorithme bidirectionnel
+/// d'Unicode, UAX #9).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    /// Lettre d'une écriture de droite à gauche : hébreu, arabe, syriaque, thâna, N'Ko et
+    /// leurs formes de présentation.
+    Rtl,
+    /// Lettre d'une autre écriture, lue de gauche à droite.
+    Ltr,
+    /// Chiffre (arabe, ou arabo-indien comme « ٢٠٢٤ ») : un nombre se lit toujours de gauche
+    /// à droite, même dans une ligne arabe.
+    Digit,
+    /// Espace, ponctuation, symbole : prend le sens de ce qui l'entoure.
+    Neutral,
+}
+
+fn direction(c: char) -> Direction {
+    match u32::from(c) {
+        0x0660..=0x0669 | 0x06F0..=0x06F9 => Direction::Digit,
+        0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF => Direction::Rtl,
+        _ if c.is_numeric() => Direction::Digit,
+        _ if c.is_alphabetic() => Direction::Ltr,
+        _ => Direction::Neutral,
+    }
+}
+
+/// Remet dans l'ordre **logique** une ligne dont les lettres sont surtout hébraïques ou
+/// arabes (audit du Lot 13, C3, et relecture de la PR B).
+///
+/// Un PDF dessine les glyphes là où ils s'affichent : l'hébreu « שלום » est posé ם ו ל ש de
+/// gauche à droite. Pour une ligne dont les **lettres** sont surtout de droite à gauche (les
+/// chiffres ne votent pas), on lit donc les caractères de droite à gauche, puis on remet de
+/// gauche à droite :
+/// - chaque suite de mots latins (« PDF Mega »), espaces intérieures comprises ;
+/// - chaque nombre (« 2024 », « ٢٠٢٤ », « 3.14 »), séparateur entre deux chiffres compris.
+///   Deux nombres séparés par une espace restent deux suites : « 10 20 » garde son ordre.
+///
+/// Une ligne latine qui contient un mot hébreu n'est pas touchée.
+///
+/// \[Apprentissage\] **Retourner une sous-tranche en place** : `line[k..=end]` désigne une
+/// portion du vecteur sans la copier, et `.reverse()` en inverse l'ordre directement dans
+/// `line`. Le `&mut [usize]` reçu en paramètre permet de modifier la ligne de l'appelant.
+pub fn logical_order(line: &mut [usize], rects: &[Rect], chars: &[char]) {
+    let count = |d: Direction| line.iter().filter(|&&i| direction(chars[i]) == d).count();
+    if count(Direction::Rtl) <= count(Direction::Ltr) {
+        return;
+    }
+    // De droite à gauche, par le centre de chaque caractère.
+    line.sort_by(|&a, &b| {
+        let center = |i: usize| rects[i].x + rects[i].w / 2.0;
+        center(b).total_cmp(&center(a))
+    });
+    // Les caractères dans cet ordre, copiés : `line` sera modifiée pendant le parcours (un
+    // retournement ne touche que la suite déjà parcourue).
+    let ordered: Vec<char> = line.iter().map(|&i| chars[i]).collect();
+    let mut k = 0;
+    while k < line.len() {
+        let end = match direction(ordered[k]) {
+            Direction::Ltr => latin_run_end(&ordered, k),
+            Direction::Digit => number_end(&ordered, k),
+            _ => {
+                k += 1;
+                continue;
+            }
+        };
+        line[k..=end].reverse();
+        k = end + 1;
+    }
+}
+
+/// Fin d'une suite latine qui commence en `k` : jusqu'à la dernière lettre latine avant une
+/// lettre de droite à gauche ou un chiffre, les neutres intérieurs compris.
+fn latin_run_end(ordered: &[char], k: usize) -> usize {
+    let dir = |j: usize| direction(ordered[j]);
+    let mut end = k;
+    let mut j = k + 1;
+    while j < ordered.len() && matches!(dir(j), Direction::Ltr | Direction::Neutral) {
+        if dir(j) == Direction::Ltr {
+            end = j;
+        }
+        j += 1;
+    }
+    end
+}
+
+/// Fin d'un nombre qui commence en `k` : ses chiffres, et un séparateur (`.`, `,`, `:`, `/`)
+/// seulement s'il est pris entre deux chiffres (« 3.14 », « 1,000 », « 12:30 »).
+fn number_end(ordered: &[char], k: usize) -> usize {
+    let dir = |j: usize| direction(ordered[j]);
+    let mut end = k;
+    let mut j = k + 1;
+    while j < ordered.len() {
+        if dir(j) == Direction::Digit {
+            end = j;
+            j += 1;
+        } else if matches!(ordered[j], '.' | ',' | ':' | '/' | '٫' | '٬')
+            && j + 1 < ordered.len()
+            && dir(j + 1) == Direction::Digit
+        {
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    end
 }
 
 /// Vrai si le rectangle peut servir au calcul : coordonnées finies, largeur et hauteur > 0.
@@ -364,7 +547,10 @@ pub fn blocks_text(blocks: &[Block], chars: &[char], rects: &[Rect]) -> String {
             let mut previous: Option<usize> = None;
             for &c in line {
                 if let Some(p) = previous {
-                    let gap = rects[c].x - (rects[p].x + rects[p].w);
+                    // Écart dans un sens ou dans l'autre : une ligne lue de droite à gauche
+                    // va vers les x décroissants.
+                    let (a, b) = (&rects[p], &rects[c]);
+                    let gap = (b.x - (a.x + a.w)).max(a.x - (b.x + b.w));
                     let spaced = chars[p].is_whitespace() || chars[c].is_whitespace();
                     if !spaced && gap > 0.5 * rects[p].h.max(rects[c].h) {
                         text.push(' ');
@@ -385,6 +571,98 @@ mod tests {
     /// Largeur et hauteur des caractères des tests (Helvetica 10 pt : environ 6 × 12).
     const W: f32 = 6.0;
     const H: f32 = 12.0;
+
+    /// Le texte d'une ligne posée **visuellement** (glyphes de gauche à droite, comme un PDF
+    /// les dessine), lu par `layout_chars` puis `blocks_text`.
+    fn read_visual(visual: &str) -> String {
+        let chars: Vec<char> = visual.chars().collect();
+        let rects: Vec<Rect> = (0..chars.len())
+            .map(|i| Rect {
+                x: 100.0 + i as f32 * W,
+                y: 700.0,
+                w: W,
+                h: H,
+            })
+            .collect();
+        blocks_text(&layout_chars(&rects, &chars), &chars, &rects)
+    }
+
+    /// C3 (audit du Lot 13) : une ligne en hébreu ou en arabe se lit de droite à gauche ; les
+    /// nombres et les mots latins qu'elle contient restent de gauche à droite.
+    #[test]
+    fn right_to_left_lines_are_read_in_logical_order() {
+        // « שלום » (« bonjour ») dessiné tel qu'il s'affiche : ם ו ל ש de gauche à droite.
+        assert_eq!(read_visual("םולש"), "שלום");
+        // « שלום 123 » : le nombre, à gauche à l'écran, vient après et se lit de gauche à droite.
+        assert_eq!(read_visual("123 םולש"), "שלום 123");
+        // Arabe avec un mot latin de deux syllabes au milieu : « مرحبا PDF Mega عالم ».
+        assert_eq!(read_visual("ملاع PDF Mega ابحرم"), "مرحبا PDF Mega عالم");
+        // Une ligne latine ne change pas, même avec un mot hébreu court.
+        assert_eq!(read_visual("Shalom םולש world"), "Shalom םולש world");
+    }
+
+    /// Relecture de la PR B : les nombres d'une ligne de droite à gauche (chiffres arabes ou
+    /// arabo-indiens) se lisent de gauche à droite, chacun pour soi, séparateurs compris ; la
+    /// majorité ne compte que les lettres.
+    #[test]
+    fn numbers_in_right_to_left_lines_keep_their_order() {
+        // « سنة ٢٠٢٤ » (année 2024 en chiffres arabo-indiens).
+        assert_eq!(read_visual("٢٠٢٤ ةنس"), "سنة ٢٠٢٤");
+        // Deux nombres : « שלום לכל העולם 10 20 ».
+        assert_eq!(read_visual("20 10 םלועה לכל םולש"), "שלום לכל העולם 10 20");
+        // Plus de chiffres que de lettres : la ligne reste hébraïque.
+        assert_eq!(read_visual("20 10 םולש"), "שלום 10 20");
+        // Un nombre décimal reste entier.
+        assert_eq!(read_visual("3.14 םולש"), "שלום 3.14");
+    }
+
+    /// C4 (audit du Lot 13) : une colonne d'écriture verticale (caractères CJK empilés, dessinés
+    /// de haut en bas) forme une suite ; une ligne CJK horizontale n'en forme pas.
+    #[test]
+    fn stacked_cjk_characters_form_a_vertical_run() {
+        let square = |x: f32, y: f32| Rect {
+            x,
+            y,
+            w: 12.0,
+            h: 12.0,
+        };
+        let chars: Vec<char> = "縦書きです横書きです".chars().collect();
+        let mut rects: Vec<Rect> = (0..5)
+            .map(|k| square(500.0, 700.0 - 13.0 * k as f32))
+            .collect();
+        rects.extend((0..5).map(|k| square(100.0 + 12.0 * k as f32, 500.0)));
+        assert_eq!(vertical_runs(&rects, &chars), vec![vec![0, 1, 2, 3, 4]]);
+        // Des lettres latines empilées (une colonne de chiffres d'un tableau) ne comptent pas.
+        let digits: Vec<char> = "12345".chars().collect();
+        assert!(vertical_runs(&rects[..5], &digits).is_empty());
+    }
+
+    /// Relecture de la PR B : un titre japonais d'un seul caractère (« 序 »), suivi d'une ligne
+    /// horizontale qui commence à la même marge, n'est pas une colonne verticale ; le premier
+    /// caractère de la ligne reste dans sa ligne.
+    #[test]
+    fn a_one_character_heading_is_not_a_vertical_column() {
+        // Interligne de 1,5 fois la taille, boîtes de 1,15 fois : écart vertical de 0,35.
+        let square = |x: f32, y: f32| Rect {
+            x,
+            y,
+            w: 12.0,
+            h: 13.8,
+        };
+        let chars: Vec<char> = "序本文はここから始まります".chars().collect();
+        let mut rects = vec![square(100.0, 700.0)];
+        rects.extend((0..chars.len() - 1).map(|k| square(100.0 + 12.0 * k as f32, 682.0)));
+        assert!(vertical_runs(&rects, &chars).is_empty());
+        let lines: Vec<String> = layout_chars(&rects, &chars)
+            .iter()
+            .flatten()
+            .map(|line| line.iter().map(|&i| chars[i]).collect())
+            .collect();
+        assert_eq!(
+            lines,
+            vec!["序".to_string(), "本文はここから始まります".to_string()]
+        );
+    }
 
     /// Propriété (audit du Lot 13, R9) : pour des rectangles **quelconques** (positions et
     /// tailles aléatoires, valeurs nulles, négatives, infinies ou NaN mêlées), l'ordre de

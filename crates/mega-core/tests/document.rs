@@ -384,3 +384,82 @@ fn sample_pdf_is_deterministic() {
     let b = mega_core::testing::sample_pdf(2, "stable");
     assert!(a == b, "deux générations diffèrent");
 }
+
+/// C5 (audit du Lot 13) : la recherche suit l'**ordre de lecture**, comme la sélection : un mot
+/// dessiné à part, une valeur dessinée après son libellé, une expression qui passe à la ligne
+/// suivante sont trouvés ; chaque occurrence surligne un rectangle par ligne.
+#[test]
+fn search_follows_reading_order() {
+    let doc = Document::from_bytes(mega_core::testing::out_of_order_pdf(), None).unwrap();
+    let find = |q: &str, match_case: bool| {
+        doc.search_page(
+            0,
+            q,
+            &mega_core::SearchOptions {
+                match_case,
+                whole_word: false,
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        find("mot GRAS au", true).len(),
+        1,
+        "fragment dessiné à part"
+    );
+    assert_eq!(
+        find("Utilisateur : ALICE", true).len(),
+        1,
+        "valeur dessinée après"
+    );
+    let across = find("paragraphe Troisieme", true);
+    assert_eq!(across.len(), 1, "expression sur deux lignes");
+    assert_eq!(across[0].rects.len(), 2, "un rectangle par ligne");
+    assert_eq!(find("alice", false).len(), 1, "sans casse");
+    assert!(find("alice", true).is_empty(), "avec casse");
+    assert_eq!(find("ligne", false).len(), 13);
+}
+
+/// C7 (audit du Lot 13) : des glyphes sans équivalent Unicode (police CID sans `/ToUnicode`)
+/// **gardent leur place** dans la couche de texte : la sélection ne saute pas par-dessus.
+/// L'audit craignait qu'ils soient écartés ; en fait PDFium prend leur code comme caractère
+/// (ici « ģіމ »). Les remplacer par `U+FFFD` demanderait `FPDFText_HasUnicodeMapError`, que
+/// pdfium-render 0.9.4 n'expose pas (limite documentée dans l'ADR-0018).
+#[test]
+fn glyphs_without_unicode_keep_their_place() {
+    let doc =
+        Document::from_bytes(mega_core::testing::hostile::cid_without_unicode_pdf(), None).unwrap();
+    let boxes = doc.text_boxes(0).unwrap();
+    let text: String = boxes.iter().map(|b| b.ch).collect();
+    assert!(text.starts_with("Visible"), "{text:?}");
+    assert_eq!(boxes.len(), "Visible".len() + 3, "{text:?}");
+    assert!(
+        boxes[7..].iter().all(|b| b.line != boxes[0].line),
+        "{text:?}"
+    );
+}
+
+/// Relecture de la PR B (critique) : des mots séparés par du crénage, sans caractère espace
+/// (LaTeX), gardent leurs espaces dans la copie, l'export et la recherche.
+#[test]
+fn kerned_words_keep_their_spaces() {
+    let doc = Document::from_bytes(mega_core::testing::kerned_pdf(), None).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().trim(), "Hello world foo bar");
+    let boxes: String = doc.text_boxes(0).unwrap().iter().map(|b| b.ch).collect();
+    assert_eq!(boxes.trim(), "Hello world foo bar");
+    let find = |q: &str, whole_word: bool| {
+        doc.search_page(
+            0,
+            q,
+            &mega_core::SearchOptions {
+                match_case: false,
+                whole_word,
+            },
+        )
+        .unwrap()
+        .len()
+    };
+    assert_eq!(find("hello world", false), 1);
+    assert_eq!(find("hello", true), 1);
+    assert_eq!(find("world foo", true), 1);
+}

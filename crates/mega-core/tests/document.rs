@@ -506,3 +506,28 @@ fn astral_characters_in_the_corpus() {
         assert!(text.contains(expected), "{file}");
     }
 }
+
+/// Audit L3 : deux mots arabes séparés par un simple déplacement (aucun glyphe espace) sont
+/// séparés par une espace dans la copie, l'export et la recherche.
+#[test]
+fn arabic_words_are_separated_by_spaces() {
+    let doc = Document::from_bytes(mega_core::testing::rtl_gaps_pdf(), None).unwrap();
+    let text = doc.page_text(0).unwrap();
+    assert_eq!(text.trim(), "جميل كتاب", "{text:?}");
+    let hits = doc.search_page(0, "كتاب", &Default::default()).unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+/// Même contrôle sur un vrai fichier arabe, si `MEGA_CORPUS` désigne `fixtures/corpus`.
+#[test]
+fn arabic_corpus_file_has_word_spaces() {
+    let Ok(dir) = std::env::var("MEGA_CORPUS") else {
+        return;
+    };
+    let doc = Document::open(format!("{dir}/polices/ArabicCIDTrueType.pdf"), None).unwrap();
+    let text = doc.page_text(0).unwrap();
+    // Quatre lignes de trois mots : deux espaces par ligne.
+    assert!(text.matches(' ').count() >= 8, "{text:?}");
+    let hits = doc.search_page(0, "الخطوط", &Default::default()).unwrap();
+    assert!(hits.len() >= 4, "{} occurrences", hits.len());
+}

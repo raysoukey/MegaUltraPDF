@@ -101,7 +101,9 @@ impl Document {
     /// représente (voir [`with_word_spaces`]). Le contrôle après caviardage, lui, garde
     /// `drawn_chars` : une espace reconstituée n'est pas du texte du fichier.
     pub(crate) fn reading_chars(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
-        Ok(with_word_spaces(self.drawn_chars(index)?))
+        let mut drawn = with_word_spaces(self.drawn_chars(index)?);
+        add_rtl_word_spaces(&mut drawn);
+        Ok(drawn)
     }
 
     /// Les caractères de la page dans l'ordre où le fichier les dessine, en espace affiché.
@@ -282,6 +284,56 @@ fn with_word_spaces(mut chars: Vec<DrawnChar>) -> Vec<DrawnChar> {
         chars[i].horizontal = true;
     }
     chars
+}
+
+/// Ajoute une espace entre les mots d'une ligne de droite à gauche qui n'en a aucune (audit du
+/// Lot 14, L3) : PDFium ne déduit les espaces des blancs que pour l'écriture de gauche à
+/// droite, et poppler, MuPDF et pdf.js séparent les mots. `reading_order::word_gaps` décide où ;
+/// l'espace reçoit l'emprise du blanc et est **ajoutée en fin de liste** : l'ordre de lecture
+/// est recalculé par la géométrie, elle retrouve donc sa place entre les deux mots.
+///
+/// \[Apprentissage\] On collecte d'abord les ajouts (emprunt partagé de `drawn`), puis on les
+/// pousse : on ne peut pas modifier un `Vec` pendant qu'on le parcourt.
+fn add_rtl_word_spaces(drawn: &mut Vec<DrawnChar>) {
+    let chars: Vec<char> = drawn.iter().map(|d| d.ch).collect();
+    let rects: Vec<Rect> = drawn
+        .iter()
+        .map(|d| {
+            if d.horizontal {
+                d.rect
+            } else {
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                }
+            }
+        })
+        .collect();
+    let mut spaces = Vec::new();
+    for line in crate::reading_order::layout_chars(&rects, &chars)
+        .iter()
+        .flatten()
+    {
+        for i in crate::reading_order::word_gaps(line, &rects, &chars) {
+            let (a, b) = (&rects[line[i]], &rects[line[i + 1]]);
+            let (left, right) = if a.x <= b.x { (a, b) } else { (b, a) };
+            let x = left.x + left.w;
+            spaces.push(DrawnChar {
+                ch: ' ',
+                rect: Rect {
+                    x,
+                    y: left.y.min(right.y),
+                    w: right.x - x,
+                    h: left.h.max(right.h),
+                },
+                horizontal: true,
+                angle: 0.0,
+            });
+        }
+    }
+    drawn.extend(spaces);
 }
 
 /// Un caractère du texte cherché, et la boîte d'où il vient (`None` : espace ajoutée entre

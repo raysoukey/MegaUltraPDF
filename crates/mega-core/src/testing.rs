@@ -1965,3 +1965,44 @@ pub fn rich_catalog_pdf(header: &str, catalog_version: Option<&str>) -> Vec<u8> 
     ));
     out.into_bytes()
 }
+
+/// Une ligne arabe de deux mots, **sans glyphe espace** : le second mot est séparé du premier
+/// par un simple déplacement `Td` d'environ un em (audit de compatibilité, L3). Police DejaVu
+/// Sans incorporée (Type0 / Identity-H). Les glyphes sont dessinés de gauche à droite, donc
+/// chaque mot est écrit à l'envers dans le flux ; lu dans l'ordre logique, le texte est
+/// « جميل كتاب » (« beau livre »).
+pub fn rtl_gaps_pdf() -> Vec<u8> {
+    use crate::fonts::unicode::{Type0Writer, UnicodeFont};
+    use lopdf::{Dictionary, Object, Stream};
+    let reversed = |w: &str| w.chars().rev().collect::<String>();
+    // À l'écran : « كتاب » à gauche, « جميل » à droite.
+    let (left, right) = (reversed("كتاب"), reversed("جميل"));
+    let size = 24.0;
+    let advance = UnicodeFont::embedded().text_width(&left, size) + size;
+    let mut writer = Type0Writer::new();
+    let (left_hex, right_hex) = (writer.encode(&left), writer.encode(&right));
+    let base = blank_pdf(595.0, 842.0);
+    let mut doc = lopdf::Document::load_mem(&base).expect("squelette lisible");
+    let font_id = writer.write(&mut doc).expect("police Unicode");
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        format!("BT /U1 {size} Tf 72 700 Td {left_hex} Tj {advance} 0 Td {right_hex} Tj ET")
+            .into_bytes(),
+    ));
+    let page_id = *doc.get_pages().get(&1).expect("une page");
+    let page = doc.get_dictionary_mut(page_id).expect("page");
+    page.set("Contents", Object::Reference(content));
+    page.set(
+        "Resources",
+        Object::Dictionary(Dictionary::from_iter(vec![(
+            "Font",
+            Object::Dictionary(Dictionary::from_iter(vec![(
+                "U1",
+                Object::Reference(font_id),
+            )])),
+        )])),
+    );
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation");
+    out
+}

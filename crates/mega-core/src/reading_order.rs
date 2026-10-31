@@ -78,6 +78,54 @@ pub fn layout_chars(rects: &[Rect], chars: &[char]) -> Vec<Block> {
     blocks
 }
 
+/// Les endroits d'une ligne où PDFium n'a mis **aucune espace** alors qu'un mot finit (audit
+/// du Lot 14, L3) : positions `i` de `line` après lesquelles insérer une espace.
+///
+/// PDFium n'invente les espaces d'après les blancs que pour le texte de gauche à droite ; un
+/// fichier arabe ou hébreu dessiné sans glyphe espace donnerait des mots collés. La règle ne
+/// s'applique donc qu'à une ligne **sans aucune espace** (sinon le fichier sait ce qu'il fait)
+/// : un blanc visuel de plus d'un quart de la hauteur médiane sépare deux mots (le « em » : voir le corps). `line` est dans
+/// l'ordre logique (voir [`logical_order`]) ; l'espace se place après celui des deux voisins
+/// visuels que l'on lit en premier, s'ils se suivent dans `line`.
+pub fn word_gaps(line: &[usize], rects: &[Rect], chars: &[char]) -> Vec<usize> {
+    if line.len() < 2 || line.iter().any(|&i| chars[i].is_whitespace()) {
+        return Vec::new();
+    }
+    // Seules les lignes de droite à gauche : le texte de gauche à droite a déjà ses espaces
+    // (PDFium les déduit des blancs), et un texte espacé exprès ou idéographique n'en veut pas.
+    let rtl = line
+        .iter()
+        .filter(|&&i| direction(chars[i]) == Direction::Rtl)
+        .count();
+    if rtl * 2 <= line.len() {
+        return Vec::new();
+    }
+    let median = |value: fn(&Rect) -> f32| {
+        let mut values: Vec<f32> = line.iter().map(|&i| value(&rects[i])).collect();
+        values.sort_by(f32::total_cmp);
+        values[values.len() / 2]
+    };
+    // Le « em » de la ligne : sa hauteur médiane, mais pas plus de 1,25 fois la largeur médiane
+    // d'un caractère. Les emprises de PDFium sont celles de la boîte de la police : dans certaines
+    // polices arabes elles sont près de trois fois plus hautes que larges (fichier du corpus
+    // `ArabicCIDTrueType.pdf`), et un quart de leur hauteur dépasserait l'espace entre deux mots.
+    let em = median(|r| r.h).min(1.25 * median(|r| r.w));
+    let threshold = 0.25 * em;
+    // Les positions de `line`, de gauche à droite à l'écran.
+    let mut visual: Vec<usize> = (0..line.len()).collect();
+    visual.sort_by(|&a, &b| rects[line[a]].x.total_cmp(&rects[line[b]].x));
+    let mut gaps = Vec::new();
+    for pair in visual.windows(2) {
+        let (left, right) = (&rects[line[pair[0]]], &rects[line[pair[1]]]);
+        let adjacent = pair[0].abs_diff(pair[1]) == 1;
+        if adjacent && right.x - (left.x + left.w) > threshold {
+            gaps.push(pair[0].min(pair[1]));
+        }
+    }
+    gaps.sort_unstable();
+    gaps
+}
+
 /// Vrai pour un idéogramme ou un caractère des écritures chinoise, japonaise ou coréenne
 /// (dont la ponctuation et les formes pleine chasse), les seules qui s'écrivent aussi en
 /// colonnes verticales.
@@ -567,6 +615,32 @@ pub fn blocks_text(blocks: &[Block], chars: &[char], rects: &[Rect]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit L3 : sans caractère espace, un blanc de plus d'un quart de hauteur sépare deux
+    /// mots ; s'il y a déjà une espace, la ligne est laissée telle quelle.
+    #[test]
+    fn word_gaps_finds_a_gap_wider_than_a_quarter_em_only_when_the_line_has_no_space() {
+        // Visuellement (gauche à droite) : « ب ا » puis un blanc de 6 pt (> 0,25 × 12), « ك ت ».
+        let xs = [0.0, 6.0, 18.0, 24.0];
+        let rect = |x: f32| Rect {
+            x,
+            y: 700.0,
+            w: 6.0,
+            h: 12.0,
+        };
+        let rects: Vec<Rect> = xs.iter().map(|&x| rect(x)).collect();
+        let chars = ['ب', 'ا', 'ك', 'ت'];
+        // Ordre logique d'une ligne arabe : de droite à gauche.
+        let line = [3, 2, 1, 0];
+        // L'espace va entre `line[1]` (ك, à droite du blanc) et `line[2]` (ا).
+        assert_eq!(word_gaps(&line, &rects, &chars), vec![1]);
+        // Un vrai espace dans la ligne : rien à ajouter.
+        let mut with_space = rects.clone();
+        with_space.push(rect(12.0));
+        let chars = ['ب', 'ا', 'ك', 'ت', ' '];
+        let line = [3, 2, 4, 1, 0];
+        assert!(word_gaps(&line, &with_space, &chars).is_empty());
+    }
 
     /// Largeur et hauteur des caractères des tests (Helvetica 10 pt : environ 6 × 12).
     const W: f32 = 6.0;

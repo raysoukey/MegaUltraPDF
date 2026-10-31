@@ -1346,9 +1346,9 @@ pub fn sig_subfilter_pdf(sub_filter: &str) -> Vec<u8> {
 /// (zéros) assez grand pour une vraie signature CMS RSA, que les tests calculent sur le
 /// `/ByteRange` (déjà cohérent).
 ///
-/// Pourquoi : distinguer une vraie révision ajoutée après la certification (verdict
-/// `CertifiedThenModified`) d'octets parasites sans révision (bourrage NUL, déchets après
-/// `%%EOF`), qui ne modifient pas le document (revue de la partie C du Lot 14).
+/// Pourquoi : distinguer des octets ajoutés après la certification (révision ou déchets :
+/// verdict `CertifiedThenModified`) d'un bourrage NUL ou de blancs, qui ne modifient pas le
+/// document (revue de la partie C du Lot 14).
 pub fn certified_field_pdf(p: u8) -> Vec<u8> {
     let reference = format!(
         "/Reference [<< /Type /SigRef /TransformMethod /DocMDP \

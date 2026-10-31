@@ -337,16 +337,15 @@ fn check_one(
             return info;
         }
     };
-    // Ce qui suit la seconde plage signée, examiné une fois : rien que des blancs PDF (la
-    // signature couvre tout le fichier), ou une vraie révision ajoutée (un `startxref` : toute
-    // mise à jour incrémentale se termine par lui, §7.5.6). Des octets parasites (bourrage NUL,
-    // déchets après `%%EOF`) ne sont ni l'un ni l'autre.
-    let tail = &bytes[b + c..];
-    let tail_is_blank = tail.iter().all(|byte| is_pdf_whitespace(*byte));
-    let later_revision = !tail_is_blank && tail.windows(9).any(|w| w == b"startxref");
-    // Document certifié sans modification permise (`/DocMDP /P 1`) : une révision ajoutée
-    // après la signature viole la certification, quel que soit le reste du verdict.
-    if certified_without_changes(doc, value) && later_revision {
+    // Ce qui suit la seconde plage signée, examiné une fois : rien que des blancs PDF ou du
+    // bourrage NUL (la signature couvre tout le fichier), ou autre chose. On échoue **fermé** :
+    // tout autre octet compte comme une modification, sans exiger de `startxref` (une
+    // révision tronquée ou maquillée n'en a pas forcément ; revue de sécurité du Lot 14).
+    let tail_is_blank = bytes[b + c..].iter().all(|byte| is_pdf_whitespace(*byte));
+    let later_bytes = !tail_is_blank;
+    // Document certifié sans modification permise (`/DocMDP /P 1`) : des octets ajoutés après
+    // la signature violent la certification, quel que soit le reste du verdict.
+    if certified_without_changes(doc, value) && later_bytes {
         info.status = SignatureStatus::Invalid(SigIssue::CertifiedThenModified);
         return info;
     }

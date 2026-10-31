@@ -982,11 +982,12 @@ fn sign_placeholder(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-/// Revue de la partie C (I4) : seule une **vraie révision** (un `startxref` après la fin de la
-/// plage signée) viole une certification `/P 1` ; du bourrage NUL ou une certification qui
-/// permet des modifications (`/P 2`) ne donnent pas `CertifiedThenModified`.
+/// Revue de la partie C (I4) : après la plage signée d'une certification `/P 1`, seuls des
+/// blancs PDF et du bourrage NUL sont tolérés ; tout autre octet (révision ou déchets) donne
+/// `CertifiedThenModified`. Une certification qui permet des modifications (`/P 2`) ne le
+/// donne pas.
 #[test]
-fn certification_is_violated_only_by_a_later_revision() {
+fn certification_is_violated_by_any_byte_but_blanks_after_the_signature() {
     use mega_core::digital_signature::SigIssue;
     let certified = sign_placeholder(mega_core::testing::certified_field_pdf(1));
     let info = only(signatures(&certified).unwrap());
@@ -1001,12 +1002,13 @@ fn certification_is_violated_only_by_a_later_revision() {
         SignatureStatus::Intact
     );
 
-    // Des déchets sans `startxref` : pas une révision non plus.
+    // Tout autre octet compte comme une modification (on échoue fermé : une révision
+    // tronquée ou maquillée n'a pas forcément de `startxref`).
     let mut junk = certified.clone();
-    junk.extend_from_slice(b"\n% fin de transfert\n");
+    junk.extend_from_slice(b"garbage");
     assert_eq!(
         only(signatures(&junk).unwrap()).status,
-        SignatureStatus::Intact
+        SignatureStatus::Invalid(SigIssue::CertifiedThenModified)
     );
 
     // `/P 2` permet des révisions (formulaires, signatures) : pas de violation déclarée.

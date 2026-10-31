@@ -60,7 +60,7 @@ ailleurs), **M** moyenne (fonction fausse ou inutilisable sur une classe de fich
 | P4 | M | Enregistrement : message générique pour un fichier en lecture seule, verrouillé ou un dossier interdit ; permissions et liens physiques perdus | `edit.rs:851-881`, `error.rs:62` | Erreurs typées, permissions recopiées, liens physiques préservés (Unix) | ✅ corrigé (PR C) : + chemins de plus de 260 caractères |
 | P5 | F | Échec du presse-papiers silencieux | `+page.svelte:198` | Repli et message | ✅ corrigé (PR C) |
 | P6 | F | Chemins non UTF-8, longs ou accentués non testés | `commands.rs:181/595` | `PathBuf` côté Rust, tests | ✅ corrigé (PR C) : non-UTF-8 au démarrage ignoré (limite) |
-| P7 | F | `.deb` sans dépendances explicites | `tauri.conf.json` | `depends`, `recommends: tesseract-ocr` | ✅ corrigé (PR C) |
+| P7 | F | `.deb` sans dépendances explicites | `tauri.conf.json` | `recommends: tesseract-ocr` (les dépendances système sont ajoutées par Tauri) | ✅ corrigé (PR C) |
 
 ## Mesures de la PR A
 

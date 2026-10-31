@@ -848,6 +848,11 @@ impl Document {
 
 /// Écrit `bytes` dans `path` de façon atomique : fichier temporaire du même dossier, puis
 /// renommage par-dessus la cible. En cas d'échec, la cible n'est pas touchée.
+///
+/// Exception (Unix) : un fichier à plusieurs liens physiques est écrit **en place**, après une
+/// copie de sécurité synchronisée (`.megaultrapdf-*.bak`, mêmes droits que l'original). Si
+/// l'écriture échoue, l'original est remis depuis la copie ; si le système s'arrête pendant
+/// l'écriture, la cible peut rester tronquée et la copie reste dans le dossier.
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> CoreResult<()> {
     // Un lien symbolique est suivi : on remplace le fichier visé, pas le lien.
     let is_link = std::fs::symlink_metadata(path)
@@ -859,12 +864,20 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> CoreResult<()> {
         path.to_path_buf()
     };
     let existing = std::fs::metadata(&target).ok();
-    // Lecture seule : refusé partout. (Sous Unix, renommer par-dessus passerait outre.)
-    if existing
-        .as_ref()
-        .is_some_and(|m| m.permissions().readonly())
-    {
-        return Err(CoreError::FileReadOnly);
+    // Lecture seule, ou fichier que l'utilisateur ne peut pas écrire (sous Unix, propriété
+    // d'un autre compte) : refusé partout. Renommer par-dessus passerait outre sous Unix et
+    // changerait le propriétaire du fichier. L'essai d'ouverture en écriture ne modifie rien
+    // (pas de troncature) ; un fichier verrouillé par une autre application est traité plus
+    // bas (relecture de la PR C du Lot 13).
+    if existing.is_some() {
+        let read_only = existing
+            .as_ref()
+            .is_some_and(|m| m.permissions().readonly());
+        let probe = std::fs::OpenOptions::new().write(true).open(&target);
+        let denied = matches!(&probe, Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied);
+        if read_only || denied {
+            return Err(CoreError::FileReadOnly);
+        }
     }
     let dir = target
         .parent()
@@ -873,7 +886,15 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> CoreResult<()> {
         .unwrap_or_else(|| PathBuf::from("."));
     // Forme canonique du dossier : sous Windows, `\\?\C:\…`, qui lève la limite des 260
     // caractères (MAX_PATH) pour le temporaire et le renommage final (audit du Lot 13, P6).
-    let dir = std::fs::canonicalize(&dir).map_err(folder_error)?;
+    // Certains volumes ne savent pas la donner (disque virtuel en mémoire, lecteurs réseau ou
+    // chiffrés) : on garde alors le dossier tel quel, comme avant (relecture de la PR C).
+    let dir = match std::fs::canonicalize(&dir) {
+        Ok(canonical) => canonical,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(CoreError::FolderNotWritable);
+        }
+        Err(_) => dir,
+    };
     let target = match target.file_name() {
         Some(name) => dir.join(name),
         None => target,
@@ -903,11 +924,13 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> CoreResult<()> {
     // (il part avec l'erreur) et la cible n'est pas touchée.
     temp.persist(&target).map_err(|e| {
         let error = e.error;
-        let locked = matches!(error.raw_os_error(), Some(32 | 33))
-            || (error.kind() == std::io::ErrorKind::PermissionDenied && existing.is_some());
+        // Windows seulement (Unix n'a pas ce verrouillage) : partage refusé par l'application
+        // qui a ouvert le fichier, codes 32 et 33, ou « accès refusé » sur un fichier qui n'est
+        // pas en lecture seule (vérifié plus haut).
+        let locked = cfg!(windows)
+            && (matches!(error.raw_os_error(), Some(32 | 33))
+                || (error.kind() == std::io::ErrorKind::PermissionDenied && existing.is_some()));
         if locked {
-            // Partage refusé par l'application qui a ouvert le fichier (Windows : codes 32,
-            // 33, ou « accès refusé » sur un fichier qui n'est pas en lecture seule).
             CoreError::FileLocked
         } else {
             folder_error(error)

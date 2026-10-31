@@ -84,9 +84,10 @@ historique ni aucune écriture sûre.
   **Exception assumée** : sous Windows, les ACL explicites et les flux de données alternatifs
   (ADS) du fichier remplacé sont perdus au renommage. Les garder demanderait `ReplaceFileW`,
   donc du code `unsafe`, interdit dans ce projet.
+  Limite : un fichier à liens physiques (Unix) n'est pas remplacé atomiquement ; un arrêt du
+  système pendant l'écriture peut le laisser tronqué, la copie de sécurité restant à côté.
 - `split_to_dir` refuse d'écraser un fichier existant (sauf `--force` au CLI) et un préfixe
-  qui sort du dossier ; `split_to_dir` refuse d'écraser un fichier existant (sauf `--force` au CLI)
-  et un préfixe qui sort du dossier.
+  qui sort du dossier.
 - `move_pages` est implémenté par copie depuis un instantané puis suppression
   (`pdfium-render` n'expose pas `FPDF_MovePages`) : les signets qui visaient les pages
   déplacées peuvent être perdus. Documenté, à revoir avec `lopdf` (ADR-0003).

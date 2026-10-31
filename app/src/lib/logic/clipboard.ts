@@ -34,6 +34,9 @@ function browserWays(): ClipboardWays {
   return {
     write: (text) => navigator.clipboard.writeText(text),
     fallback: (text) => {
+      // La zone de texte prend le focus le temps de la copie : on le rend ensuite à
+      // l'élément qui l'avait (relecture de la PR C).
+      const focused = document.activeElement as HTMLElement | null;
       const area = document.createElement('textarea');
       area.value = text;
       area.setAttribute('readonly', '');
@@ -44,6 +47,7 @@ function browserWays(): ClipboardWays {
       // `execCommand` est déprécié, mais c'est le seul repli quand l'API asynchrone manque.
       const ok = document.execCommand('copy');
       area.remove();
+      focused?.focus();
       return ok;
     },
   };

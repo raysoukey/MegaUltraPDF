@@ -544,3 +544,121 @@ fn a_long_run_of_ampersands_is_decoded_in_linear_time() {
     );
     assert!(title.starts_with("&é&é"));
 }
+
+// --- Lot 14 : le XMP reçoit les propriétés qui lui manquaient (audit E6) -----------------
+
+/// Valeur de `/Info` (texte décodé) dans les octets d'un PDF.
+fn info_value(bytes: &[u8], key: &[u8]) -> Option<String> {
+    let doc = lopdf::Document::load_mem(bytes).unwrap();
+    let info = doc.trailer.get(b"Info").ok()?;
+    let (_, info) = doc.dereference(info).ok()?;
+    let raw = info.as_dict().ok()?.get(key).ok()?;
+    let bytes = raw.as_str().ok()?;
+    Some(match bytes.strip_prefix(&[0xFE, 0xFF]) {
+        // UTF-16BE avec BOM, comme l'écrit `set_metadata` pour du texte non ASCII.
+        Some(utf16) => String::from_utf16_lossy(
+            &utf16
+                .chunks(2)
+                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .collect::<Vec<_>>(),
+        ),
+        None => String::from_utf8_lossy(bytes).into_owned(),
+    })
+}
+
+#[test]
+fn set_metadata_creates_dc_title_in_an_xmp_without_it() {
+    let mut d = Document::from_bytes(mega_core::testing::pdfa_pdf(), None).unwrap();
+    assert!(!xmp_of(&d.to_bytes().unwrap()).contains("dc:title"));
+    d.set_metadata(&title("Titre <1> & été")).unwrap();
+    let bytes = d.to_bytes().unwrap();
+    let xmp = xmp_of(&bytes);
+    assert!(
+        xmp.contains(
+            "<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Titre &lt;1&gt; &amp; été</rdf:li></rdf:Alt></dc:title>"
+        ),
+        "{xmp}"
+    );
+    assert!(xmp.contains("xmlns:dc="), "espace de noms déclaré : {xmp}");
+    assert!(
+        xmp.contains("pdfaid:part"),
+        "déclaration PDF/A gardée : {xmp}"
+    );
+    assert_eq!(
+        info_value(&bytes, b"Title").as_deref(),
+        Some("Titre <1> & été")
+    );
+    assert_eq!(d.properties().unwrap().pdfa.as_deref(), Some("PDF/A-2B"));
+}
+
+#[test]
+fn set_metadata_creates_author_subject_and_keywords_in_the_xmp() {
+    let mut d = Document::from_bytes(mega_core::testing::pdfa_pdf(), None).unwrap();
+    d.set_metadata(&MetadataPatch {
+        author: Some("Été Ω".to_string()),
+        subject: Some("Sujet".to_string()),
+        keywords: Some("a, b & c".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    let xmp = xmp_of(&d.to_bytes().unwrap());
+    assert!(
+        xmp.contains("<dc:creator><rdf:Seq><rdf:li>Été Ω</rdf:li></rdf:Seq></dc:creator>"),
+        "{xmp}"
+    );
+    assert!(
+        xmp.contains("<rdf:li xml:lang=\"x-default\">Sujet</rdf:li>"),
+        "{xmp}"
+    );
+    assert!(
+        xmp.contains("<pdf:Keywords>a, b &amp; c</pdf:Keywords>"),
+        "{xmp}"
+    );
+    assert!(xmp.contains("xmlns:pdf="), "{xmp}");
+    let p = d.properties().unwrap();
+    assert_eq!(p.author.as_deref(), Some("Été Ω"));
+    assert_eq!(p.keywords.as_deref(), Some("a, b & c"));
+}
+
+#[test]
+fn an_empty_value_removes_the_xmp_element() {
+    let mut d = Document::from_bytes(mega_core::testing::xmp_pdf(), None).unwrap();
+    d.set_metadata(&MetadataPatch {
+        title: Some(String::new()),
+        ..Default::default()
+    })
+    .unwrap();
+    let xmp = xmp_of(&d.to_bytes().unwrap());
+    assert!(!xmp.contains("dc:title"), "{xmp}");
+    assert!(xmp.contains("dc:creator"), "{xmp}");
+}
+
+/// Le cas mesuré par l'audit : retitrer un PDF/A-1b dont le XMP n'a pas `dc:title`.
+#[test]
+fn retitling_a_pdfa_1b_file_keeps_it_conformant() {
+    let (Some(verapdf), Some(corpus)) = (
+        std::env::var_os("MEGA_VERAPDF").filter(|v| !v.is_empty()),
+        std::env::var_os("MEGA_CORPUS").filter(|v| !v.is_empty()),
+    ) else {
+        eprintln!("MEGA_VERAPDF / MEGA_CORPUS absents : contrôle veraPDF sauté");
+        return;
+    };
+    let source = std::path::PathBuf::from(corpus).join("pdfa/pdfa-1b-6-1-2-t01-pass-a.pdf");
+    let mut d = Document::open(&source, None).unwrap();
+    d.set_metadata(&MetadataPatch {
+        title: Some("Audit — été".to_string()),
+        author: Some("Été Ω".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sortie.pdf");
+    d.save_as(&out).unwrap();
+    let report = std::process::Command::new(verapdf)
+        .args(["--flavour", "0", "--format", "text"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&report.stdout).into_owned();
+    assert!(text.starts_with("PASS"), "veraPDF :\n{text}");
+}

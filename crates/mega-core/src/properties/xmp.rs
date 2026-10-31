@@ -212,28 +212,142 @@ pub(crate) struct XmpUpdate<'a> {
     pub keywords: Option<&'a str>,
 }
 
-/// Reporte `update` dans le flux XMP du catalogue, pour les propriétés **déjà présentes**
-/// (aucune n'est créée : pas de générateur XMP). Un flux illisible est laissé tel quel.
+/// Reporte `update` dans le flux XMP du catalogue. Une propriété absente est **créée** dans
+/// le premier `rdf:Description` : sans cela, `/Info /Title` et `dc:title` divergeraient et
+/// PDF/A (ISO 19005-1, 6.7.3) serait violé (audit E6) ; une valeur vide retire l'élément,
+/// comme elle retire la clé de `/Info`. Sans flux `/Metadata`, rien n'est créé (pas de
+/// générateur de paquet XMP). Un flux illisible est laissé tel quel.
 pub(crate) fn update_xmp(doc: &mut lopdf::Document, update: &XmpUpdate<'_>) {
     edit_xmp(doc, |mut text| {
-        for (tag, value) in [
-            ("dc:title", update.title),
-            ("dc:creator", update.author),
-            ("dc:description", update.subject),
+        for (tag, value, kind) in [
+            ("dc:title", update.title, ListKind::Alt),
+            ("dc:creator", update.author, ListKind::Seq),
+            ("dc:description", update.subject, ListKind::Alt),
         ] {
-            if let Some(v) = value
-                && let Some(new) = replace_li(&text, tag, &xml_escape(v))
-            {
-                text = new;
+            if let Some(v) = value {
+                text = set_list_property(text, tag, kind, v);
             }
         }
-        if let Some(v) = update.keywords
-            && let Some(new) = replace_simple(&text, "pdf:Keywords", &xml_escape(v))
-        {
-            text = new;
+        if let Some(v) = update.keywords {
+            text = set_simple_property(text, "pdf:Keywords", v);
         }
         text
     });
+}
+
+/// Forme d'une propriété XMP à liste : `rdf:Alt` (une valeur par langue) ou `rdf:Seq`
+/// (liste ordonnée, ex. les auteurs).
+#[derive(Clone, Copy)]
+enum ListKind {
+    Alt,
+    Seq,
+}
+
+/// Pose la propriété à liste `tag` : remplace l'entrée existante, la crée si elle manque,
+/// retire l'élément si `value` est vide.
+fn set_list_property(text: String, tag: &str, kind: ListKind, value: &str) -> String {
+    if value.is_empty() {
+        return remove_element(&text, tag).unwrap_or(text);
+    }
+    let escaped = xml_escape(value);
+    if let Some(new) = replace_li(&text, tag, &escaped) {
+        return new;
+    }
+    // Élément absent, ou présent mais sans entrée exploitable : on le refait proprement.
+    let base = remove_element(&text, tag).unwrap_or(text);
+    let element = match kind {
+        ListKind::Alt => format!(
+            "<{tag}><rdf:Alt><rdf:li xml:lang=\"x-default\">{escaped}</rdf:li></rdf:Alt></{tag}>"
+        ),
+        ListKind::Seq => format!("<{tag}><rdf:Seq><rdf:li>{escaped}</rdf:li></rdf:Seq></{tag}>"),
+    };
+    insert_property(&base, tag, &element).unwrap_or(base)
+}
+
+/// Pose la propriété simple `tag` (élément ou attribut), de la même façon.
+fn set_simple_property(text: String, tag: &str, value: &str) -> String {
+    if value.is_empty() {
+        let removed = remove_element(&text, tag);
+        return removed
+            .or_else(|| replace_simple(&text, tag, ""))
+            .unwrap_or(text);
+    }
+    let escaped = xml_escape(value);
+    if let Some(new) = replace_simple(&text, tag, &escaped) {
+        return new;
+    }
+    let element = format!("<{tag}>{escaped}</{tag}>");
+    insert_property(&text, tag, &element).unwrap_or(text)
+}
+
+/// Retire l'élément `<tag>…</tag>` (ou `<tag/>`) ; `None` s'il n'y en a pas.
+fn remove_element(xmp: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}");
+    let mut from = 0;
+    while let Some(found) = xmp[from..].find(&open) {
+        let start = from + found;
+        let after = &xmp[start + open.len()..];
+        // `<dc:titleX` n'est pas `<dc:title` : la balise doit se terminer là.
+        if !after.starts_with(['>', '/', ' ']) {
+            from = start + open.len();
+            continue;
+        }
+        let end = if let Some(close) = after.find('>').filter(|&i| after[..i].ends_with('/')) {
+            start + open.len() + close + 1
+        } else {
+            let closing = format!("</{tag}>");
+            start + open.len() + after.find(&closing)? + closing.len()
+        };
+        return Some(format!("{}{}", &xmp[..start], &xmp[end..]));
+    }
+    None
+}
+
+/// Insère `element` au début du premier `rdf:Description`, en déclarant l'espace de noms de
+/// son préfixe (`dc`, `pdf`) s'il ne l'est pas déjà. Un `rdf:Description` vide
+/// (`<rdf:Description …/>`) est rouvert. `None` s'il n'y en a pas.
+fn insert_property(xmp: &str, tag: &str, element: &str) -> Option<String> {
+    let start = xmp.find("<rdf:Description")?;
+    // Fin de la balise ouvrante : le premier `>` hors guillemets (une valeur d'attribut peut
+    // contenir `>`).
+    let mut quote: Option<char> = None;
+    let mut open_end = None;
+    for (i, c) in xmp[start..].char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '>') => {
+                open_end = Some(start + i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let open_end = open_end?;
+    let prefix = tag.split(':').next().unwrap_or("");
+    let namespace = match prefix {
+        "dc" => Some("http://purl.org/dc/elements/1.1/"),
+        "pdf" => Some("http://ns.adobe.com/pdf/1.3/"),
+        _ => None,
+    };
+    let declared = xmp.contains(&format!("xmlns:{prefix}="));
+    let declaration = match namespace {
+        Some(uri) if !declared => format!(" xmlns:{prefix}=\"{uri}\""),
+        _ => String::new(),
+    };
+    let self_closed = xmp[..open_end].ends_with('/');
+    let head_end = if self_closed { open_end - 1 } else { open_end };
+    let mut out = String::with_capacity(xmp.len() + element.len() + 64);
+    out.push_str(&xmp[..head_end]);
+    out.push_str(&declaration);
+    out.push('>');
+    out.push_str(element);
+    if self_closed {
+        out.push_str("</rdf:Description>");
+    }
+    out.push_str(&xmp[open_end + 1..]);
+    Some(out)
 }
 
 /// Applique `edit` au texte du flux `/Metadata` du catalogue et le réécrit non compressé.

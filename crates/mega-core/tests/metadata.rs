@@ -703,3 +703,19 @@ fn set_metadata_on_a_pdfa_4_document_writes_only_the_xmp() {
     assert!(info_value(&bytes, b"ModDate").is_some());
     assert_eq!(info_value(&bytes, b"Title"), None);
 }
+
+/// Revue de la partie C : un XMP sans `xmp:ModifyDate` ni `xmp:MetadataDate` les reçoit à
+/// l'enregistrement, pour rester d'accord avec `/ModDate` (PDF/A-1 6.7.3).
+#[test]
+fn saving_creates_the_xmp_dates_when_absent() {
+    let mut d = Document::from_bytes(mega_core::testing::pdfa_pdf(), None).unwrap();
+    assert!(!xmp_of(&d.to_bytes().unwrap()).contains("xmp:ModifyDate"));
+    d.rotate_pages(&[0], 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dates.pdf");
+    d.save_as(&path).unwrap();
+    let xmp = xmp_of(&std::fs::read(&path).unwrap());
+    assert!(xmp.contains("<xmp:ModifyDate>"), "{xmp}");
+    assert!(xmp.contains("<xmp:MetadataDate>"), "{xmp}");
+    assert!(xmp.contains("xmlns:xmp="), "{xmp}");
+}

@@ -78,6 +78,12 @@ pub fn before_save(
 /// l'enregistrement du document ouvert le sait (il vient de les faire régénérer par PDFium) ;
 /// l'extraction, la fusion et la protection partent d'octets dont les `/AP` peuvent dater
 /// d'avant la dernière valeur de champ : elles gardent la clé.
+///
+/// \[Apprentissage\] Une **structure d'options** plutôt qu'un paramètre `bool` de plus : à
+/// l'appel, `CleanupOptions { appearances_fresh: true, ..Default::default() }` nomme chaque
+/// réglage (un `true` nu ne dit rien), et `..Default::default()` remplit les champs qu'on ne
+/// cite pas avec leur valeur par défaut (`#[derive(Default)]` : `false` pour un `bool`). Un
+/// réglage ajouté plus tard ne change donc aucun appel existant.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct CleanupOptions {
     /// Les apparences des widgets viennent d'être régénérées : `/NeedAppearances` peut partir.
@@ -151,18 +157,32 @@ pub(crate) fn before_save_with(
     })
 }
 
-/// Vrai si l'`/AcroForm` des `bytes` porte `/NeedAppearances true`. Lecture bon marché : sans
-/// `/AcroForm` dans les octets (écrits par PDFium, le catalogue n'est pas compressé), pas de
-/// seconde lecture `lopdf`.
-pub(crate) fn need_appearances_flag(bytes: &[u8], password: Option<&str>) -> bool {
-    if !bytes.windows(9).any(|w| w == b"/AcroForm") {
-        return false;
+/// Ce que PDFium doit dessiner avant l'enregistrement pour que chaque annotation ait son
+/// apparence (ISO 32000-2 §12.5.5, PDF/A-2 6.3.3) : calculé par **une** passe `lopdf`, pour ne
+/// charger dans PDFium que les pages concernées (auparavant, toutes les pages à chaque
+/// enregistrement : coûteux sur un long document).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SavePlan {
+    /// L'`/AcroForm` porte `/NeedAppearances true` : les widgets sont à régénérer.
+    pub need_appearances: bool,
+    /// Index (à partir de 0, croissants) des pages à rendre : un marquage de texte
+    /// (`Highlight`, `Underline`, `StrikeOut`, `Squiggly`) sans `/AP /N`, ou un widget quand
+    /// `need_appearances` est vrai ou qu'il n'a pas d'apparence utilisable.
+    pub pages: Vec<u16>,
+}
+
+/// Le [`SavePlan`] des `bytes` (écrits par PDFium) ; `None` si `lopdf` ne sait pas les lire :
+/// l'appelant ne rend alors rien et garde `/NeedAppearances` (rien ne prouve que les
+/// apparences sont à jour). Sans `/Annots` dans les octets, plan vide sans seconde lecture
+/// (PDFium n'écrit pas de flux d'objets : les dictionnaires de page y sont en clair).
+pub(crate) fn save_plan(bytes: &[u8], password: Option<&str>) -> Option<SavePlan> {
+    if !bytes.windows(7).any(|w| w == b"/Annots") {
+        return Some(SavePlan::default());
     }
-    let Ok(session) = crate::crypt::LopdfSession::load(bytes, password) else {
-        return false;
-    };
+    let session = crate::crypt::LopdfSession::load(bytes, password).ok()?;
     let doc = &session.doc;
-    doc.catalog()
+    let need_appearances = doc
+        .catalog()
         .ok()
         .and_then(|c| c.get(b"AcroForm").ok())
         .and_then(|a| doc.dereference(a).ok())
@@ -174,7 +194,46 @@ pub(crate) fn need_appearances_flag(bytes: &[u8], password: Option<&str>) -> boo
                 .as_bool()
                 .ok()
         })
-        .unwrap_or(false)
+        .unwrap_or(false);
+    let pages = doc
+        .get_pages()
+        .into_iter()
+        .filter(|(_, page_id)| {
+            page_annots(doc, *page_id).is_some_and(|(_, annots)| {
+                annots.iter().any(|a| {
+                    doc.dereference(a)
+                        .ok()
+                        .and_then(|(_, a)| a.as_dict().ok())
+                        .is_some_and(|a| needs_rendering(doc, a, need_appearances))
+                })
+            })
+        })
+        // Numéros de page `lopdf` : 1, 2, 3… ; un numéro hors de `u16` n'est pas une page que
+        // PDFium accepterait (`from_bytes` refuse plus de `u16::MAX` pages).
+        .filter_map(|(number, _)| u16::try_from(number.checked_sub(1)?).ok())
+        .collect();
+    Some(SavePlan {
+        need_appearances,
+        pages,
+    })
+}
+
+/// Vrai si l'annotation `annot` demande un rendu PDFium avant l'enregistrement (voir
+/// [`SavePlan::pages`]).
+fn needs_rendering(doc: &Document, annot: &Dictionary, need_appearances: bool) -> bool {
+    match annot.get(b"Subtype").and_then(Object::as_name) {
+        Ok(b"Highlight" | b"Underline" | b"StrikeOut" | b"Squiggly") => {
+            let normal = annot
+                .get(b"AP")
+                .ok()
+                .and_then(|ap| doc.dereference(ap).ok())
+                .and_then(|(_, ap)| ap.as_dict().ok())
+                .is_some_and(|ap| ap.has(b"N"));
+            !normal
+        }
+        Ok(b"Widget") => need_appearances || !has_normal_appearance(doc, annot),
+        _ => false,
+    }
 }
 
 /// Retire `/NeedAppearances true` de l'`/AcroForm` quand **chaque** widget de chaque page a une
@@ -183,10 +242,10 @@ pub(crate) fn need_appearances_flag(bytes: &[u8], password: Option<&str>) -> boo
 /// PDF/A-2 l'interdit (6.4.1) et Acrobat propose d'enregistrer à chaque ouverture (audit E7).
 /// Un seul widget sans apparence suffit à la garder : elle est alors ce qui le fait dessiner.
 pub(crate) fn drop_need_appearances(doc: &mut Document) {
-    let Some(acro_id) = acroform_holder(doc) else {
+    let Some(holder) = acroform_holder(doc) else {
         return;
     };
-    let needs = match &acro_id {
+    let needs = match &holder {
         AcroForm::Indirect(id) => doc.get_dictionary(*id).ok(),
         AcroForm::Direct => doc
             .catalog()
@@ -217,7 +276,7 @@ pub(crate) fn drop_need_appearances(doc: &mut Document) {
     if !all_drawn {
         return;
     }
-    match acro_id {
+    match holder {
         AcroForm::Indirect(id) => {
             if let Ok(d) = doc.get_dictionary_mut(id) {
                 d.remove(b"NeedAppearances");
@@ -1486,5 +1545,94 @@ mod need_appearances_tests {
         let mut doc = form(vec![states("Off")], false);
         drop_need_appearances(&mut doc);
         assert!(has_key(&doc), "état /Off sans apparence");
+    }
+}
+
+#[cfg(test)]
+mod save_plan_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    /// `many_pages_pdf(3)` dont la page 2 porte un surlignage **sans** apparence et la page 3
+    /// un surlignage **avec** son `/AP /N`.
+    fn markups_pdf() -> Vec<u8> {
+        let mut doc = Document::load_mem(&crate::testing::many_pages_pdf(3)).unwrap();
+        let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
+        let highlight = |ap: Option<ObjectId>| {
+            let mut d = Dictionary::from_iter(vec![
+                ("Type", Object::Name(b"Annot".to_vec())),
+                ("Subtype", Object::Name(b"Highlight".to_vec())),
+                (
+                    "Rect",
+                    Object::Array(vec![10.into(), 10.into(), 50.into(), 20.into()]),
+                ),
+            ]);
+            if let Some(id) = ap {
+                d.set(
+                    "AP",
+                    Dictionary::from_iter(vec![("N", Object::Reference(id))]),
+                );
+            }
+            d
+        };
+        let bare = doc.add_object(highlight(None));
+        let stream = doc.add_object(lopdf::Stream::new(Dictionary::new(), b"q Q".to_vec()));
+        let drawn = doc.add_object(highlight(Some(stream)));
+        for (page, annot) in [(pages[1], bare), (pages[2], drawn)] {
+            doc.get_dictionary_mut(page)
+                .unwrap()
+                .set("Annots", vec![Object::Reference(annot)]);
+        }
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
+    }
+
+    /// Revue de la partie C : seules les pages qui en ont besoin sont rendues.
+    #[test]
+    fn only_pages_with_a_markup_lacking_an_appearance_are_planned() {
+        let plan = save_plan(&markups_pdf(), None).unwrap();
+        assert_eq!(
+            plan,
+            SavePlan {
+                need_appearances: false,
+                pages: vec![1],
+            }
+        );
+        let plain = save_plan(&crate::testing::many_pages_pdf(3), None).unwrap();
+        assert_eq!(plain.pages, Vec::<u16>::new());
+    }
+
+    #[test]
+    fn widgets_are_planned_when_appearances_are_needed_or_missing() {
+        // `/NeedAppearances true` : la page du widget est rendue, même s'il a une apparence.
+        let plan = save_plan(&crate::testing::form_with_appearances_pdf(), None).unwrap();
+        assert_eq!(
+            plan,
+            SavePlan {
+                need_appearances: true,
+                pages: vec![0],
+            }
+        );
+        // Sans la clé, un widget qui a son apparence ne demande rien.
+        let mut doc = Document::load_mem(&crate::testing::form_with_appearances_pdf()).unwrap();
+        if let Ok(Object::Dictionary(form)) = doc.catalog_mut().unwrap().get_mut(b"AcroForm") {
+            form.remove(b"NeedAppearances");
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        assert_eq!(
+            save_plan(&bytes, None).unwrap(),
+            SavePlan {
+                need_appearances: false,
+                pages: vec![],
+            }
+        );
+    }
+
+    /// Un fichier que `lopdf` ne lit pas : pas de plan (l'appelant garde `/NeedAppearances`).
+    #[test]
+    fn unreadable_bytes_have_no_plan() {
+        assert_eq!(save_plan(b"pas un pdf /Annots", None), None);
     }
 }

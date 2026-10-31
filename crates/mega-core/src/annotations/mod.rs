@@ -17,7 +17,7 @@ mod appearance;
 
 use chrono::Utc;
 use pdfium_render::prelude::{
-    PdfColor, PdfPageAnnotation, PdfPageAnnotationCommon, PdfPageAnnotationType,
+    PdfColor, PdfPageAnnotation, PdfPageAnnotationCommon, PdfPageAnnotationType, PdfPageIndex,
     PdfPageObjectCommon, PdfPageObjectsCommon, PdfPoints, PdfQuadPoints, PdfRect,
 };
 use serde::{Deserialize, Serialize};
@@ -869,32 +869,35 @@ fn tiny_render(page: &pdfium_render::prelude::PdfPage<'_>, form_data: bool) -> C
 
 /// Fait écrire par PDFium les apparences qui manquent ou dont on doute avant l'enregistrement :
 /// marquages de texte sans `/AP` (ISO 32000-2 §12.5.5, PDF/A-2 6.3.3) et widgets de
-/// formulaire (régénérés si `/NeedAppearances` est vrai, `need_appearances`, ou si l'un n'a
-/// aucune apparence). Rend vrai si tout s'est passé : les apparences sont alors à jour et
-/// `/NeedAppearances` peut partir. Une erreur de rendu n'empêche pas d'enregistrer, elle rend
-/// faux (la clé reste). L'appelant tient le verrou PDFium.
+/// formulaire. Seules les pages `pages` (index à partir de 0, calculés par
+/// `cleanup::save_plan` en une passe `lopdf`) sont chargées et rendues, avec l'environnement de
+/// formulaire.
+///
+/// **Continuer et dégrader** : une page qu'on ne peut pas charger ou rendre n'arrête pas la
+/// boucle (les autres reçoivent leurs apparences) ; le résultat est alors faux. Vrai si toutes
+/// les pages ont été rendues : les apparences sont à jour et `/NeedAppearances` peut partir ;
+/// faux, la clé reste (elle est ce qui fera dessiner le widget en échec). Dans les deux cas,
+/// l'enregistrement a lieu.
+///
+/// `_guard` : le jeton PDFium que l'appelant tient déjà (comme `engine::load_bytes`) ; le
+/// demander en paramètre rend l'oubli impossible.
 pub(crate) fn ensure_appearances(
+    _guard: &engine::PdfiumGuard,
     document: &pdfium_render::prelude::PdfDocument<'_>,
-    need_appearances: bool,
+    pages: &[u16],
 ) -> bool {
-    for page in document.pages().iter() {
-        let annotations = page.annotations();
-        if annotations.is_empty() {
-            continue;
-        }
-        let widget_without_ap = |a: &PdfPageAnnotation| {
-            a.annotation_type() == PdfPageAnnotationType::Widget && a.objects().is_empty()
-        };
-        let widget = annotations
-            .iter()
-            .any(|a| a.annotation_type() == PdfPageAnnotationType::Widget);
-        let needs = lacks_markup_appearance(&page)
-            || (widget && (need_appearances || annotations.iter().any(|a| widget_without_ap(&a))));
-        if needs && tiny_render(&page, true).is_err() {
-            return false;
-        }
+    let mut all_rendered = true;
+    for &index in pages {
+        let rendered = document
+            .pages()
+            .get(PdfPageIndex::from(index))
+            .is_ok_and(|page| tiny_render(&page, true).is_ok());
+        // [Apprentissage] `&=` sur des booléens : `all_rendered = all_rendered & rendered`.
+        // Le `&` (contrairement à `&&`) n'a rien à court-circuiter ici : le rendu a déjà eu
+        // lieu ; on retient seulement qu'un échec s'est produit.
+        all_rendered &= rendered;
     }
-    true
+    all_rendered
 }
 
 /// Genre d'une annotation d'après son sous-type PDF ; `Ink` et `Stamp` sont affinés par
@@ -1014,4 +1017,59 @@ fn read_annotation(index: u16, ann: &PdfPageAnnotation) -> CoreResult<Annotation
     annotation.editable =
         annotation.to_new().is_some() && ann.annotation_type() != PdfPageAnnotationType::FreeText;
     Ok(annotation)
+}
+
+#[cfg(test)]
+mod ensure_appearances_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    /// Revue de la partie C (I3) : une page en échec (ici, hors du document) n'arrête pas la
+    /// boucle ; les autres pages reçoivent leurs apparences et le résultat dit l'échec.
+    #[test]
+    fn a_failing_page_does_not_stop_the_other_pages() {
+        let mut doc = Document::from_bytes(crate::testing::sample_pdf(1, "ap"), None).unwrap();
+        doc.add_annotation(
+            0,
+            &NewAnnotation {
+                kind: AnnotationKind::Highlight,
+                geometry: Geometry::Quads {
+                    rects: vec![Rect {
+                        x: 100.0,
+                        y: 500.0,
+                        w: 200.0,
+                        h: 20.0,
+                    }],
+                },
+                style: Style {
+                    color: Color {
+                        r: 255,
+                        g: 255,
+                        b: 0,
+                    },
+                    fill: None,
+                    opacity: 1.0,
+                    stroke_width: 1.0,
+                    font_size: 12.0,
+                },
+                contents: String::new(),
+                author: String::new(),
+            },
+        )
+        .unwrap();
+        let bytes = doc.to_bytes().unwrap();
+        let guard = engine::guard();
+        // Précondition : le surlignage n'a pas encore d'apparence (sinon le test ne dit rien).
+        let before = engine::load_bytes(&guard, bytes.clone(), None).unwrap();
+        assert!(lacks_markup_appearance(&before.pages().get(0).unwrap()));
+        drop(before);
+        let fresh = engine::load_bytes(&guard, bytes, None).unwrap();
+        let all = ensure_appearances(&guard, &fresh, &[99, 0]);
+        assert!(!all, "la page 99 n'existe pas : échec signalé");
+        let page = fresh.pages().get(0).unwrap();
+        assert!(
+            !lacks_markup_appearance(&page),
+            "la page 0 a reçu son apparence malgré l'échec de la page 99"
+        );
+    }
 }

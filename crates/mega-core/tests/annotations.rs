@@ -1105,8 +1105,10 @@ fn highlight_added_then_saved_has_an_appearance_stream() {
     let (subtype, stream) = &found[0];
     assert_eq!(subtype, "Highlight");
     let stream = stream.as_deref().expect("/AP /N absent");
+    // Un surlignage se fond dans le texte qu'il recouvre (mode `Multiply`) ; un autre mode de
+    // fusion (`/BM /Normal`) le masquerait.
     assert!(
-        stream.contains("Multiply") || stream.contains("BM"),
+        stream.contains("Multiply"),
         "mode de fusion absent : {stream}"
     );
 }

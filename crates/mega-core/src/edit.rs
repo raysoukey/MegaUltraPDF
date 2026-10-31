@@ -831,16 +831,22 @@ impl Document {
         // Chaque rendu avec annotations laisse dans le document PDFium des objets orphelins
         // (apparences de popup) que `save_to_bytes` écrirait. On recharge donc depuis les octets
         // courants (seuls les objets atteignables survivent), PUIS on fait écrire à PDFium les
-        // apparences manquantes de ce document propre : ces rendus-là sont voulus et ne
-        // laissent que les objets d'apparence utiles, le document en mémoire repart léger.
+        // apparences manquantes de ce document propre. Ces rendus-là sont voulus, mais ils
+        // créent eux aussi des popups orphelins (PDFium en fabrique au rendu) : la passe
+        // `cleanup::prune` qui suit les retire, si bien que le fichier écrit ne garde que les
+        // objets d'apparence utiles.
         let dirty = self.to_bytes()?;
-        let need_appearances = crate::cleanup::need_appearances_flag(&dirty, self.password());
+        // Une passe `lopdf` dit quelles pages rendre ; illisible, aucun rendu, et les
+        // apparences ne sont pas réputées à jour (`/NeedAppearances` reste).
+        let plan = crate::cleanup::save_plan(&dirty, self.password());
         let (bytes, appearances_fresh) = {
             let guard = engine::guard();
             let clean = engine::load_bytes(&guard, dirty, self.password())?;
             // Les marquages et widgets sans apparence (ou à régénérer) en reçoivent une avant
             // l'écriture ; un échec de rendu n'empêche pas d'enregistrer.
-            let fresh = crate::annotations::ensure_appearances(&clean, need_appearances);
+            let fresh = plan.as_ref().is_some_and(|plan| {
+                crate::annotations::ensure_appearances(&guard, &clean, &plan.pages)
+            });
             let bytes = clean.save_to_bytes()?;
             self.replace_inner(clean);
             (bytes, fresh)
@@ -849,7 +855,13 @@ impl Document {
         // Si une suppression a eu lieu et que le nettoyage n'a pas pu retirer ses restes,
         // écrire les octets de PDFium ferait survivre ce que l'utilisateur a supprimé : refus
         // (audit E1).
-        let options = crate::cleanup::CleanupOptions { appearances_fresh };
+        // `..Default::default()` alors que l'unique réglage est déjà donné (clippy le juge
+        // inutile) : un réglage ajouté à `CleanupOptions` ne changera pas cet appel.
+        #[allow(clippy::needless_update)]
+        let options = crate::cleanup::CleanupOptions {
+            appearances_fresh,
+            ..Default::default()
+        };
         crate::cleanup::before_save_with(&bytes, self.password(), self.file_version(), options)?
             .into_checked(self.needs_cleanup, "enregistrement refusé")
     }

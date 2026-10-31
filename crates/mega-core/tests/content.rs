@@ -844,3 +844,72 @@ fn two_unicode_insertions_embed_one_font_after_save() {
     assert_eq!(programs.len(), 1, "un seul programme de police");
     assert!(doc.page_text(0).unwrap().contains('Ж'));
 }
+
+/// Programmes `/FontFile2` d'un fichier enregistré (objets distincts) et leurs octets.
+fn font_files(saved: &lopdf::Document) -> Vec<(lopdf::ObjectId, usize)> {
+    let ids = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| d.get(b"FontFile2").ok())
+        .filter_map(|r| r.as_reference().ok())
+        .collect::<std::collections::BTreeSet<_>>();
+    ids.into_iter()
+        .map(|id| {
+            (
+                id,
+                saved
+                    .get_object(id)
+                    .unwrap()
+                    .as_stream()
+                    .unwrap()
+                    .content
+                    .len(),
+            )
+        })
+        .collect()
+}
+
+/// Lot 14 (audit E10) : PDFium incorpore la police Unicode **entière** (≈ 386 Ko) ;
+/// l'enregistrement n'en garde que les glyphes dessinés, sans changer le rendu ni le texte.
+#[test]
+fn inserted_unicode_text_embeds_a_subset_font() {
+    let simple = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/simple.pdf"
+    ))
+    .unwrap();
+    let mut doc = Document::from_bytes(simple, None).unwrap();
+    let style = text_style(FontFamily::Unicode, false, false, 24.0);
+    doc.insert_text(0, [100.0, 500.0], "Ω", &style).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("subset.pdf");
+    doc.save_as(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let saved = lopdf::Document::load_mem(&bytes).unwrap();
+    let files = font_files(&saved);
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(files[0].1 < 40 * 1024, "police de {} octets", files[0].1);
+    let tagged = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| d.get(b"BaseFont").ok()?.as_name().ok())
+        .filter(|name| name.ends_with(b"DejaVuSans"))
+        .collect::<Vec<_>>();
+    assert!(!tagged.is_empty());
+    for name in tagged {
+        assert!(
+            name.len() == 17 && name[..6].iter().all(u8::is_ascii_uppercase) && name[6] == b'+',
+            "{}",
+            String::from_utf8_lossy(name)
+        );
+    }
+    let reopened = Document::from_bytes(bytes, None).unwrap();
+    assert!(reopened.page_text(0).unwrap().contains('Ω'));
+    let diff = mega_core::compare::compare_pages(&doc, 0, &reopened, 0, 1.0).unwrap();
+    assert_eq!(
+        diff.differing_pixels, 0,
+        "rendu changé par le sous-ensemble"
+    );
+}

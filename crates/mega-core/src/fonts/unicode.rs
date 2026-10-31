@@ -221,7 +221,10 @@ impl Type0Writer {
             Dictionary::from_iter(vec![("Length1", Object::Integer(length1))]),
             program,
         ));
-        let base_font = format!("{}+DejaVuSans", subset_tag(&self.chars));
+        let base_font = format!(
+            "{}+DejaVuSans",
+            subset_tag(self.chars.iter().map(|c| u32::from(*c)))
+        );
         let [x0, y0, x1, y1] = font.bbox();
         let descriptor_id = doc.add_object(Dictionary::from_iter(vec![
             ("Type", Object::Name(b"FontDescriptor".to_vec())),
@@ -297,20 +300,26 @@ impl Type0Writer {
 }
 
 /// Un flux comprimé (Flate) ; s'il ne se comprime pas, il reste tel quel.
-fn compressed(dict: Dictionary, content: Vec<u8>) -> Stream {
+pub(crate) fn compressed(dict: Dictionary, content: Vec<u8>) -> Stream {
     let mut stream = Stream::new(dict, content);
     // `compress` ne fait rien si le résultat serait plus gros ; une erreur laisse le flux brut.
     let _ = stream.compress();
     stream
 }
 
-/// Étiquette de sous-ensemble (six majuscules, §9.6.4) : déterministe, tirée des caractères,
-/// pour que deux sous-ensembles différents d'un même fichier ne portent pas le même nom.
-fn subset_tag(chars: &[char]) -> String {
+/// Étiquette de sous-ensemble (six majuscules, §9.6.4) : déterministe, tirée des valeurs
+/// qui définissent le sous-ensemble (caractères pour `Type0Writer`, glyphes gardés pour
+/// `cleanup::subset`), pour que deux sous-ensembles différents d'un même fichier ne portent
+/// pas le même nom.
+///
+/// \[Apprentissage\] `impl IntoIterator<Item = u32>` accepte tout ce qui se parcourt en
+/// donnant des `u32` : un `Vec`, un `BTreeSet`, ou un itérateur construit à l'appel
+/// (`chars.iter().map(…)`), sans copie intermédiaire.
+pub(crate) fn subset_tag(values: impl IntoIterator<Item = u32>) -> String {
     // FNV-1a 32 bits : un hachage simple, suffisant pour distinguer des noms.
     let mut hash: u32 = 0x811c_9dc5;
-    for c in chars {
-        for byte in u32::from(*c).to_le_bytes() {
+    for value in values {
+        for byte in value.to_le_bytes() {
             hash ^= u32::from(byte);
             hash = hash.wrapping_mul(0x0100_0193);
         }
@@ -321,6 +330,17 @@ fn subset_tag(chars: &[char]) -> String {
             char::from(b'A' + letter as u8)
         })
         .collect()
+}
+
+/// Vrai si `bytes` est **exactement** le programme de [`DEJAVU_SANS`] : c'est ce que PDFium
+/// incorpore quand il charge notre police Unicode (`Document::unicode_font_unlocked`), entier,
+/// et que l'enregistrement remplace par un sous-ensemble (`cleanup::subset`, audit E10).
+///
+/// Pourquoi une comparaison complète plutôt que la seule longueur : un autre programme de même
+/// taille (une autre police, une DejaVu modifiée) ne doit jamais être réduit avec nos tables.
+/// Comparer 740 Ko en mémoire coûte bien moins que la décompression qui précède.
+pub(crate) fn is_full_dejavu(bytes: &[u8]) -> bool {
+    bytes == DEJAVU_SANS
 }
 
 /// CMap `/ToUnicode` (§9.10.3) : un `bfchar` par CID, valeur en UTF-16BE (paire de

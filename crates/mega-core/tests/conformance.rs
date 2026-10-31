@@ -325,6 +325,14 @@ fn annotations_and_content_produce_conforming_files() {
             ],
         ),
         (
+            // E10 (Lot 14) : la police Unicode incorporée par PDFium sort en sous-ensemble.
+            "tampon Unicode",
+            "simple.pdf",
+            vec![json!({"kind": "add_annotation", "page": 0, "annotation": {
+                "kind": "stamp", "geometry": {"kind": "rect", "rect": rect(100.0, 400.0, 200.0, 40.0)},
+                "style": style(), "contents": "Ωμέγα Жук", "author": "Moi"}})],
+        ),
+        (
             "image insérée",
             "simple.pdf",
             vec![

@@ -88,8 +88,10 @@ historique ni aucune écriture sûre.
   système pendant l'écriture peut le laisser tronqué, la copie de sécurité restant à côté.
 - `split_to_dir` refuse d'écraser un fichier existant (sauf `--force` au CLI) et un préfixe
   qui sort du dossier.
-- `move_pages` est implémenté par copie depuis un instantané puis suppression
-  (`pdfium-render` n'expose pas `FPDF_MovePages`) : les signets qui visaient les pages
-  déplacées peuvent être perdus. Documenté, à revoir avec `lopdf` (ADR-0003).
+- `move_pages` : déplacement par `lopdf` depuis le Lot 14 (`pages/reorder.rs`, audit E4) :
+  `pdfium-render` n'expose pas `FPDF_MovePages`, on réordonne donc les `/Kids` de l'arbre des
+  pages et la page reste le même objet ; signets, destinations, liens, balisage et formulaire
+  qui la visent restent valables. Après `delete_pages`, l'enregistrement retire les
+  destinations qui visaient une page supprimée (`cleanup::neutralize_dead_destinations`).
 - Tests : `crates/mega-core/tests/{pages,edit,service}.rs`, `crates/mega-cli/tests/cli.rs`,
   scénario CDP `scripts/scenarios/edition-pages.json`.

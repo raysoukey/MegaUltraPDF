@@ -443,3 +443,74 @@ fn attachments_still_encrypted_in_an_identity_file_are_not_carried() {
     let part = Document::from_bytes(doc.extract_pages(&[0]).unwrap(), None).unwrap();
     assert!(part.attachments().unwrap().is_empty());
 }
+
+// --- Déplacement par l'arbre des pages (Lot 14, audit E4) -------------------------------------
+
+#[test]
+fn moving_a_page_keeps_its_links_tagging_and_the_bookmarks_to_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = rich();
+    doc.move_pages(&[0], 2).unwrap();
+    let path = dir.path().join("deplacee.pdf");
+    doc.save_as(&path).unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    let reopened = Document::from_bytes(saved.clone(), None).unwrap();
+    assert_eq!(labels(&reopened), ["Page2", "Page3", "Page1"]);
+    // La page déplacée reste le même objet : ses liens, son widget et ce qui la vise suivent.
+    let links: Vec<LinkTarget> = reopened
+        .links(2)
+        .unwrap()
+        .into_iter()
+        .map(|l| l.target)
+        .collect();
+    assert_eq!(
+        links,
+        [
+            LinkTarget::Page(0),
+            LinkTarget::Page(1),
+            LinkTarget::Page(1)
+        ]
+    );
+    assert_eq!(reopened.annotations(2).unwrap().len(), 4);
+    let names: Vec<String> = fields(&reopened).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["nom"], "le widget reste dans /AcroForm /Fields");
+    let outline: Vec<(String, Option<u16>)> = reopened
+        .outline()
+        .unwrap()
+        .into_iter()
+        .map(|n| (n.title, n.page))
+        .collect();
+    assert_eq!(
+        outline,
+        [
+            ("Vers chap2".to_string(), Some(0)),
+            ("Vers chap3".to_string(), Some(1)),
+            ("Direct p3".to_string(), Some(1)),
+        ]
+    );
+    // Balisage : la page garde sa clé dans l'arbre de structure et son contenu marqué.
+    let lo = lopdf::Document::load_mem(&saved).unwrap();
+    let moved = lo.get_pages()[&3];
+    let page = lo.get_dictionary(moved).unwrap();
+    assert_eq!(page.get(b"StructParents").unwrap().as_i64().unwrap(), 0);
+    let content = lo.get_page_content(moved);
+    assert!(content.windows(3).any(|w| w == b"BDC"));
+}
+
+#[test]
+fn moving_a_page_in_an_aes256_document_keeps_the_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/encrypted.pdf");
+    let mut doc = Document::open(source, Some("secret")).unwrap();
+    let first = doc.page_text(0).unwrap();
+    doc.move_pages(&[0], 2).unwrap();
+    let path = dir.path().join("chiffre.pdf");
+    doc.save_as(&path).unwrap();
+    let reopened = Document::open(&path, Some("secret")).unwrap();
+    assert_eq!(reopened.page_count(), 3);
+    assert_eq!(reopened.page_text(2).unwrap(), first);
+    assert!(matches!(
+        Document::open(&path, None),
+        Err(CoreError::PasswordRequired)
+    ));
+}

@@ -527,3 +527,30 @@ fn signing_unusual_structures_gives_intact_conforming_signatures() {
         }
     }
 }
+
+/// Déplacer une page d'un catalogue riche réordonne l'arbre des pages (`/Kids`) ; supprimer
+/// une page neutralise les destinations qui la visaient (Lot 14, audit E4).
+#[test]
+fn moving_and_deleting_rich_pages_produce_conforming_files() {
+    let Some(qpdf) = qpdf() else { return };
+    use serde_json::json;
+    let dir = tempfile::tempdir().unwrap();
+    for (what, json) in [
+        (
+            "déplacer p1 en fin",
+            json!({"kind": "move_pages", "pages": [0], "to": 2}),
+        ),
+        (
+            "supprimer p2",
+            json!({"kind": "delete_pages", "pages": [1]}),
+        ),
+    ] {
+        let mut doc =
+            Document::from_bytes(mega_core::testing::rich_catalog_pdf("1.7", None), None).unwrap();
+        let command: EditCommand = serde_json::from_value(json).unwrap();
+        doc.apply(&command).unwrap();
+        let out = dir.path().join("sortie.pdf");
+        doc.save_as(&out).unwrap();
+        assert_conforms(&qpdf, &out, None, what);
+    }
+}

@@ -72,6 +72,8 @@ pub fn before_save(
         clean_page_annotations(doc, *page_id)?;
         identify_annotations(doc, *page_id)?;
     }
+    // Avant le retrait des liens pendants : un lien retiré ici y perd aussi popup et `/OBJR`.
+    neutralize_dead_destinations(doc);
     drop_dangling_annotation_links(doc, &pages)?;
     dedupe_font_files(doc);
     // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
@@ -532,6 +534,343 @@ fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> Cor
     Ok(())
 }
 
+// --- Destinations vers une page supprimée (Lot 14, audit E4) -------------------------------
+
+/// Profondeur suivie dans l'arbre des signets et l'arbre de noms `/Dests` (même borne que la
+/// lecture des signets).
+const MAX_DEPTH: usize = crate::outline::MAX_OUTLINE_DEPTH;
+
+/// Retire du document les destinations qui visent une page absente de l'arbre des pages
+/// (`get_pages`) : une page supprimée par PDFium devient un objet `null`, mais signets, liens
+/// et destinations nommées la citaient encore (audit E4).
+///
+/// - entrées de `/Names /Dests` et du `/Dests` du catalogue vers une page morte : retirées ;
+/// - signet (`/Outlines`) dont la `/Dest` ou l'action `/A /S /GoTo /D` vise une page morte,
+///   directement ou par un nom retiré : il perd cette clé, mais reste (son titre et ses
+///   enfants gardent leur sens) ;
+/// - annotation de lien dans ce cas : retirée de `/Annots` (un lien sans cible ne mène nulle
+///   part) ;
+/// - `/OpenAction` du catalogue dans ce cas : retirée.
+///
+/// Pourquoi : un autre lecteur suivrait ces références vers un objet nul, et un objet encore
+/// cité échapperait à l'élagage (`prune`) qui suit.
+pub(crate) fn neutralize_dead_destinations(doc: &mut Document) {
+    let live: BTreeSet<ObjectId> = doc.get_pages().into_values().collect();
+    if live.is_empty() {
+        return;
+    }
+    let dead_names = drop_dead_named_destinations(doc, &live);
+    let dead = Dead {
+        live: &live,
+        names: &dead_names,
+    };
+    // Signets : clés retirées après coup (lecture puis écriture, pour le vérificateur
+    // d'emprunts).
+    let mut fixes: Vec<(ObjectId, &'static [u8])> = Vec::new();
+    for item in outline_items(doc) {
+        let Ok(dict) = doc.get_dictionary(item) else {
+            continue;
+        };
+        if dict.get(b"Dest").is_ok_and(|d| dead.dest(doc, d)) {
+            fixes.push((item, b"Dest"));
+        }
+        if dict.get(b"A").is_ok_and(|a| dead.goto(doc, a)) {
+            fixes.push((item, b"A"));
+        }
+    }
+    for (item, key) in fixes {
+        if let Ok(dict) = doc.get_dictionary_mut(item) {
+            dict.remove(key);
+        }
+    }
+    // Liens des pages vivantes.
+    for page_id in &live {
+        let Some((array_id, items)) = page_annots(doc, *page_id) else {
+            continue;
+        };
+        let kept: Vec<Object> = items
+            .iter()
+            .filter(|item| !dead.link(doc, item))
+            .cloned()
+            .collect();
+        if kept.len() == items.len() {
+            continue;
+        }
+        match array_id {
+            Some(id) => {
+                doc.objects.insert(id, Object::Array(kept));
+            }
+            None => {
+                if let Ok(page) = doc.get_dictionary_mut(*page_id) {
+                    page.set("Annots", Object::Array(kept));
+                }
+            }
+        }
+    }
+    // Action d'ouverture.
+    let open_action_dead = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"OpenAction").ok())
+        .is_some_and(|action| dead.dest(doc, action) || dead.goto(doc, action));
+    if open_action_dead && let Ok(catalog) = doc.catalog_mut() {
+        catalog.remove(b"OpenAction");
+    }
+}
+
+/// Ce qui est mort : toute page hors de `live`, tout nom de `names`.
+struct Dead<'a> {
+    live: &'a BTreeSet<ObjectId>,
+    names: &'a BTreeSet<Vec<u8>>,
+}
+
+impl Dead<'_> {
+    /// Vrai si la destination `dest` (tableau explicite, `<< /D … >>` ou nom) mène à une page
+    /// morte. Une destination vers une page désignée par son numéro (`GoToR`) n'est pas jugée.
+    fn dest(&self, doc: &Document, dest: &Object) -> bool {
+        let Ok((_, dest)) = doc.dereference(dest) else {
+            return false;
+        };
+        let dest = match dest {
+            Object::String(name, _) | Object::Name(name) => return self.names.contains(name),
+            Object::Dictionary(dict) => match dict.get(b"D").and_then(|d| doc.dereference(d)) {
+                Ok((_, d)) => d,
+                Err(_) => return false,
+            },
+            other => other,
+        };
+        dest.as_array()
+            .ok()
+            .and_then(|items| items.first())
+            .and_then(|page| page.as_reference().ok())
+            .is_some_and(|page| !self.live.contains(&page))
+    }
+
+    /// Vrai si `action` est une action `/GoTo` dont la `/D` mène à une page morte.
+    fn goto(&self, doc: &Document, action: &Object) -> bool {
+        let Ok(Ok(action)) = doc.dereference(action).map(|(_, a)| a.as_dict()) else {
+            return false;
+        };
+        action.get(b"S").and_then(Object::as_name).ok() == Some(b"GoTo".as_slice())
+            && action.get(b"D").is_ok_and(|d| self.dest(doc, d))
+    }
+
+    /// Vrai si `item` (élément de `/Annots`) est un lien vers une page morte.
+    fn link(&self, doc: &Document, item: &Object) -> bool {
+        let dict = match item {
+            Object::Reference(id) => doc.get_dictionary(*id).ok(),
+            Object::Dictionary(dict) => Some(dict),
+            _ => None,
+        };
+        dict.is_some_and(|d| {
+            subtype(d) == b"Link"
+                && (d.get(b"Dest").is_ok_and(|dest| self.dest(doc, dest))
+                    || d.get(b"A").is_ok_and(|a| self.goto(doc, a)))
+        })
+    }
+}
+
+/// Les signets de `/Outlines` (pile explicite, chacun visité une fois, profondeur bornée).
+fn outline_items(doc: &Document) -> Vec<ObjectId> {
+    let mut items = Vec::new();
+    let root = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"Outlines").ok())
+        .and_then(|o| doc.dereference(o).ok())
+        .and_then(|(_, o)| o.as_dict().ok());
+    let Some(first) = root.and_then(|r| r.get(b"First").and_then(Object::as_reference).ok()) else {
+        return items;
+    };
+    let mut seen = BTreeSet::new();
+    // (premier enfant d'une liste de frères, profondeur)
+    let mut stack = vec![(first, 1)];
+    while let Some((first, depth)) = stack.pop() {
+        let mut next = Some(first);
+        while let Some(id) = next {
+            if !seen.insert(id) {
+                break;
+            }
+            let Ok(dict) = doc.get_dictionary(id) else {
+                break;
+            };
+            items.push(id);
+            if depth < MAX_DEPTH
+                && let Ok(child) = dict.get(b"First").and_then(Object::as_reference)
+            {
+                stack.push((child, depth + 1));
+            }
+            next = dict.get(b"Next").and_then(Object::as_reference).ok();
+        }
+    }
+    items
+}
+
+/// Retire les destinations nommées (`/Names /Dests`, `/Dests` du catalogue) qui mènent à une
+/// page hors de `live`, et rend les noms qui n'existent plus nulle part.
+fn drop_dead_named_destinations(
+    doc: &mut Document,
+    live: &BTreeSet<ObjectId>,
+) -> BTreeSet<Vec<u8>> {
+    let no_names = BTreeSet::new();
+    let dead = Dead {
+        live,
+        names: &no_names,
+    };
+    let mut removed = BTreeSet::new();
+    let mut kept = BTreeSet::new();
+    // `/Dests` du catalogue (PDF 1.1) : nom → destination.
+    let dests_id = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"Dests").ok())
+        .and_then(|d| d.as_reference().ok());
+    let dests = match dests_id {
+        Some(id) => doc.get_dictionary(id).ok(),
+        None => doc
+            .catalog()
+            .ok()
+            .and_then(|c| c.get(b"Dests").ok())
+            .and_then(|d| d.as_dict().ok()),
+    };
+    if let Some(dests) = dests {
+        for (name, value) in dests.iter() {
+            if dead.dest(doc, value) {
+                removed.insert(name.clone());
+            } else {
+                kept.insert(name.clone());
+            }
+        }
+    }
+    if !removed.is_empty() {
+        let dests = match dests_id {
+            Some(id) => doc.get_dictionary_mut(id).ok(),
+            None => doc
+                .catalog_mut()
+                .ok()
+                .and_then(|c| c.get_mut(b"Dests").ok())
+                .and_then(|d| d.as_dict_mut().ok()),
+        };
+        if let Some(dests) = dests {
+            for name in &removed {
+                dests.remove(name);
+            }
+        }
+    }
+    // Arbre `/Names /Dests` (PDF 1.2) : chaque nœud filtre ses paires `[nom destination …]`.
+    let mut stack: Vec<(ObjectId, usize)> = Vec::new();
+    let mut seen = BTreeSet::new();
+    let (root_id, root_kids) = match names_dests_root(doc) {
+        Some(DestsRoot::Indirect(id)) => (Some(id), Vec::new()),
+        Some(DestsRoot::Direct(node)) => {
+            let filtered = filter_name_pairs(doc, &dead, &node, &mut removed, &mut kept);
+            if let Some(pairs) = filtered
+                && let Some(root) = names_dests_root_mut(doc)
+            {
+                root.set("Names", Object::Array(pairs));
+            }
+            (None, kid_refs(&node))
+        }
+        None => (None, Vec::new()),
+    };
+    stack.extend(root_id.map(|id| (id, 0)));
+    stack.extend(root_kids.into_iter().map(|id| (id, 1)));
+    while let Some((id, depth)) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Ok(node) = doc.get_dictionary(id).cloned() else {
+            continue;
+        };
+        if let Some(pairs) = filter_name_pairs(doc, &dead, &node, &mut removed, &mut kept)
+            && let Ok(node) = doc.get_dictionary_mut(id)
+        {
+            node.set("Names", Object::Array(pairs));
+        }
+        if depth < MAX_DEPTH {
+            stack.extend(kid_refs(&node).into_iter().map(|kid| (kid, depth + 1)));
+        }
+    }
+    // Un nom retiré d'une structure mais encore présent dans l'autre reste valable.
+    removed.retain(|name| !kept.contains(name));
+    removed
+}
+
+/// Où est la racine de l'arbre `/Names /Dests` : objet indirect, ou dictionnaire direct
+/// (copié) rangé dans le dictionnaire `/Names`.
+enum DestsRoot {
+    Indirect(ObjectId),
+    Direct(Dictionary),
+}
+
+fn names_dests_root(doc: &Document) -> Option<DestsRoot> {
+    let names = doc.catalog().ok()?.get(b"Names").ok()?;
+    let dests = doc
+        .dereference(names)
+        .ok()?
+        .1
+        .as_dict()
+        .ok()?
+        .get(b"Dests")
+        .ok()?;
+    match dests {
+        Object::Reference(id) => Some(DestsRoot::Indirect(*id)),
+        Object::Dictionary(dict) => Some(DestsRoot::Direct(dict.clone())),
+        _ => None,
+    }
+}
+
+/// La racine directe de l'arbre `/Names /Dests`, modifiable.
+fn names_dests_root_mut(doc: &mut Document) -> Option<&mut Dictionary> {
+    let names_id = doc.catalog().ok()?.get(b"Names").ok()?.as_reference().ok();
+    let names = match names_id {
+        Some(id) => doc.get_dictionary_mut(id).ok()?,
+        None => doc
+            .catalog_mut()
+            .ok()?
+            .get_mut(b"Names")
+            .ok()?
+            .as_dict_mut()
+            .ok()?,
+    };
+    names.get_mut(b"Dests").ok()?.as_dict_mut().ok()
+}
+
+/// Références des `/Kids` d'un nœud d'arbre de noms.
+fn kid_refs(node: &Dictionary) -> Vec<ObjectId> {
+    node.get(b"Kids")
+        .and_then(Object::as_array)
+        .map(|kids| kids.iter().filter_map(|k| k.as_reference().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Les paires `/Names` de `node` sans celles qui mènent à une page morte, ou `None` si rien
+/// n'est à retirer. Note chaque nom dans `removed` ou `kept`.
+fn filter_name_pairs(
+    doc: &Document,
+    dead: &Dead<'_>,
+    node: &Dictionary,
+    removed: &mut BTreeSet<Vec<u8>>,
+    kept: &mut BTreeSet<Vec<u8>>,
+) -> Option<Vec<Object>> {
+    let items = node.get(b"Names").and_then(Object::as_array).ok()?;
+    let (pairs, _odd) = items.as_chunks::<2>();
+    let mut out = Vec::with_capacity(items.len());
+    let mut changed = false;
+    for [key, value] in pairs {
+        let name = key.as_str().map(<[u8]>::to_vec).unwrap_or_default();
+        if dead.dest(doc, value) {
+            removed.insert(name);
+            changed = true;
+        } else {
+            kept.insert(name);
+            out.push(key.clone());
+            out.push(value.clone());
+        }
+    }
+    changed.then_some(out)
+}
+
 /// Vrai si `dict` est un marqueur de contenu `/OBJR` dont la cible `/Obj` est dans `dead`.
 fn is_objr_to(dict: &Dictionary, dead: &BTreeSet<ObjectId>) -> bool {
     dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"OBJR".as_slice())
@@ -816,5 +1155,73 @@ mod prune_tests {
             assert_eq!(keys(&ours), keys(&theirs));
             assert!(!ours.objects.contains_key(&orphan));
         }
+    }
+}
+
+#[cfg(test)]
+mod dead_destination_tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    /// `rich_catalog_pdf` relu par lopdf, la page d'objet `page` retirée de l'arbre et
+    /// effacée (comme PDFium le fait d'une page supprimée).
+    fn rich_without(page: u32) -> Document {
+        let bytes = crate::testing::rich_catalog_pdf("1.7", None);
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        let root = doc.get_dictionary_mut((2, 0)).unwrap();
+        let kids: Vec<Object> = [3, 4, 5]
+            .into_iter()
+            .filter(|&id| id != page)
+            .map(|id| Object::Reference((id, 0)))
+            .collect();
+        root.set("Kids", kids);
+        root.set("Count", 2);
+        doc.objects.insert((page, 0), Object::Null);
+        doc
+    }
+
+    fn annots(doc: &Document) -> Vec<Object> {
+        page_annots(doc, (3, 0)).unwrap().1
+    }
+
+    #[test]
+    fn explicit_and_pdf_1_1_named_destinations_to_a_dead_page_are_neutralized() {
+        let mut doc = rich_without(5);
+        neutralize_dead_destinations(&mut doc);
+        // `/chap3` (dictionnaire `/Dests` du catalogue) est retiré, `(chap2)` reste.
+        let dests = doc.get_dictionary((14, 0)).unwrap();
+        assert!(!dests.has(b"chap3"));
+        let Some(DestsRoot::Direct(tree)) = names_dests_root(&doc) else {
+            panic!("arbre /Names /Dests direct attendu");
+        };
+        assert_eq!(tree.get(b"Names").unwrap().as_array().unwrap().len(), 2);
+        // Signets « Vers chap3 » (action `GoTo` nommée) et « Direct p3 » : sans cible.
+        assert!(!doc.get_dictionary((25, 0)).unwrap().has(b"A"));
+        assert!(!doc.get_dictionary((26, 0)).unwrap().has(b"Dest"));
+        assert!(doc.get_dictionary((24, 0)).unwrap().has(b"Dest"));
+        // Liens vers la page 3 retirés ; le lien vers chap2 et le widget restent.
+        assert_eq!(
+            annots(&doc),
+            [Object::Reference((19, 0)), Object::Reference((22, 0))]
+        );
+        // L'action d'ouverture vise la page 2, vivante.
+        assert!(doc.catalog().unwrap().has(b"OpenAction"));
+    }
+
+    #[test]
+    fn an_open_action_to_a_dead_page_is_removed() {
+        let mut doc = rich_without(4);
+        neutralize_dead_destinations(&mut doc);
+        assert!(!doc.catalog().unwrap().has(b"OpenAction"));
+        assert!(!doc.get_dictionary((24, 0)).unwrap().has(b"Dest"));
+        assert_eq!(
+            annots(&doc),
+            [
+                Object::Reference((20, 0)),
+                Object::Reference((21, 0)),
+                Object::Reference((22, 0))
+            ]
+        );
     }
 }

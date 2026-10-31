@@ -568,3 +568,71 @@ fn before_save_reports_whether_the_cleanup_applied() {
     assert!(!fallback.cleaned, "filtre inconnu de lopdf : repli");
     assert_eq!(fallback.bytes, input, "le repli rend les octets tels quels");
 }
+
+// --- Destinations orphelines après suppression de pages (Lot 14, audit E4) -------------------
+
+#[test]
+fn bookmarks_to_a_deleted_page_lose_their_destination_but_remain() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc =
+        Document::from_bytes(mega_core::testing::rich_catalog_pdf("1.7", None), None).unwrap();
+    doc.delete_pages(&[1]).unwrap();
+    let path = dir.path().join("sans-p2.pdf");
+    doc.save_as(&path).unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    let reopened = Document::from_bytes(saved.clone(), None).unwrap();
+    let outline: Vec<(String, Option<u16>)> = reopened
+        .outline()
+        .unwrap()
+        .into_iter()
+        .map(|n| (n.title, n.page))
+        .collect();
+    assert_eq!(
+        outline,
+        [
+            ("Vers chap2".to_string(), None),
+            ("Vers chap3".to_string(), Some(1)),
+            ("Direct p3".to_string(), Some(1)),
+        ]
+    );
+    // Le lien vers la page supprimée est retiré ; les deux autres restent.
+    assert_eq!(reopened.links(0).unwrap().len(), 2);
+    // Plus rien ne garde la page supprimée dans le fichier.
+    let lo = lopdf::Document::load_mem(&saved).unwrap();
+    let in_tree: std::collections::BTreeSet<lopdf::ObjectId> =
+        lo.get_pages().values().copied().collect();
+    let ghosts: Vec<lopdf::ObjectId> = lo
+        .objects
+        .iter()
+        .filter(|(id, object)| {
+            !in_tree.contains(id)
+                && object.as_dict().is_ok_and(|d| {
+                    d.get(b"Type").and_then(lopdf::Object::as_name).ok() == Some(b"Page".as_slice())
+                })
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    assert!(ghosts.is_empty(), "pages hors de l'arbre : {ghosts:?}");
+    // PDFium efface l'objet de la page supprimée : ce qui le visait pointe vers `null`. Le
+    // fichier ne doit plus le citer (signet sans `/Dest`, nom retiré, lien retiré).
+    let text = |o: &lopdf::Object| String::from_utf8_lossy(o.as_str().unwrap()).into_owned();
+    let bookmark = lo
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .find(|d| d.get(b"Title").is_ok_and(|t| text(t) == "Vers chap2"))
+        .expect("signet gardé");
+    assert!(!bookmark.has(b"Dest") && !bookmark.has(b"A"));
+    let raw = String::from_utf8_lossy(&saved);
+    assert!(!raw.contains("(chap2)"), "destination nommée retirée");
+    let page = lo.get_pages()[&1];
+    let links = lo
+        .get_page_annotations(page)
+        .unwrap()
+        .into_iter()
+        .filter(|a| {
+            a.get(b"Subtype").and_then(lopdf::Object::as_name).ok() == Some(b"Link".as_slice())
+        })
+        .count();
+    assert_eq!(links, 2, "lien vers la page supprimée retiré de /Annots");
+}

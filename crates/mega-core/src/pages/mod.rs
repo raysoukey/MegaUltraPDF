@@ -19,6 +19,7 @@ use crate::geometry::Rotation;
 use crate::pagespec::PageSpec;
 
 mod carry;
+mod reorder;
 
 impl Document {
     /// Rotation **enregistrée** dans le fichier pour la page `index` (distincte de la
@@ -103,25 +104,37 @@ impl Document {
     /// Déplace les pages `pages` (dans l'ordre du document) pour qu'elles commencent à
     /// l'index `to`, **compté une fois ces pages retirées** (`0..=page_count - pages.len()`).
     ///
-    /// PDFium n'expose pas de déplacement : on copie les pages depuis une copie du document
-    /// chargée des mêmes octets, puis on supprime les originales. Les signets qui visaient
-    /// une page déplacée peuvent être perdus (limite connue, voir la spec du Lot 2).
+    /// PDFium n'expose pas de déplacement, et une copie de page serait un nouvel objet que plus
+    /// rien ne viserait (signets, liens, balisage, formulaire : audit E4). Depuis le Lot 14, on
+    /// réordonne donc l'arbre des pages avec `lopdf` (`reorder::reorder_kids`) : la page reste
+    /// le même objet. Le document est déchiffré puis rechiffré à l'identique
+    /// (`crypt::LopdfSession`) et rechargé dans PDFium.
     pub fn move_pages(&mut self, pages: &[u16], to: u16) -> CoreResult<()> {
         self.mark_changed();
-        let guard = engine::guard();
-        let moved = self.unique_indices_unlocked(pages)?;
-        let remaining = self.count_unlocked() as usize - moved.len();
-        if to as usize > remaining {
-            return Err(CoreError::PageOutOfRange {
-                index: to,
-                count: remaining as u16,
-            });
+        let count = {
+            let _guard = engine::guard();
+            let moved = self.unique_indices_unlocked(pages)?;
+            let count = self.count_unlocked();
+            let remaining = usize::from(count) - moved.len();
+            if usize::from(to) > remaining {
+                return Err(CoreError::PageOutOfRange {
+                    index: to,
+                    count: remaining as u16,
+                });
+            }
+            count
+        };
+        // `to_bytes` et `reload_from_bytes` prennent eux-mêmes le jeton (non réentrant).
+        let mut session = crate::crypt::LopdfSession::load(&self.to_bytes()?, self.password())?;
+        // Index de PDFium et de lopdf doivent désigner les mêmes pages.
+        if session.doc.get_pages().len() != usize::from(count) {
+            return Err(CoreError::InvalidOperation(
+                "déplacement impossible : lopdf ne voit pas les mêmes pages que PDFium".to_string(),
+            ));
         }
-        let snapshot = engine::load_bytes(&guard, self.inner().save_to_bytes()?, self.password())?;
-        for i in moved.iter().rev() {
-            self.inner().pages().get(*i)?.delete()?;
-        }
-        copy_pages(self.inner_mut(), &snapshot, &moved, PdfPageIndex::from(to))
+        reorder::reorder_kids(&mut session.doc, pages, to)?;
+        let bytes = session.finish()?;
+        self.reload_from_bytes(bytes)
     }
 
     /// Nouveau document composé des pages `pages` (dans l'ordre donné) ; l'original est intact.

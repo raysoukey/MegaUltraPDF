@@ -313,7 +313,6 @@ impl Document {
     /// Déplace l'objet `index` de `(dx, dy)` points, en axes **affichés** (sur une page
     /// tournée, « vers la droite à l'écran » reste vers la droite à l'écran).
     pub fn move_object(&mut self, page: u16, index: u16, dx: f32, dy: f32) -> CoreResult<()> {
-        self.ensure_cleanable()?;
         self.mark_changed();
         if !(dx.is_finite() && dy.is_finite()) {
             return Err(invalid("déplacement invalide"));
@@ -340,7 +339,6 @@ impl Document {
     /// mise à l'échelle puis translation de sa matrice, en espace utilisateur (pages tournées
     /// comprises). Refuse un rectangle vide ou non fini, et un objet sans étendue.
     pub fn resize_object(&mut self, page: u16, index: u16, rect: Rect) -> CoreResult<()> {
-        self.ensure_cleanable()?;
         self.mark_changed();
         let finite = [rect.x, rect.y, rect.w, rect.h]
             .iter()
@@ -383,6 +381,8 @@ impl Document {
     /// `ABCDEF+Nom` qui ne contient que les glyphes utilisés), refuse aussi un caractère qui
     /// ne figure pas déjà dans le texte de l'objet : il s'afficherait mal (B22, Lot 9).
     pub fn set_object_text(&mut self, page: u16, index: u16, text: &str) -> CoreResult<()> {
+        // L'ancien texte disparaît de l'affichage : son flux d'origine devient orphelin.
+        self.ensure_cleanable()?;
         self.mark_changed();
         if text.trim().is_empty() {
             return Err(invalid("le texte ne peut pas être vide"));

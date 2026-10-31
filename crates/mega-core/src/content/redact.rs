@@ -78,6 +78,10 @@ impl Document {
     /// du **texte qui resterait sous le cache** (dessiné à travers un formulaire XObject, hors
     /// de portée du retrait par objets) : le document est alors remis dans son état d'avant.
     pub fn redact(&mut self, page: u16, rect: Rect) -> CoreResult<RedactReport> {
+        // Pose `needs_cleanup` (revue du Lot 14, C1) : l'ancien flux de contenu, devenu
+        // orphelin, contient encore le texte caviardé ; si le nettoyage était sauté à
+        // l'enregistrement, ce texte resterait dans le fichier.
+        self.ensure_cleanable()?;
         self.mark_changed();
         if !(rect.w > 0.0 && rect.h > 0.0 && rect.w.is_finite() && rect.h.is_finite()) {
             return Err(CoreError::InvalidOperation(

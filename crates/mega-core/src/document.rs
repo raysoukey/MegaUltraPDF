@@ -44,9 +44,15 @@ pub struct Document {
     /// Vrai dès qu'une modification éloigne le document de `file_bytes` ; redevient faux à
     /// l'enregistrement, ou quand annuler / rétablir ramène à l'état enregistré.
     pub(crate) changed: bool,
-    /// Une suppression (annotation, page, objet) a eu lieu depuis le dernier enregistrement :
-    /// `rewritten_bytes` refuse alors d'écrire si le nettoyage `lopdf` n'a pas pu s'appliquer,
-    /// car les restes de ce qui a été supprimé survivraient dans le fichier (audit E1).
+    /// Une opération qui retire une information (annotation, page, objet, texte, pièce jointe,
+    /// caviardage) a eu lieu depuis le dernier enregistrement : `rewritten_bytes` refuse alors
+    /// d'écrire si le nettoyage `lopdf` n'a pas pu s'appliquer, car les restes de ce qui a été
+    /// supprimé survivraient dans le fichier (audit E1).
+    ///
+    /// Drapeau **prudent** : `ensure_cleanable` le pose avant que l'opération ne valide ses
+    /// arguments (une opération refusée ensuite le laisse levé), et annuler ne le baisse pas
+    /// (l'instantané rechargé peut lui aussi porter des orphelins). Seul l'enregistrement le
+    /// remet à faux.
     pub(crate) needs_cleanup: bool,
     /// Compte rendu du caviardage que la dernière édition vient d'appliquer (sinon `None`) :
     /// l'interface le reçoit avec l'état de l'historique pour avertir l'utilisateur.
@@ -206,8 +212,9 @@ impl Document {
     }
 
     /// Le document ne correspond plus aux octets du fichier : le prochain enregistrement le
-    /// réécrira. Appelée en tête de **toute** méthode publique qui modifie le document
-    /// (appels directs du CLI compris), en plus de `apply`.
+    /// réécrira. Appelée par **toute** méthode publique qui modifie le document (appels
+    /// directs du CLI compris), en plus de `apply`, dès que la modification est certaine :
+    /// après les gardes de refus (`ensure_cleanable`, validation préalable), jamais avant.
     pub(crate) fn mark_changed(&mut self) {
         self.changed = true;
     }
@@ -220,16 +227,34 @@ impl Document {
     ///
     /// À appeler **avant** `engine::guard()` : `to_bytes` prend le verrou, non réentrant.
     pub(crate) fn ensure_cleanable(&mut self) -> CoreResult<()> {
-        if crate::cleanup::can_clean(&self.to_bytes()?, self.password()) {
-            // L'appelant va supprimer : l'enregistrement devra vérifier que le nettoyage a eu lieu.
-            self.needs_cleanup = true;
-            return Ok(());
+        match crate::cleanup::check_cleanable(&self.to_bytes()?, self.password()) {
+            Ok(()) => {
+                // L'appelant va supprimer : l'enregistrement devra vérifier que le nettoyage a
+                // eu lieu.
+                self.needs_cleanup = true;
+                Ok(())
+            }
+            // La cause est gardée (ADR-0005), sans répéter le préfixe « Opération impossible ».
+            Err(cause) => {
+                let cause = match cause {
+                    CoreError::InvalidOperation(message) => message,
+                    other => other.to_string(),
+                };
+                Err(CoreError::InvalidOperation(format!(
+                    "ce fichier ne pourrait pas être nettoyé après une suppression : la \
+                     suppression est refusée, l'ajout reste possible ({cause})"
+                )))
+            }
         }
-        Err(CoreError::InvalidOperation(
-            "ce fichier ne peut pas être nettoyé après une suppression (chiffrement ou \
-             structure que lopdf ne relit pas) : la suppression est refusée, l'ajout reste possible"
-                .to_string(),
-        ))
+    }
+
+    /// Vrai si une opération qui retire une information a eu lieu depuis le dernier
+    /// enregistrement (voir le champ `needs_cleanup`).
+    ///
+    /// Exposée uniquement pour les tests d'intégration, comme `cleanup::can_clean`.
+    #[doc(hidden)]
+    pub fn needs_cleanup(&self) -> bool {
+        self.needs_cleanup
     }
 
     /// Octets du fichier tel qu'il a été chargé ou enregistré, même si le document a été

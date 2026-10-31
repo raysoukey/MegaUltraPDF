@@ -144,6 +144,8 @@ impl Document {
 
     /// Supprime la pièce jointe `index`.
     pub fn delete_attachment(&mut self, index: u16) -> CoreResult<()> {
+        // Le flux du fichier joint deviendrait orphelin : seul le nettoyage le retire.
+        self.ensure_cleanable()?;
         self.mark_changed();
         let _guard = engine::guard();
         let attachments = self.inner_mut().attachments_mut();

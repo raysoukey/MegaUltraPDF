@@ -134,7 +134,13 @@ pub(crate) fn refuse_if_uncleaned(
 /// Exposée uniquement pour les tests d'intégration, comme [`before_save`].
 #[doc(hidden)]
 pub fn can_clean(bytes: &[u8], password: Option<&str>) -> bool {
-    crate::crypt::LopdfSession::load(bytes, password).is_ok()
+    check_cleanable(bytes, password).is_ok()
+}
+
+/// Comme [`can_clean`], avec la raison du refus (`Document::ensure_cleanable` la transmet à
+/// l'utilisateur, ADR-0005).
+pub(crate) fn check_cleanable(bytes: &[u8], password: Option<&str>) -> CoreResult<()> {
+    crate::crypt::LopdfSession::load(bytes, password).map(drop)
 }
 
 /// Octets **bruts** (encore compressés, déjà déchiffrés) des flux de contenu de chaque page,

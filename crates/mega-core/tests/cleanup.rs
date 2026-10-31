@@ -441,7 +441,17 @@ fn uncleanable_note_pdf(secret: &str) -> Vec<u8> {
 fn deleting_an_annotation_on_an_uncleanable_file_is_refused() {
     let mut doc = Document::from_bytes(uncleanable_note_pdf("SECRET-ZX9"), None).unwrap();
     let err = doc.delete_annotation(0, 0).unwrap_err();
-    assert!(matches!(err, CoreError::InvalidOperation(m) if m.contains("suppression est refusée")));
+    assert!(
+        matches!(&err, CoreError::InvalidOperation(m) if m.contains("suppression est refusée"))
+    );
+    // La cause du refus est gardée (ADR-0005, revue du Lot 14, M2), sans préfixe répété.
+    let message = err.to_string();
+    assert!(message.contains("(document chiffré"), "{message}");
+    assert_eq!(
+        message.matches("Opération impossible").count(),
+        1,
+        "{message}"
+    );
     // `is_modified` suit l'historique, pas le drapeau `changed` : `save_as` recopie les octets
     // d'origine tels quels tant que rien n'a changé.
     let dir = tempfile::tempdir().unwrap();
@@ -471,6 +481,106 @@ fn adding_an_annotation_on_an_uncleanable_file_still_works() {
         author: String::new(),
     };
     assert!(doc.add_annotation(0, &note).is_ok());
+}
+
+/// Opération de document essayée par les tests de garde (le résultat n'importe pas, seule
+/// l'erreur compte).
+type Attempt = fn(&mut Document) -> Result<(), CoreError>;
+
+fn zone() -> Rect {
+    Rect {
+        x: 10.0,
+        y: 10.0,
+        w: 200.0,
+        h: 200.0,
+    }
+}
+
+/// Revue du Lot 14 (I1) : **toute** opération qui retire une information de l'affichage ou du
+/// fichier est refusée sur un fichier que le nettoyage ne saura pas traiter, avant de toucher
+/// au document (l'enregistrement recopie alors les octets d'origine).
+#[test]
+fn every_removing_operation_is_refused_on_an_uncleanable_file() {
+    let guarded: [(&str, Attempt); 8] = [
+        ("delete_annotation", |d| d.delete_annotation(0, 0)),
+        ("update_annotation", |d| {
+            let patch = mega_core::AnnotationPatch {
+                contents: Some("autre".into()),
+                ..Default::default()
+            };
+            d.update_annotation(0, 0, &patch).map(drop)
+        }),
+        ("set_annotation_rect", |d| {
+            d.set_annotation_rect(0, 0, zone()).map(drop)
+        }),
+        ("delete_pages", |d| d.delete_pages(&[0])),
+        ("delete_object", |d| d.delete_object(0, 0)),
+        ("set_object_text", |d| d.set_object_text(0, 0, "x")),
+        ("delete_attachment", |d| d.delete_attachment(0)),
+        ("redact", |d| d.redact(0, zone()).map(drop)),
+    ];
+    let input = uncleanable_note_pdf("SECRET-ZX9");
+    let dir = tempfile::tempdir().unwrap();
+    for (name, attempt) in guarded {
+        let mut doc = Document::from_bytes(input.clone(), None).unwrap();
+        let err = attempt(&mut doc).unwrap_err();
+        assert!(
+            matches!(&err, CoreError::InvalidOperation(m) if m.contains("suppression est refusée")),
+            "{name} : {err}"
+        );
+        let out = dir.path().join(format!("{name}.pdf"));
+        doc.save_as(&out).unwrap();
+        assert!(
+            std::fs::read(&out).unwrap() == input,
+            "{name} : document touché"
+        );
+    }
+}
+
+/// Déplacer ou redimensionner un objet ne retire rien : pas de refus de nettoyage (l'opération
+/// peut échouer pour une autre raison, le contenu chiffré de cette page étant illisible).
+#[test]
+fn moving_or_resizing_an_object_is_not_refused_on_an_uncleanable_file() {
+    let free: [(&str, Attempt); 2] = [
+        ("move_object", |d| d.move_object(0, 0, 1.0, 1.0)),
+        ("resize_object", |d| d.resize_object(0, 0, zone())),
+    ];
+    for (name, attempt) in free {
+        let mut doc = Document::from_bytes(uncleanable_note_pdf("x"), None).unwrap();
+        if let Err(err) = attempt(&mut doc) {
+            assert!(
+                !err.to_string().contains("suppression est refusée"),
+                "{name} : {err}"
+            );
+        }
+    }
+}
+
+/// Revue du Lot 14 (C1, I1) : caviarder, retirer une pièce jointe ou remplacer un texte
+/// supprime quelque chose ; l'enregistrement devra vérifier que le nettoyage a eu lieu.
+#[test]
+fn removing_operations_set_needs_cleanup_on_a_normal_file() {
+    let mut doc = Document::from_bytes(mega_core::testing::rich_pdf(), None).unwrap();
+    assert!(!doc.needs_cleanup());
+    doc.redact(
+        0,
+        Rect {
+            x: 60.0,
+            y: 690.0,
+            w: 200.0,
+            h: 40.0,
+        },
+    )
+    .unwrap();
+    assert!(doc.needs_cleanup(), "redact");
+
+    let mut doc = Document::from_bytes(mega_core::testing::attachments_pdf(), None).unwrap();
+    doc.delete_attachment(0).unwrap();
+    assert!(doc.needs_cleanup(), "delete_attachment");
+
+    let mut doc = Document::from_bytes(sample_pdf(1, "objets"), None).unwrap();
+    doc.set_object_text(0, 0, "Bonjour").unwrap();
+    assert!(doc.needs_cleanup(), "set_object_text");
 }
 
 #[test]

@@ -1,0 +1,29 @@
+[
+  {
+    "wait": 2500
+  },
+  {
+    "eval": "window.__s1 = (() => { const img = document.querySelector('.page img'); return img ? Number(new URL(img.src).searchParams.get('scale')) : null; })()",
+    "label": "échelle de rendu à densité 1"
+  },
+  {
+    "deviceScale": 2
+  },
+  {
+    "wait": 2500
+  },
+  {
+    "assert": "(() => { const s2 = (() => { const img = document.querySelector('.page img'); return img ? Number(new URL(img.src).searchParams.get('scale')) : null; })(); return (window.__s1 > 0 && Math.abs(s2 - Math.min(8, window.__s1 * 2)) < 0.01 && window.devicePixelRatio === 2) || 'ERREUR ' + window.__s1 + ' → ' + s2 + ' (dpr ' + window.devicePixelRatio + ')'; })()",
+    "label": "à densité 2, la page est rendue deux fois plus fin, puis affichée à la même taille"
+  },
+  {
+    "assert": "(() => { const p = document.querySelector('.page'); const img = p.querySelector('img'); return Math.abs(img.getBoundingClientRect().width - p.getBoundingClientRect().width) < 1 || 'ERREUR taille'; })()",
+    "label": "l'image garde la taille de la page"
+  },
+  {
+    "shot": "01-densite-2.png"
+  },
+  {
+    "deviceScale": 0
+  }
+]

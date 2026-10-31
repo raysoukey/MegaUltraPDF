@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { watchScreenDensity } from '$lib/state/screen.svelte';
   import { onMount } from 'svelte';
   import { pickPdfFiles, setTesseractPath, startupFiles, takePendingPaths } from '$lib/api';
   import type { Annotation } from '$lib/api';
@@ -128,6 +129,8 @@
   });
 
   onMount(() => {
+    // Densité d'écran suivie : pages nettes à 150 % ou 200 % (Lot 13).
+    watchScreenDensity();
     let unlisten: (() => void) | undefined;
     let unlistenOpen: (() => void) | undefined;
     let unlistenClose: (() => void) | undefined;

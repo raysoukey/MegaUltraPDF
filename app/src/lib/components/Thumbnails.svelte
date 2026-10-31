@@ -4,7 +4,8 @@
   import { rotatedSize } from '$lib/logic/geometry';
   import { clickSelection, moveTarget, shiftAfterInsert, slotAtY } from '$lib/logic/pageselection';
   import { isDrag } from '$lib/logic/reorder';
-  import { pageUrl } from '$lib/pageUrl';
+  import { pageUrl, renderScale } from '$lib/pageUrl';
+  import { screen } from '$lib/state/screen.svelte';
   import {
     applyEdit,
     extractTo,
@@ -275,7 +276,14 @@
           onpointercancel={onPointerCancel}
         >
           <img
-            src={pageUrl(doc.summary.id, i, scaleFor(i), doc.rotation, doc.generation, 'thumbnail')}
+            src={pageUrl(
+              doc.summary.id,
+              i,
+              renderScale(scaleFor(i), screen.dpr),
+              doc.rotation,
+              doc.generation,
+              'thumbnail',
+            )}
             alt=""
             width={THUMB_WIDTH}
             height={heightFor(i)}

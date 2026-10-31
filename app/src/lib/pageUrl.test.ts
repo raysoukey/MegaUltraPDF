@@ -7,7 +7,8 @@ vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: (p: string, s: string) => `http://${s}.localhost/${encodeURIComponent(p)}`,
 }));
 
-import { pagePath, pageUrl } from './pageUrl';
+import { pagePath, pageUrl, renderScale } from './pageUrl';
+import { MAX_SCALE } from './logic/zoom';
 
 describe('pageUrl', () => {
   it('builds the backend path', () => {
@@ -24,5 +25,17 @@ describe('pageUrl', () => {
     expect(pageUrl(3, 0, 1.5)).toBe(
       'http://mega.localhost/page%2F3%2F0?scale=1.5&rot=0&gen=0&prio=visible',
     );
+  });
+});
+
+describe('renderScale', () => {
+  it('renders at the screen resolution on a high-DPI display (Lot 13)', () => {
+    expect(renderScale(1.5, 2)).toBe(3);
+    expect(renderScale(1, 1.25)).toBe(1.25);
+  });
+  it('never asks for less than the CSS size nor more than the backend cap', () => {
+    expect(renderScale(1, 0.5)).toBe(1);
+    expect(renderScale(6, 2)).toBe(MAX_SCALE);
+    expect(renderScale(1, 10)).toBe(3);
   });
 });

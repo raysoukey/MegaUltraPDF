@@ -2,7 +2,8 @@
 <script lang="ts">
   import { renderFailure, type Priority } from '$lib/api';
   import { pdfRectToCss } from '$lib/logic/geometry';
-  import { pageUrl } from '$lib/pageUrl';
+  import { pageUrl, renderScale } from '$lib/pageUrl';
+  import { screen } from '$lib/state/screen.svelte';
   import { type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
   import AnnotationLayer from './AnnotationLayer.svelte';
@@ -32,7 +33,14 @@
   const page = $derived(doc.summary.pages[index]);
   // L'URL demandée change avec l'échelle, la rotation et la génération.
   const wanted = $derived(
-    pageUrl(doc.summary.id, index, doc.scale, doc.rotation, doc.generation, priority),
+    pageUrl(
+      doc.summary.id,
+      index,
+      renderScale(doc.scale, screen.dpr),
+      doc.rotation,
+      doc.generation,
+      priority,
+    ),
   );
 
   // On garde l'image précédente à l'écran (mise à l'échelle par CSS) jusqu'à ce que la

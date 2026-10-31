@@ -829,24 +829,28 @@ impl Document {
     /// passe de nettoyage `lopdf`. Sert aussi de base à une signature d'un document modifié.
     pub(crate) fn rewritten_bytes(&mut self) -> CoreResult<Vec<u8>> {
         // Chaque rendu avec annotations laisse dans le document PDFium des objets orphelins
-        // (apparences de popup) que `save_to_bytes` écrirait. Recharger depuis les octets
-        // courants ne garde que les objets atteignables : le fichier enregistré est propre,
-        // et le document en mémoire repart léger.
+        // (apparences de popup) que `save_to_bytes` écrirait. On recharge donc depuis les octets
+        // courants (seuls les objets atteignables survivent), PUIS on fait écrire à PDFium les
+        // apparences manquantes de ce document propre : ces rendus-là sont voulus et ne
+        // laissent que les objets d'apparence utiles, le document en mémoire repart léger.
         let dirty = self.to_bytes()?;
-        let bytes = {
+        let need_appearances = crate::cleanup::need_appearances_flag(&dirty, self.password());
+        let (bytes, appearances_fresh) = {
             let guard = engine::guard();
             let clean = engine::load_bytes(&guard, dirty, self.password())?;
-            // Les marquages et widgets sans apparence en reçoivent une avant l'écriture.
-            crate::annotations::ensure_appearances(&clean)?;
+            // Les marquages et widgets sans apparence (ou à régénérer) en reçoivent une avant
+            // l'écriture ; un échec de rendu n'empêche pas d'enregistrer.
+            let fresh = crate::annotations::ensure_appearances(&clean, need_appearances);
             let bytes = clean.save_to_bytes()?;
             self.replace_inner(clean);
-            bytes
+            (bytes, fresh)
         };
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
         // Si une suppression a eu lieu et que le nettoyage n'a pas pu retirer ses restes,
         // écrire les octets de PDFium ferait survivre ce que l'utilisateur a supprimé : refus
         // (audit E1).
-        crate::cleanup::before_save(&bytes, self.password(), self.file_version())?
+        let options = crate::cleanup::CleanupOptions { appearances_fresh };
+        crate::cleanup::before_save_with(&bytes, self.password(), self.file_version(), options)?
             .into_checked(self.needs_cleanup, "enregistrement refusé")
     }
 

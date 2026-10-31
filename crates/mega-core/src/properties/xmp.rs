@@ -31,7 +31,7 @@ pub(super) fn xmp_li(xmp: &str, tag: &str, prefer_default: bool) -> Option<Strin
 /// Texte brut d'une propriété XMP simple, écrite en attribut (`nom="2"`, guillemets ou
 /// apostrophes) ou en élément (`<nom>2</nom>`, jusqu'à la balise fermante, pour qu'une
 /// section CDATA ne la coupe pas). Partagé par `xmp_value` et `xmp_text`.
-pub(super) fn xmp_raw<'a>(xmp: &'a str, name: &str) -> Option<&'a str> {
+fn xmp_raw<'a>(xmp: &'a str, name: &str) -> Option<&'a str> {
     let attribute = ['"', '\''].into_iter().find_map(|quote| {
         let start = format!(" {name}={quote}");
         let from = xmp.find(&start)? + start.len();
@@ -53,7 +53,7 @@ pub(super) fn xmp_text(xmp: &str, name: &str) -> Option<String> {
 /// caractères de contrôle retirés (tabulation et fins de ligne deviennent des espaces),
 /// espaces rognés, tronqué à `MAX_METADATA_CHARS`. `None` si rien ne reste : une donnée
 /// de fichier n'est pas fiable.
-pub(super) fn clean_xmp_text(raw: &str) -> Option<String> {
+fn clean_xmp_text(raw: &str) -> Option<String> {
     let mut out = String::new();
     let mut rest = raw;
     while !rest.is_empty() {
@@ -87,7 +87,7 @@ pub(super) fn clean_xmp_text(raw: &str) -> Option<String> {
 /// Ajoute à `out` le texte `raw` dont les entités XML sont décodées. Une entité inconnue ou
 /// mal formée (`R&D;`, `&` sans `;` proche) reste telle quelle ; un numérique bien formé mais
 /// invalide (`&#0;`, `&#xD800;`) est écarté.
-pub(super) fn decode_entities(raw: &str, out: &mut String) {
+fn decode_entities(raw: &str, out: &mut String) {
     // Longueur maximale d'une entité acceptée, en OCTETS : la recherche du `;` est bornée
     // (pas de balayage quadratique sur un flux hostile) et tombe sur une frontière de
     // caractère, `;` étant ASCII.
@@ -183,7 +183,7 @@ pub(super) fn pdfa_claim_of(doc: &lopdf::Document) -> Option<String> {
 }
 
 /// Texte du flux XMP `/Metadata` du catalogue, s'il existe.
-pub(super) fn xmp_of(doc: &lopdf::Document) -> Option<String> {
+fn xmp_of(doc: &lopdf::Document) -> Option<String> {
     let metadata = doc.catalog().ok()?.get(b"Metadata").ok()?;
     let (_, stream) = doc.dereference(metadata).ok()?;
     let xmp = crate::crypt::stream_bytes(stream.as_stream().ok()?)?;
@@ -198,7 +198,7 @@ pub(crate) fn declares_conformance(doc: &lopdf::Document) -> bool {
 }
 
 /// Valeur d'une propriété XMP courte (un chiffre, une lettre) : `pdfaid:part`.
-pub(super) fn xmp_value(xmp: &str, name: &str) -> Option<String> {
+fn xmp_value(xmp: &str, name: &str) -> Option<String> {
     xmp_raw(xmp, name)
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty() && v.len() <= 8)
@@ -303,38 +303,57 @@ fn remove_element(xmp: &str, tag: &str) -> Option<String> {
     None
 }
 
-/// Insère `element` au début du premier `rdf:Description`, en déclarant l'espace de noms de
-/// son préfixe (`dc`, `pdf`) s'il ne l'est pas déjà. Un `rdf:Description` vide
-/// (`<rdf:Description …/>`) est rouvert. `None` s'il n'y en a pas.
-fn insert_property(xmp: &str, tag: &str, element: &str) -> Option<String> {
-    let start = xmp.find("<rdf:Description")?;
-    // Fin de la balise ouvrante : le premier `>` hors guillemets (une valeur d'attribut peut
-    // contenir `>`).
+/// Fin (index du `>`) de la balise ouvrante qui commence en `start` : le premier `>` hors
+/// guillemets, car une valeur d'attribut peut en contenir un.
+fn open_tag_end(xmp: &str, start: usize) -> Option<usize> {
     let mut quote: Option<char> = None;
-    let mut open_end = None;
     for (i, c) in xmp[start..].char_indices() {
         match (quote, c) {
             (Some(q), c) if c == q => quote = None,
             (Some(_), _) => {}
             (None, '"' | '\'') => quote = Some(c),
-            (None, '>') => {
-                open_end = Some(start + i);
-                break;
-            }
+            (None, '>') => return Some(start + i),
             _ => {}
         }
     }
-    let open_end = open_end?;
+    None
+}
+
+/// Insère `element` au début du `rdf:Description` dont la balise ouvrante déclare l'espace de
+/// noms du préfixe de `tag` (le premier, si plusieurs : les fichiers PDF/A écrivent souvent une
+/// description par schéma). Aucun ne le déclare : le préfixe (`dc`, `pdf`, `xmp`) est déclaré
+/// sur la première description. Un `rdf:Description` vide (`<rdf:Description …/>`) est rouvert.
+/// `None` s'il n'y a aucune description.
+fn insert_property(xmp: &str, tag: &str, element: &str) -> Option<String> {
     let prefix = tag.split(':').next().unwrap_or("");
-    let namespace = match prefix {
-        "dc" => Some("http://purl.org/dc/elements/1.1/"),
-        "pdf" => Some("http://ns.adobe.com/pdf/1.3/"),
-        _ => None,
-    };
-    let declared = xmp.contains(&format!("xmlns:{prefix}="));
-    let declaration = match namespace {
-        Some(uri) if !declared => format!(" xmlns:{prefix}=\"{uri}\""),
-        _ => String::new(),
+    let declares = format!("xmlns:{prefix}=");
+    // Les balises ouvrantes `rdf:Description` : (début, index du `>`).
+    let mut tags = Vec::new();
+    let mut from = 0;
+    while let Some(found) = xmp[from..].find("<rdf:Description") {
+        let start = from + found;
+        let after = xmp[start + "<rdf:Description".len()..].chars().next();
+        from = start + "<rdf:Description".len();
+        if !after.is_some_and(|c| c.is_whitespace() || c == '>' || c == '/') {
+            continue;
+        }
+        tags.push((start, open_tag_end(xmp, start)?));
+    }
+    let declaring = tags
+        .iter()
+        .find(|(start, end)| xmp[*start..*end].contains(&declares));
+    let (open_end, declaration) = match (declaring, tags.first()) {
+        (Some((_, end)), _) => (*end, String::new()),
+        (None, Some((_, end))) => {
+            let uri = match prefix {
+                "dc" => "http://purl.org/dc/elements/1.1/",
+                "pdf" => "http://ns.adobe.com/pdf/1.3/",
+                "xmp" => "http://ns.adobe.com/xap/1.0/",
+                _ => return None,
+            };
+            (*end, format!(" xmlns:{prefix}=\"{uri}\""))
+        }
+        (None, None) => return None,
     };
     let self_closed = xmp[..open_end].ends_with('/');
     let head_end = if self_closed { open_end - 1 } else { open_end };
@@ -379,7 +398,7 @@ pub(super) fn edit_xmp(doc: &mut lopdf::Document, edit: impl FnOnce(String) -> S
 }
 
 /// Échappe `&`, `<`, `>`, `"` et `'` pour du texte XML.
-pub(super) fn xml_escape(text: &str) -> String {
+fn xml_escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -390,7 +409,7 @@ pub(super) fn xml_escape(text: &str) -> String {
 /// Remplace le texte d'une entrée `<rdf:li>` de l'élément `tag` (titre, auteur, sujet : des
 /// listes `rdf:Alt` / `rdf:Seq`) : celle de langue `x-default` (celle que les lecteurs
 /// affichent) s'il y en a une, sinon la première ; `None` si l'élément ou l'entrée manque.
-pub(super) fn replace_li(xmp: &str, tag: &str, value: &str) -> Option<String> {
+fn replace_li(xmp: &str, tag: &str, value: &str) -> Option<String> {
     let start = xmp.find(&format!("<{tag}>"))?;
     let end = start + xmp[start..].find(&format!("</{tag}>"))?;
     let default = ["xml:lang=\"x-default\"", "xml:lang='x-default'"]
@@ -500,5 +519,60 @@ mod tests {
         assert_eq!(d("2020-01-02T03:04:05+ab:cd"), None);
         assert_eq!(d("2020-01-02T03:04:05+01:x0"), None);
         assert_eq!(d("2020-01-02T03:04:05+1"), None);
+    }
+
+    const HEAD: &str = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">";
+    const TAIL: &str = "</rdf:RDF></x:xmpmeta>";
+
+    /// Une description par schéma : chaque propriété va dans la description qui déclare son
+    /// préfixe, sinon le préfixe n'y serait pas lié (veraPDF).
+    #[test]
+    fn a_property_lands_in_the_description_that_declares_its_prefix() {
+        let xmp = format!(
+            "{HEAD}<rdf:Description rdf:about=\"\" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\" pdfaid:part=\"1\"/>             <rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"></rdf:Description>             <rdf:Description rdf:about=\"\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"></rdf:Description>{TAIL}"
+        );
+        let out = set_list_property(xmp, "dc:title", ListKind::Alt, "T");
+        let out = set_simple_property(out, "pdf:Keywords", "k");
+        let dc = out.find("xmlns:dc=").unwrap();
+        let pdf = out.find("xmlns:pdf=").unwrap();
+        let title = out.find("<dc:title>").unwrap();
+        let keywords = out.find("<pdf:Keywords>").unwrap();
+        assert!(dc < title && title < pdf, "{out}");
+        assert!(pdf < keywords, "{out}");
+        assert_eq!(out.matches("xmlns:dc=").count(), 1, "{out}");
+    }
+
+    #[test]
+    fn a_missing_namespace_is_declared_on_the_first_description() {
+        let xmp = format!("{HEAD}<rdf:Description rdf:about=\"\"></rdf:Description>{TAIL}");
+        let out = set_simple_property(xmp, "pdf:Keywords", "a");
+        assert!(
+            out.contains("<rdf:Description rdf:about=\"\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"><pdf:Keywords>a</pdf:Keywords></rdf:Description>"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_self_closed_description_is_reopened() {
+        let xmp = format!("{HEAD}<rdf:Description rdf:about=\"\"/>{TAIL}");
+        let out = set_list_property(xmp, "dc:creator", ListKind::Seq, "Ève");
+        assert!(
+            out.contains("xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:creator><rdf:Seq><rdf:li>Ève</rdf:li></rdf:Seq></dc:creator></rdf:Description>"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_greater_than_sign_inside_an_attribute_value_does_not_end_the_tag() {
+        let xmp = format!("{HEAD}<rdf:Description rdf:about=\"a>b\" note='x>y'/>{TAIL}");
+        let out = set_simple_property(xmp, "pdf:Keywords", "k");
+        assert!(
+            out.contains("rdf:about=\"a>b\" note='x>y' xmlns:pdf="),
+            "{out}"
+        );
+        assert!(
+            out.contains("<pdf:Keywords>k</pdf:Keywords></rdf:Description>"),
+            "{out}"
+        );
     }
 }

@@ -69,6 +69,28 @@ pub fn before_save(
     password: Option<&str>,
     min_version: Option<(u8, u8)>,
 ) -> CoreResult<Saved> {
+    before_save_with(bytes, password, min_version, CleanupOptions::default())
+}
+
+/// Réglages facultatifs de [`before_save_with`].
+///
+/// Pourquoi : retirer `/NeedAppearances` n'est sûr que si les `/AP` écrits sont à jour. Seul
+/// l'enregistrement du document ouvert le sait (il vient de les faire régénérer par PDFium) ;
+/// l'extraction, la fusion et la protection partent d'octets dont les `/AP` peuvent dater
+/// d'avant la dernière valeur de champ : elles gardent la clé.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CleanupOptions {
+    /// Les apparences des widgets viennent d'être régénérées : `/NeedAppearances` peut partir.
+    pub appearances_fresh: bool,
+}
+
+/// [`before_save`] avec des réglages (voir [`CleanupOptions`]).
+pub(crate) fn before_save_with(
+    bytes: &[u8],
+    password: Option<&str>,
+    min_version: Option<(u8, u8)>,
+    opts: CleanupOptions,
+) -> CoreResult<Saved> {
     let raw = || Saved {
         bytes: crate::crypt::raise_header_version(bytes, min_version),
         cleaned: false,
@@ -103,7 +125,9 @@ pub fn before_save(
     // `/StructTreeRoot`, la passe ne fait rien.
     mcid::prune_orphan_mcids(doc);
     dedupe_font_files(doc);
-    drop_need_appearances(doc);
+    if opts.appearances_fresh {
+        drop_need_appearances(doc);
+    }
     // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
     crate::properties::stamp_mod_date(doc);
     let pages_before = doc.get_pages().len();
@@ -125,6 +149,32 @@ pub fn before_save(
         bytes: out,
         cleaned: true,
     })
+}
+
+/// Vrai si l'`/AcroForm` des `bytes` porte `/NeedAppearances true`. Lecture bon marché : sans
+/// `/AcroForm` dans les octets (écrits par PDFium, le catalogue n'est pas compressé), pas de
+/// seconde lecture `lopdf`.
+pub(crate) fn need_appearances_flag(bytes: &[u8], password: Option<&str>) -> bool {
+    if !bytes.windows(9).any(|w| w == b"/AcroForm") {
+        return false;
+    }
+    let Ok(session) = crate::crypt::LopdfSession::load(bytes, password) else {
+        return false;
+    };
+    let doc = &session.doc;
+    doc.catalog()
+        .ok()
+        .and_then(|c| c.get(b"AcroForm").ok())
+        .and_then(|a| doc.dereference(a).ok())
+        .and_then(|(_, a)| {
+            a.as_dict()
+                .ok()?
+                .get(b"NeedAppearances")
+                .ok()?
+                .as_bool()
+                .ok()
+        })
+        .unwrap_or(false)
 }
 
 /// Retire `/NeedAppearances true` de l'`/AcroForm` quand **chaque** widget de chaque page a une

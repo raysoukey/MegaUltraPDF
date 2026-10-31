@@ -394,7 +394,7 @@ impl Document {
         // Un marquage fraîchement créé n'a pas encore d'apparence (PDFium la génère au
         // premier rendu) : sa couleur serait inconnue. Un rendu minuscule la fait naître.
         if lacks_markup_appearance(&page) {
-            tiny_render(&page)?;
+            tiny_render(&page, false)?;
         }
         let frame = frame_of(&page);
         page.annotations()
@@ -856,35 +856,45 @@ fn lacks_markup_appearance(page: &pdfium_render::prelude::PdfPage<'_>) -> bool {
         .any(|a| kind_of(&a).is_text_markup() && a.objects().is_empty())
 }
 
-/// Rendu minuscule (8 px) qui force PDFium à écrire les apparences manquantes, widgets
-/// compris (environnement de formulaire chargé).
-fn tiny_render(page: &pdfium_render::prelude::PdfPage<'_>) -> CoreResult<()> {
+/// Rendu minuscule (8 px) qui force PDFium à écrire les apparences manquantes ; avec
+/// `form_data`, l'environnement de formulaire est chargé et les widgets sont régénérés aussi.
+fn tiny_render(page: &pdfium_render::prelude::PdfPage<'_>, form_data: bool) -> CoreResult<()> {
     let config = pdfium_render::prelude::PdfRenderConfig::new()
         .set_target_width(8)
-        .render_form_data(true)
+        .render_form_data(form_data)
         .render_annotations(true);
     page.render_with_config(&config)?;
     Ok(())
 }
 
-/// Fait écrire par PDFium les apparences qui manquent encore avant l'enregistrement :
-/// marquages de texte (ISO 32000-2 §12.5.5 et PDF/A-2 6.3.3 exigent un `/AP`) et widgets de
-/// formulaire (sans quoi `/NeedAppearances` ne pourrait pas être retiré, audit E7 et E11).
-/// L'appelant tient le verrou PDFium.
+/// Fait écrire par PDFium les apparences qui manquent ou dont on doute avant l'enregistrement :
+/// marquages de texte sans `/AP` (ISO 32000-2 §12.5.5, PDF/A-2 6.3.3) et widgets de
+/// formulaire (régénérés si `/NeedAppearances` est vrai, `need_appearances`, ou si l'un n'a
+/// aucune apparence). Rend vrai si tout s'est passé : les apparences sont alors à jour et
+/// `/NeedAppearances` peut partir. Une erreur de rendu n'empêche pas d'enregistrer, elle rend
+/// faux (la clé reste). L'appelant tient le verrou PDFium.
 pub(crate) fn ensure_appearances(
     document: &pdfium_render::prelude::PdfDocument<'_>,
-) -> CoreResult<()> {
+    need_appearances: bool,
+) -> bool {
     for page in document.pages().iter() {
+        let annotations = page.annotations();
+        if annotations.is_empty() {
+            continue;
+        }
+        let widget_without_ap = |a: &PdfPageAnnotation| {
+            a.annotation_type() == PdfPageAnnotationType::Widget && a.objects().is_empty()
+        };
+        let widget = annotations
+            .iter()
+            .any(|a| a.annotation_type() == PdfPageAnnotationType::Widget);
         let needs = lacks_markup_appearance(&page)
-            || page
-                .annotations()
-                .iter()
-                .any(|a| a.annotation_type() == PdfPageAnnotationType::Widget);
-        if needs {
-            tiny_render(&page)?;
+            || (widget && (need_appearances || annotations.iter().any(|a| widget_without_ap(&a))));
+        if needs && tiny_render(&page, true).is_err() {
+            return false;
         }
     }
-    Ok(())
+    true
 }
 
 /// Genre d'une annotation d'après son sous-type PDF ; `Ink` et `Stamp` sont affinés par

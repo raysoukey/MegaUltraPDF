@@ -304,17 +304,20 @@ fn clean_xmp_text(raw: &str) -> Option<String> {
             rest = &rest[end..];
         }
     }
-    let cleaned: String = out
+    // Rogner **avant** de tronquer : des milliers de blancs en tête ne doivent pas remplir
+    // toute la place et faire disparaître la valeur.
+    let text: String = out
         .chars()
         .filter_map(|c| match c {
             '\t' | '\n' | '\r' => Some(' '),
             c if c.is_control() => None,
             c => Some(c),
         })
-        .take(MAX_METADATA_CHARS + 1)
+        .skip_while(|c| c.is_whitespace())
+        .take(MAX_METADATA_CHARS)
         .collect();
-    let text: String = cleaned.trim().chars().take(MAX_METADATA_CHARS).collect();
-    (!text.is_empty()).then_some(text)
+    let text = text.trim_end();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 /// Ajoute à `out` le texte `raw` dont les entités XML sont décodées. Une entité inconnue ou
@@ -386,8 +389,19 @@ fn xmp_date_to_pdf(iso: &str) -> Option<String> {
     let zone = match tz.as_bytes() {
         [b'Z', ..] => "Z".to_string(),
         [sign @ (b'+' | b'-'), ..] => {
-            let hh = tz.get(1..3)?;
-            let mm = tz.get(4..6).unwrap_or("00");
+            // `hh:mm`, `hhmm` ou `hh` (ISO 8601). `get` plutôt qu'un découpage direct : sur un
+            // texte non ASCII, une borne au milieu d'un caractère rend `None` au lieu de paniquer.
+            let rest = tz.get(1..)?;
+            let (hh, mm) = match (rest.len(), rest.as_bytes().get(2)) {
+                (2, _) => (rest, "00"),
+                (4, _) => (rest.get(..2)?, rest.get(2..)?),
+                (5, Some(b':')) => (rest.get(..2)?, rest.get(3..)?),
+                _ => return None,
+            };
+            // Un fuseau mal formé rend la date illisible plutôt que fausse.
+            if !hh.bytes().chain(mm.bytes()).all(|b| b.is_ascii_digit()) {
+                return None;
+            }
             format!("{}{hh}'{mm}'", char::from(*sign))
         }
         _ => String::new(),
@@ -681,6 +695,48 @@ mod tests {
         let xmp = "<rdf:Description pdf:Keywords='ancien'/>";
         let out = replace_simple(xmp, "pdf:Keywords", "neuf").unwrap();
         assert_eq!(out, "<rdf:Description pdf:Keywords='neuf'/>");
+    }
+
+    /// Relecture de la partie B : des blancs en tête ne mangent pas la valeur (on rogne, puis
+    /// on tronque) ; la troncature garde `MAX_METADATA_CHARS` caractères.
+    #[test]
+    fn xmp_text_is_trimmed_before_being_truncated() {
+        let padded = format!("{}Titre", " ".repeat(5_000));
+        assert_eq!(clean_xmp_text(&padded).as_deref(), Some("Titre"));
+        let long = "é".repeat(MAX_METADATA_CHARS + 50);
+        let cleaned = clean_xmp_text(&format!("  {long}  ")).unwrap();
+        assert_eq!(cleaned.chars().count(), MAX_METADATA_CHARS);
+        assert_eq!(clean_xmp_text(" \n\t ").as_deref(), None);
+    }
+
+    /// Fuseau d'une date XMP : `+hh:mm`, `+hhmm` ou `+hh` ; des heures ou minutes qui ne sont
+    /// pas des chiffres rendent la date illisible plutôt que fausse.
+    #[test]
+    fn xmp_date_time_zones() {
+        let d = |s: &str| xmp_date_to_pdf(s);
+        assert_eq!(
+            d("2020-01-02T03:04:05+01:00").as_deref(),
+            Some("D:20200102030405+01'00'")
+        );
+        assert_eq!(
+            d("2020-01-02T03:04:05+0530").as_deref(),
+            Some("D:20200102030405+05'30'")
+        );
+        assert_eq!(
+            d("2020-01-02T03:04:05-08").as_deref(),
+            Some("D:20200102030405-08'00'")
+        );
+        assert_eq!(
+            d("2020-01-02T03:04:05Z").as_deref(),
+            Some("D:20200102030405Z")
+        );
+        assert_eq!(
+            d("2020-01-02T03:04:05").as_deref(),
+            Some("D:20200102030405")
+        );
+        assert_eq!(d("2020-01-02T03:04:05+ab:cd"), None);
+        assert_eq!(d("2020-01-02T03:04:05+01:x0"), None);
+        assert_eq!(d("2020-01-02T03:04:05+1"), None);
     }
 
     #[test]

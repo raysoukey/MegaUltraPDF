@@ -152,11 +152,40 @@ fn file_attachment_in_a_password_protected_document_is_extracted() {
     let list = reopened.attachments().unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].page, Some(0));
-    assert_eq!(list[0].size, 7);
+    // PDFium a réécrit (et comprimé) le flux, sans `/Params /Size` : la liste donne sa taille
+    // stockée, sans le décompresser ; l'extraction, elle, rend les 7 octets.
+    assert!(list[0].size > 0);
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("p.txt");
     reopened.save_attachment(0, &out).unwrap();
     assert_eq!(std::fs::read(&out).unwrap(), b"contenu");
+}
+
+/// Relecture de la partie B : sans `/Params /Size`, la liste donne la taille **brute** du
+/// flux au lieu de décompresser chaque pièce jointe (une « bombe » se lit seulement si on
+/// l'enregistre, et `save_attachment` reste plafonné). L'extraction donne bien tout le fichier.
+#[test]
+fn page_attachment_size_without_params_is_the_raw_length() {
+    let mut lo = lopdf::Document::load_mem(&third_party_annots_pdf()).unwrap();
+    let content = b"contenu ".repeat(10_000);
+    let mut stream = lopdf::Stream::new(
+        lopdf::dictionary! { "Type" => "EmbeddedFile" },
+        content.clone(),
+    );
+    stream.compress().unwrap();
+    let raw = stream.content.len();
+    assert!(raw < content.len() / 10, "{raw}");
+    lo.objects.insert((13, 0), lopdf::Object::Stream(stream));
+    let mut out = Vec::new();
+    lo.save_to(&mut out).unwrap();
+    let doc = Document::from_bytes(out, None).unwrap();
+    let list = doc.attachments().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].size, raw as u64);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("piece.txt");
+    doc.save_attachment(0, &path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), content);
 }
 
 /// Supprimer une pièce jointe de page supprime son annotation.

@@ -30,7 +30,9 @@ pub struct Attachment {
     /// Nom de fichier déclaré dans le PDF, nettoyé (dernier composant, sans caractère de
     /// contrôle ni d'inversion bidi, au plus 255 caractères) : voir `display_name`.
     pub name: String,
-    /// Taille des données, en octets.
+    /// Taille des données, en octets. Pour une pièce jointe de page sans `/Params /Size`,
+    /// la taille du flux tel qu'il est stocké (comprimé, le cas échéant) : la liste ne
+    /// décompresse rien.
     pub size: u64,
     /// Page (à partir de 0) dont l'annotation `FileAttachment` porte ce fichier ; `None`
     /// pour un fichier joint au document (`/Names /EmbeddedFiles`).
@@ -174,9 +176,17 @@ impl Document {
                 let Some((name, size, stream)) = file_attachment(doc, dict) else {
                     continue;
                 };
+                // Numéros de page à partir de 1 ; `from_bytes` refuse plus de 65 535 pages, la
+                // conversion ne peut donc échouer que sur un arbre de pages aberrant.
+                let (Some(page), Ok(annot_index)) = (
+                    number.checked_sub(1).and_then(|n| u16::try_from(n).ok()),
+                    u16::try_from(i),
+                ) else {
+                    continue;
+                };
                 found.push(PageAttachment {
-                    page: (number - 1) as u16,
-                    annot_index: i as u16,
+                    page,
+                    annot_index,
                     name,
                     size,
                     stream,
@@ -318,10 +328,10 @@ fn file_attachment(
         .and_then(|s| u64::try_from(s).ok())
         // Une taille déclarée absurde (donnée non fiable) ne s'affiche pas telle quelle.
         .filter(|s| *s <= 256 * 1024 * 1024);
-    let size = match declared {
-        Some(size) => size,
-        None => crate::crypt::stream_bytes(stream)?.len() as u64,
-    };
+    // Sans taille déclarée, la longueur **brute** du flux (comprimée, le cas échéant) : lister
+    // les pièces jointes ne décompresse pas chacune d'elles (une « bombe » ne se déplie qu'à
+    // l'enregistrement, plafonné par `stream_bytes`).
+    let size = declared.unwrap_or(stream.content.len() as u64);
     Some((display_name(&raw_name.unwrap_or_default()), size, stream_id))
 }
 

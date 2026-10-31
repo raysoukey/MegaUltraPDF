@@ -459,7 +459,7 @@ impl Document {
         };
         let content = format!("\nq\n{cm}BT\n3 Tr\n{ops}ET\nQ\n");
         let mut wrapped = BTreeSet::new();
-        append_content(doc, page_id, &mut wrapped, content.into_bytes())?;
+        append_content(doc, page_id, &mut wrapped, content.into_bytes(), false)?;
         let out = session.finish()?;
         self.reload_from_bytes(out)
     }
@@ -554,7 +554,13 @@ impl Document {
                 num(p.tm[4]),
                 num(p.tm[5]),
             );
-            append_content(doc, page_id, &mut wrapped, content.into_bytes())?;
+            append_content(
+                doc,
+                page_id,
+                &mut wrapped,
+                content.into_bytes(),
+                p.opacity < 1.0,
+            )?;
         }
         let out = session.finish()?;
         self.reload_from_bytes(out)
@@ -704,12 +710,29 @@ fn ensure_resources(
 
 /// Ajoute `content` après le contenu existant de la page, que l'on enferme une fois dans
 /// `q … Q` pour que son état graphique (transformation en cours, couleur) ne déteigne pas.
+///
+/// Le contenu ajouté (filigrane, numéros, couche OCR) est décoration, non contenu réel :
+/// il est enveloppé dans `/Artifact BMC … EMC` (ISO 32000-1 §14.8.2.2), sans quoi un PDF
+/// balisé (PDF/UA-1 §7.1) serait invalide. `translucent` dit que ce contenu pose un état
+/// graphique à opacité < 1 : la page reçoit alors un groupe de transparence (§11.6.6) si
+/// elle n'en a pas, ce qu'exige PDF/A-2 (6.2.10) sans profil de sortie.
 fn append_content(
     doc: &mut LoDocument,
     page_id: ObjectId,
     wrapped: &mut BTreeSet<ObjectId>,
     content: Vec<u8>,
+    translucent: bool,
 ) -> CoreResult<()> {
+    let mut marked = b"/Artifact BMC
+"
+    .to_vec();
+    marked.extend_from_slice(&content);
+    marked.extend_from_slice(
+        b"
+EMC
+",
+    );
+    let content = marked;
     let existing = doc.get_page_contents(page_id);
     let mut list: Vec<Object> = Vec::with_capacity(existing.len() + 3);
     let stream = |doc: &mut LoDocument, bytes: &[u8]| {
@@ -743,8 +766,17 @@ fn append_content(
         list.extend(existing.iter().map(|id| Object::Reference(*id)));
     }
     list.push(Object::Reference(stream(doc, &content)));
-    doc.get_dictionary_mut(page_id)
-        .map_err(structure)?
-        .set("Contents", Object::Array(list));
+    let page = doc.get_dictionary_mut(page_id).map_err(structure)?;
+    page.set("Contents", Object::Array(list));
+    if translucent && !page.has(b"Group") {
+        page.set(
+            "Group",
+            Object::Dictionary(Dictionary::from_iter(vec![
+                ("S", Object::Name(b"Transparency".to_vec())),
+                ("CS", Object::Name(b"DeviceRGB".to_vec())),
+                ("I", Object::Boolean(true)),
+            ])),
+        );
+    }
     Ok(())
 }

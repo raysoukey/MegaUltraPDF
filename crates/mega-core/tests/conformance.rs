@@ -612,3 +612,56 @@ fn moving_pages_across_page_tree_nodes_produces_conforming_files() {
         }
     }
 }
+
+/// Verdict veraPDF (`--format text`) d'un fichier pour un profil : vrai si la ligne commence
+/// par `PASS`. Sans `MEGA_VERAPDF` (script `verapdf` ou `.bat`) ou sans `MEGA_CORPUS`, sauté.
+fn verapdf_passes(
+    flavour: &str,
+    corpus_file: &str,
+    watermark: &mega_core::overlay::Watermark,
+) -> Option<bool> {
+    let verapdf = std::env::var_os("MEGA_VERAPDF").filter(|v| !v.is_empty())?;
+    let corpus = std::env::var_os("MEGA_CORPUS").filter(|v| !v.is_empty())?;
+    let source = PathBuf::from(corpus).join(corpus_file);
+    let mut doc = Document::open(&source, None).unwrap();
+    doc.add_watermark(watermark).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sortie.pdf");
+    doc.save_as(&out).unwrap();
+    let report = Command::new(verapdf)
+        .args(["--flavour", flavour, "--format", "text"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&report.stdout).into_owned();
+    assert!(
+        text.starts_with("PASS"),
+        "{corpus_file} + filigrane : veraPDF {flavour}\n{text}"
+    );
+    Some(true)
+}
+
+/// Un filigrane ne casse pas la conformité PDF/UA-1 (artefact) ni PDF/A-2b (groupe de
+/// transparence) d'un fichier qui la respectait (audit E6).
+#[test]
+fn a_watermark_keeps_pdfua_and_pdfa2b_conformance() {
+    let watermark = |opacity: f32| mega_core::overlay::Watermark {
+        // Texte grec : la police Unicode est incorporée, alors qu'Helvetica (14 polices
+        // standard) ne l'est pas et serait refusée par PDF/UA (7.21.4.1) et PDF/A (6.2.11.4.1).
+        text: "ΩΜΕΓΑ".to_string(),
+        size: 40.0,
+        opacity,
+        angle_deg: 0.0,
+        color: mega_core::Color {
+            r: 128,
+            g: 128,
+            b: 128,
+        },
+        pages: None,
+    };
+    if verapdf_passes("ua1", "pdfua/pdfua-1-7-1-t01-pass-a.pdf", &watermark(1.0)).is_none() {
+        eprintln!("MEGA_VERAPDF / MEGA_CORPUS absents : contrôle veraPDF sauté");
+        return;
+    }
+    verapdf_passes("2b", "pdfa/pdfa-2b-6-2-10-t06-pass-a.pdf", &watermark(0.3));
+}

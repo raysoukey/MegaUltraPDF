@@ -203,6 +203,14 @@ impl Type0Writer {
         }
         let map_id = doc.add_object(compressed(Dictionary::new(), map));
 
+        // `/CIDSet` (PDF/A-1 6.3.5) : un bit par CID présent (poids fort d'abord), du CID 0
+        // (.notdef) au dernier ; les CID sont 1..=n, donc ceil((n+1)/8) octets.
+        let mut cid_set = vec![0u8; gids.len() / 8 + 1];
+        for cid in 0..=gids.len() {
+            cid_set[cid / 8] |= 0x80 >> (cid % 8);
+        }
+        let cid_set_id = doc.add_object(compressed(Dictionary::new(), cid_set));
+
         let length1 = i64::try_from(program.len()).unwrap_or(i64::MAX);
         let file_id = doc.add_object(compressed(
             Dictionary::from_iter(vec![("Length1", Object::Integer(length1))]),
@@ -230,6 +238,7 @@ impl Type0Writer {
             ("CapHeight", Object::Integer(i64::from(font.cap_height()))),
             ("StemV", Object::Integer(80)),
             ("FontFile2", Object::Reference(file_id)),
+            ("CIDSet", Object::Reference(cid_set_id)),
         ]));
 
         // `/W [1 [w1 w2 …]]` : largeurs des CID consécutifs à partir de 1.

@@ -46,6 +46,12 @@ impl UnicodeFont {
         })
     }
 
+    /// Nombre de glyphes de la police : un numéro de glyphe au-delà n'existe pas (le lecteur
+    /// dessine alors `.notdef`), et `cleanup::subset` l'écarte du sous-ensemble.
+    pub(crate) fn glyph_count(&self) -> u16 {
+        self.face.number_of_glyphs()
+    }
+
     /// Le glyphe qui dessine `c`, s'il existe dans la police (le glyphe 0, « .notdef », ne
     /// compte pas : c'est le carré vide des caractères inconnus).
     pub(crate) fn glyph(&self, c: char) -> Option<u16> {

@@ -913,3 +913,51 @@ fn inserted_unicode_text_embeds_a_subset_font() {
         "rendu changé par le sous-ensemble"
     );
 }
+
+/// Revue de la tâche 19 : `set_object_text` admet toujours l'espace dans une police
+/// incorporée ; le sous-ensemble doit donc garder le glyphe de l'espace, sinon « Ω Ω »
+/// rouvert dessinerait un carré `.notdef` entre les deux Ω.
+#[test]
+fn a_space_typed_into_a_reopened_subset_font_is_not_a_box() {
+    let simple = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/simple.pdf"
+    ))
+    .unwrap();
+    let mut doc = Document::from_bytes(simple, None).unwrap();
+    let style = text_style(FontFamily::Unicode, false, false, 48.0);
+    doc.insert_text(0, [100.0, 400.0], "Ω", &style).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("omega.pdf");
+    doc.save_as(&first).unwrap();
+    let mut doc = Document::from_bytes(std::fs::read(&first).unwrap(), None).unwrap();
+    let index = doc
+        .page_objects(0)
+        .unwrap()
+        .iter()
+        .position(|o| o.text.as_deref() == Some("Ω"))
+        .unwrap() as u16;
+    doc.set_object_text(0, index, "Ω Ω").unwrap();
+    let second = dir.path().join("omega-space.pdf");
+    doc.save_as(&second).unwrap();
+    let doc = Document::from_bytes(std::fs::read(&second).unwrap(), None).unwrap();
+    let bounds = doc.page_objects(0).unwrap()[usize::from(index)].bounds;
+    let img = doc.render_page(0, 1.0).unwrap();
+    // L'espace occupe le milieu de « Ω Ω » (avances 764, 318, 764 millièmes) : on en lit le
+    // cinquième central, sur toute la hauteur de l'objet.
+    let (x0, x1) = (bounds.x + bounds.w * 0.45, bounds.x + bounds.w * 0.55);
+    let top = img.height_px as f32 - (bounds.y + bounds.h);
+    let mut dark = 0;
+    for y in top as u32..(top + bounds.h) as u32 {
+        for x in x0 as u32..x1 as u32 {
+            let i = ((y * img.width_px + x) * 4) as usize;
+            if img.rgba[i] < 128 {
+                dark += 1;
+            }
+        }
+    }
+    assert!(
+        dark < 5,
+        "{dark} pixels sombres là où l'espace est dessinée"
+    );
+}

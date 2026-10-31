@@ -40,7 +40,7 @@
     "shot": "01-rotation.png"
   },
   {
-    "eval": "(() => { const th = document.querySelectorAll('.thumb'); const a = th[0].getBoundingClientRect(); const x = a.left + 10, y0 = a.top + a.height / 2; const ev = (type, y) => th[0].dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })); ev('pointerdown', y0); const y = th[2].getBoundingClientRect().bottom - 5; ev('pointermove', y0 + 10); ev('pointermove', y); const ind = document.querySelector('.drop-indicator') !== null; ev('pointerup', y); return 'indicateur : ' + ind; })()",
+    "eval": "(() => { const list = document.querySelector('.panel .list'); let th = document.querySelectorAll('.thumb'); const a = th[0].getBoundingClientRect(); const x = a.left + 10, y0 = a.top + a.height / 2; const ev = (el, type, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })); ev(th[0], 'pointerdown', y0); ev(th[0], 'pointermove', y0 + 10); list.scrollTop = list.scrollHeight; const third = [...document.querySelectorAll('.thumb')].find((b) => b.getAttribute('aria-label').startsWith('Page 3 ')); const r = third.getBoundingClientRect(); const lr = list.getBoundingClientRect(); const y = Math.min(r.bottom - 5, lr.bottom - 40); ev(document.body, 'pointermove', y); const ind = document.querySelector('.drop-indicator') !== null; ev(document.body, 'pointerup', y); return 'indicateur : ' + ind; })()",
     "label": "glisser la sélection (pages 1-2) après la page 3"
   },
   {

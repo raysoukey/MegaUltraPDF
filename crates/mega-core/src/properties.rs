@@ -38,33 +38,42 @@ pub struct DocumentProperties {
     /// déclaration, pas une vérification : après une modification, la conformité n'est plus
     /// garantie, et l'interface le dit (audit du Lot 13, C6).
     pub pdfa: Option<String>,
+    /// `/UserUnit` de la première page (§7.7.3.3) quand il diffère de 1 : la taille physique
+    /// est la taille en points multipliée par cette unité, que PDFium ignore (audit L13).
+    pub user_unit: Option<f32>,
 }
 
 impl Document {
     /// Lit les propriétés du document.
     pub fn properties(&self) -> CoreResult<DocumentProperties> {
+        // Avant le verrou : la vue `lopdf` peut sérialiser le document par PDFium (jeton non
+        // réentrant).
+        let lopdf_info = self.lopdf_view().map(read_lopdf_info).unwrap_or_default();
         let _guard = engine::guard();
         let meta = self.inner().metadata();
-        let lopdf_info = self.lopdf_info_unlocked();
         let get = |tag: Tag| -> Option<String> {
             meta.get(tag)
                 .map(|t| t.value().trim().to_string())
                 .filter(|s| !s.is_empty())
         };
+        let xmp = lopdf_info.xmp;
         Ok(DocumentProperties {
-            title: get(Tag::Title),
-            author: get(Tag::Author),
-            subject: get(Tag::Subject),
-            keywords: get(Tag::Keywords),
+            // `/Info` d'abord, puis le XMP : Acrobat et pdf.js préfèrent le XMP, et PDF 2.0
+            // déprécie `/Info` ; un fichier sans `/Info` aurait sinon un titre vide (L12).
+            title: get(Tag::Title).or(xmp.title),
+            author: get(Tag::Author).or(xmp.author),
+            subject: get(Tag::Subject).or(xmp.subject),
+            keywords: get(Tag::Keywords).or(xmp.keywords),
             creator: get(Tag::Creator),
             producer: get(Tag::Producer),
-            creation_date: get(Tag::CreationDate),
+            creation_date: get(Tag::CreationDate).or(xmp.creation_date),
             // pdfium-render 0.9.4 demande à PDFium la balise « ModificationDate », qui
             // n'existe pas (la clé PDF est `/ModDate`) : toujours vide. On la lit nous-mêmes.
             modification_date: get(Tag::ModificationDate).or(lopdf_info.mod_date),
             pdf_version: version_label(&format!("{:?}", self.inner().version())),
             page_count: self.count_unlocked(),
             pdfa: lopdf_info.pdfa,
+            user_unit: lopdf_info.user_unit,
         })
     }
 }
@@ -160,41 +169,154 @@ impl Document {
         self.reload_from_bytes(out)
     }
 }
-
-/// Ce que PDFium ne donne pas et que `lopdf` lit en un seul chargement.
+/// Ce que PDFium ne donne pas et que `lopdf` lit en un seul passage.
 #[derive(Default)]
 struct LopdfInfo {
     mod_date: Option<String>,
     pdfa: Option<String>,
+    user_unit: Option<f32>,
+    xmp: XmpFields,
 }
 
-impl Document {
-    /// `/ModDate` du dictionnaire `/Info` et déclaration PDF/A du XMP, lus par `lopdf` (jeton
-    /// déjà pris par l'appelant ; `to_bytes` n'en a pas besoin : `save_to_bytes` est appelé
-    /// directement).
-    fn lopdf_info_unlocked(&self) -> LopdfInfo {
-        // Rien de changé : les octets du fichier suffisent, sans sérialisation complète (C15).
-        let saved;
-        let bytes: &[u8] = if self.changed {
-            match self.inner().save_to_bytes() {
-                Ok(b) => {
-                    saved = b;
-                    &saved
-                }
-                Err(_) => return LopdfInfo::default(),
-            }
-        } else {
-            self.file_bytes()
-        };
-        // Un fichier à mot de passe utilisateur se lit avec ce mot de passe (C16).
-        let Ok(doc) = crate::crypt::load_limited(bytes, self.password()) else {
-            return LopdfInfo::default();
-        };
-        LopdfInfo {
-            mod_date: mod_date_of(&doc),
-            pdfa: pdfa_claim_of(&doc),
-        }
+/// Propriétés lues dans le XMP, pour remplacer un `/Info` absent (audit L12).
+#[derive(Default)]
+struct XmpFields {
+    title: Option<String>,
+    author: Option<String>,
+    subject: Option<String>,
+    keywords: Option<String>,
+    /// Date de création convertie au format PDF (`D:…`), comme celle de `/Info`.
+    creation_date: Option<String>,
+}
+
+/// Lit d'un seul passage ce que `properties` demande à `lopdf`. Le document vient du cache
+/// de `Document::lopdf_view` ; un fichier que `lopdf` ne sait pas lire donne des champs vides.
+fn read_lopdf_info(doc: &lopdf::Document) -> LopdfInfo {
+    let xmp = xmp_text_of(doc);
+    LopdfInfo {
+        mod_date: mod_date_of(doc),
+        pdfa: pdfa_claim_of(doc),
+        user_unit: user_unit_of(doc),
+        xmp: xmp.as_deref().map(xmp_fields).unwrap_or_default(),
     }
+}
+
+/// Texte du flux XMP `/Metadata` du catalogue.
+fn xmp_text_of(doc: &lopdf::Document) -> Option<String> {
+    let metadata = doc.catalog().ok()?.get(b"Metadata").ok()?;
+    let (_, stream) = doc.dereference(metadata).ok()?;
+    let bytes = crate::crypt::stream_bytes(stream.as_stream().ok()?)?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// `/UserUnit` de la première page (§7.7.3.3), cherché aussi chez les parents par tolérance.
+/// `None` pour 1 (valeur par défaut) ou une valeur absurde.
+fn user_unit_of(doc: &lopdf::Document) -> Option<f32> {
+    let mut id = *doc.get_pages().values().next()?;
+    // Profondeur bornée : la chaîne `/Parent` vient du fichier et pourrait boucler.
+    for _ in 0..32 {
+        let dict = doc.get_dictionary(id).ok()?;
+        if let Ok(raw) = dict.get(b"UserUnit") {
+            let (_, value) = doc.dereference(raw).ok()?;
+            let unit = value.as_float().ok()?;
+            return (unit.is_finite() && unit > 0.0 && (unit - 1.0).abs() > f32::EPSILON)
+                .then_some(unit);
+        }
+        id = dict.get(b"Parent").ok()?.as_reference().ok()?;
+    }
+    None
+}
+
+/// Les cinq propriétés que le XMP peut porter à la place de `/Info`.
+fn xmp_fields(xmp: &str) -> XmpFields {
+    XmpFields {
+        title: xmp_li(xmp, "dc:title", true),
+        author: xmp_li(xmp, "dc:creator", false),
+        subject: xmp_li(xmp, "dc:description", true),
+        keywords: xmp_text(xmp, "pdf:Keywords"),
+        creation_date: xmp_text(xmp, "xmp:CreateDate").and_then(|d| xmp_date_to_pdf(&d)),
+    }
+}
+
+/// Texte d'une entrée `<rdf:li>` de l'élément `tag` : celle de langue `x-default` si
+/// `prefer_default` et qu'elle existe, sinon la première.
+fn xmp_li(xmp: &str, tag: &str, prefer_default: bool) -> Option<String> {
+    let start = xmp.find(&format!("<{tag}>"))?;
+    let end = start + xmp[start..].find(&format!("</{tag}>"))?;
+    let body = &xmp[start..end];
+    let default = if prefer_default {
+        ["xml:lang=\"x-default\"", "xml:lang='x-default'"]
+            .iter()
+            .find_map(|attr| body.find(attr))
+            .and_then(|at| body[..at].rfind("<rdf:li"))
+    } else {
+        None
+    };
+    let li = default.or_else(|| body.find("<rdf:li"))?;
+    let open_end = li + body[li..].find('>')? + 1;
+    if body[..open_end].ends_with("/>") {
+        return None;
+    }
+    let close = open_end + body[open_end..].find("</rdf:li>")?;
+    clean_xmp_text(&body[open_end..close])
+}
+
+/// Valeur d'une propriété XMP simple (élément ou attribut), sans la limite de longueur de
+/// `xmp_value`.
+fn xmp_text(xmp: &str, name: &str) -> Option<String> {
+    let element = || {
+        let open = format!("<{name}>");
+        let from = xmp.find(&open)? + open.len();
+        Some(&xmp[from..from + xmp[from..].find('<')?])
+    };
+    let attribute = || {
+        ['"', '\''].into_iter().find_map(|quote| {
+            let start = format!(" {name}={quote}");
+            let from = xmp.find(&start)? + start.len();
+            Some(&xmp[from..from + xmp[from..].find(quote)?])
+        })
+    };
+    clean_xmp_text(element().or_else(attribute)?)
+}
+
+/// Texte XMP prêt à afficher : entités XML décodées, espaces rognés, `None` si vide ou
+/// démesuré (une donnée de fichier n'est pas fiable).
+fn clean_xmp_text(raw: &str) -> Option<String> {
+    let text = raw
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
+    let text = text.trim();
+    (!text.is_empty() && text.chars().count() <= MAX_METADATA_CHARS).then(|| text.to_string())
+}
+
+/// Date XMP (ISO 8601, `2020-01-02T03:04:05+01:00`) en date PDF (`D:20200102030405+01'00'`),
+/// le format brut que le frontend sait mettre en forme.
+fn xmp_date_to_pdf(iso: &str) -> Option<String> {
+    let tz_at = iso
+        .char_indices()
+        .skip(10)
+        .find(|(_, c)| matches!(c, 'Z' | '+' | '-'))
+        .map(|(i, _)| i);
+    let (date, tz) = iso.split_at(tz_at.unwrap_or(iso.len()));
+    // Les fractions de seconde n'ont pas de place dans une date PDF.
+    let date = date.split('.').next().unwrap_or(date);
+    let digits: String = date.chars().filter(char::is_ascii_digit).collect();
+    if digits.len() < 4 || !digits.len().is_multiple_of(2) || digits.len() > 14 {
+        return None;
+    }
+    let zone = match tz.as_bytes() {
+        [b'Z', ..] => "Z".to_string(),
+        [sign @ (b'+' | b'-'), ..] => {
+            let hh = tz.get(1..3)?;
+            let mm = tz.get(4..6).unwrap_or("00");
+            format!("{}{hh}'{mm}'", char::from(*sign))
+        }
+        _ => String::new(),
+    };
+    Some(format!("D:{digits}{zone}"))
 }
 
 /// `/ModDate` du dictionnaire `/Info`.

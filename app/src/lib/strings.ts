@@ -160,6 +160,8 @@ export const fr = {
   renderFailed: 'Page impossible à afficher',
   copyFailed: 'Copie impossible : le presse-papiers est refusé par le système.',
   propPdfa: 'Conformité déclarée',
+  propPhysicalSize: 'Taille physique',
+  userUnit: (n: number) => `UserUnit ${n}`,
   pdfaNone: 'Aucune',
   pdfaNoLongerGuaranteed: (claim: string) =>
     `Enregistré. Ce document déclare la conformité ${claim} : après modification, elle n’est plus garantie.`,
@@ -775,6 +777,8 @@ export const en: Strings = {
   renderFailed: 'This page cannot be displayed',
   copyFailed: 'Copy failed: the system refused access to the clipboard.',
   propPdfa: 'Declared conformance',
+  propPhysicalSize: 'Physical size',
+  userUnit: (n: number) => `UserUnit ${n}`,
   pdfaNone: 'None',
   pdfaNoLongerGuaranteed: (claim: string) =>
     `Saved. This document declares ${claim} conformance: after editing, it is no longer guaranteed.`,

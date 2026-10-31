@@ -409,6 +409,61 @@ xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:pdf=\"http://ns.adobe.com/pdf/1
     assemble_pdf(&objects, "<< /Title (Ancien) /Author (Alice) >>")
 }
 
+/// Variantes de métadonnées pour les tests d'encodage et de repli XMP. `kind` : `xmp-only`
+/// (XMP sans `/Info`), `pdfdoc-e9`, `pdfdoc-80-a0`, `utf8-raw` (titre `/Info` aux octets
+/// bruts correspondants).
+///
+/// Elles existent pour que le banc de l'audit et les vrais tests partagent les mêmes octets.
+pub fn metadata_variant_pdf(kind: &str) -> Vec<u8> {
+    let mut doc;
+    if kind == "xmp-only" {
+        doc = lopdf::Document::load_mem(&xmp_pdf()).expect("squelette XMP");
+        doc.trailer.remove(b"Info");
+    } else {
+        let title: Vec<u8> = match kind {
+            "pdfdoc-e9" => vec![b'C', b'a', b'f', 0xE9],
+            "pdfdoc-80-a0" => vec![0x80, b' ', 0xA0],
+            _ => "Café".as_bytes().to_vec(),
+        };
+        doc = lopdf::Document::load_mem(&sample_pdf(1, "x")).expect("squelette");
+        let info_id = doc
+            .trailer
+            .get(b"Info")
+            .and_then(lopdf::Object::as_reference)
+            .expect("/Info du squelette");
+        doc.get_dictionary_mut(info_id)
+            .expect("dictionnaire /Info")
+            .set(
+                "Title",
+                lopdf::Object::String(title, lopdf::StringFormat::Literal),
+            );
+    }
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
+/// Une page de 100 pt de côté avec `/UserUnit 10` (§7.7.3.3) : 1000 pt, soit 353 mm, une fois
+/// l'unité appliquée. PDFium l'ignore pour la taille de page.
+pub fn user_unit_pdf() -> Vec<u8> {
+    let content = "BT /F1 12 Tf 10 50 Td (UU) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /UserUnit 10 /Contents 4 0 R          /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>
+stream
+{content}
+endstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Title (UU) >>")
+}
+
 /// Un document dont le dictionnaire `/Info` est **direct** dans la remorque (permis, rare).
 pub fn direct_info_pdf() -> Vec<u8> {
     let mut doc = lopdf::Document::load_mem(&sample_pdf(1, "Titre")).expect("squelette");

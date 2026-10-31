@@ -365,3 +365,68 @@ fn pdfa_2_documents_still_receive_a_mod_date() {
         "/Info créé comme avant"
     );
 }
+
+/// PDF sans `/Info` dont le XMP porte les cinq propriétés repliées (audit L12).
+fn xmp_only_full() -> Document {
+    let xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\"><dc:title><rdf:Alt><rdf:li xml:lang=\"fr\">Autre</rdf:li><rdf:li xml:lang=\"x-default\">Ancien</rdf:li></rdf:Alt></dc:title><dc:creator><rdf:Seq><rdf:li>Alice</rdf:li><rdf:li>Bob</rdf:li></rdf:Seq></dc:creator><dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">Sujet XMP</rdf:li></rdf:Alt></dc:description><pdf:Keywords>un, deux</pdf:Keywords><xmp:CreateDate>2020-01-02T03:04:05Z</xmp:CreateDate></rdf:Description></rdf:RDF></x:xmpmeta>";
+    let mut lo =
+        lopdf::Document::load_mem(&mega_core::testing::metadata_variant_pdf("xmp-only")).unwrap();
+    let id = lo
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = lo.get_object_mut(id).unwrap().as_stream_mut().unwrap();
+    stream.set_plain_content(xmp.as_bytes().to_vec());
+    let mut out = Vec::new();
+    lo.save_to(&mut out).unwrap();
+    Document::from_bytes(out, None).unwrap()
+}
+
+#[test]
+fn title_falls_back_to_xmp_dc_title_when_info_is_absent() {
+    let d =
+        Document::from_bytes(mega_core::testing::metadata_variant_pdf("xmp-only"), None).unwrap();
+    let p = d.properties().unwrap();
+    assert_eq!(p.title.as_deref(), Some("Ancien"));
+    assert_eq!(p.author.as_deref(), Some("Alice"));
+}
+
+#[test]
+fn xmp_fallback_covers_author_subject_keywords_and_creation_date() {
+    let p = xmp_only_full().properties().unwrap();
+    assert_eq!(p.title.as_deref(), Some("Ancien"), "x-default préféré");
+    assert_eq!(p.author.as_deref(), Some("Alice"));
+    assert_eq!(p.subject.as_deref(), Some("Sujet XMP"));
+    assert_eq!(p.keywords.as_deref(), Some("un, deux"));
+    assert_eq!(p.creation_date.as_deref(), Some("D:20200102030405Z"));
+}
+
+#[test]
+fn info_wins_over_the_xmp_fallback() {
+    let d = Document::from_bytes(mega_core::testing::xmp_pdf(), None).unwrap();
+    let mut d = d;
+    d.set_metadata(&MetadataPatch {
+        title: Some("Info".to_string()),
+        ..MetadataPatch::default()
+    })
+    .unwrap();
+    assert_eq!(d.properties().unwrap().title.as_deref(), Some("Info"));
+}
+
+#[test]
+fn user_unit_is_reported() {
+    let d = Document::from_bytes(mega_core::testing::user_unit_pdf(), None).unwrap();
+    assert_eq!(d.properties().unwrap().user_unit, Some(10.0));
+    let plain = Document::from_bytes(sample_pdf(1, "x"), None).unwrap();
+    assert_eq!(plain.properties().unwrap().user_unit, None);
+    let simple = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/simple.pdf"
+    ))
+    .unwrap();
+    let simple = Document::from_bytes(simple, None).unwrap();
+    assert_eq!(simple.properties().unwrap().user_unit, None);
+}

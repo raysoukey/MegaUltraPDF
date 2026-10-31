@@ -82,6 +82,8 @@ export interface DocumentProperties {
   page_count: number;
   /** Conformité PDF/A déclarée (ex. « PDF/A-2B »), `null` sans déclaration (Lot 13). */
   pdfa: string | null;
+  /** `/UserUnit` de la page 1 s'il diffère de 1, `null` sinon (audit L13). */
+  user_unit: number | null;
 }
 
 /** Une commande d'édition (miroir de `mega_core::EditCommand`, sérialisée avec `kind`). */

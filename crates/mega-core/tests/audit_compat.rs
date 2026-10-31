@@ -567,20 +567,6 @@ fn deep_pages_pdf(depth: usize) -> Vec<u8> {
     assemble("1.7", &objects, "")
 }
 
-fn user_unit_pdf() -> Vec<u8> {
-    let objects: Vec<Vec<u8>> = vec![
-        s("<< /Type /Catalog /Pages 2 0 R >>"),
-        s("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-        s(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /UserUnit 10 /Contents 4 0 R \
-           /Resources << /Font << /F1 5 0 R >> >> >>",
-        ),
-        stream("", b"BT /F1 12 Tf 10 50 Td (UU) Tj ET"),
-        s("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
-    ];
-    assemble("1.7", &objects, "")
-}
-
 fn dejavu() -> Vec<u8> {
     std::fs::read(format!(
         "{}/assets/fonts/DejaVuSans.ttf",
@@ -660,34 +646,6 @@ fn fonts_pdf(kind: &str) -> Vec<u8> {
         }
     }
     assemble("1.7", &objects, "")
-}
-
-/// `kind` : `xmp-only`, `pdfdoc-e9`, `pdfdoc-80-a0`, `utf8-raw`.
-fn metadata_variant_pdf(kind: &str) -> Vec<u8> {
-    match kind {
-        "xmp-only" => {
-            let mut doc = lo(&testing::xmp_pdf());
-            doc.trailer.remove(b"Info");
-            let mut out = Vec::new();
-            doc.save_to(&mut out).unwrap();
-            out
-        }
-        _ => {
-            let title: Vec<u8> = match kind {
-                "pdfdoc-e9" => b"Caf\xE9".to_vec(),
-                "pdfdoc-80-a0" => b"\x80 \xA0".to_vec(),
-                _ => "Café".as_bytes().to_vec(),
-            };
-            let mut doc = lo(&fixture_bytes("simple.pdf"));
-            let info_id = doc.trailer.get(b"Info").unwrap().as_reference().unwrap();
-            doc.get_dictionary_mut(info_id)
-                .unwrap()
-                .set("Title", Object::String(title, lopdf::StringFormat::Literal));
-            let mut out = Vec::new();
-            doc.save_to(&mut out).unwrap();
-            out
-        }
-    }
 }
 
 /// Un champ de signature dont le `/SubFilter` est `subfilter`, avec un `/ByteRange` cohérent
@@ -2099,7 +2057,7 @@ fn l11_deep_page_tree_and_inheritance() {
 #[ignore = "banc de mesure, lancer avec --ignored"]
 fn l12_user_unit() {
     guarded("L12", || {
-        let doc = Document::from_bytes(user_unit_pdf(), None).unwrap();
+        let doc = Document::from_bytes(testing::user_unit_pdf(), None).unwrap();
         verdict(
             "L12",
             "taille rapportée (/MediaBox 100 pt, /UserUnit 10)",
@@ -2392,7 +2350,7 @@ fn l17_metadata_decoding() {
     ] {
         let id = format!("L17-{kind}");
         guarded(&id, || {
-            let bytes = metadata_variant_pdf(kind);
+            let bytes = testing::metadata_variant_pdf(kind);
             let doc = Document::from_bytes(bytes, None).unwrap();
             let props = doc.properties().unwrap();
             verdict(

@@ -423,13 +423,25 @@ fn mod_date_of(doc: &lopdf::Document) -> Option<String> {
 /// Conformité PDF/A déclarée par le flux XMP `/Metadata` du catalogue (`pdfaid:part`, et
 /// `pdfaid:conformance` s'il existe), ex. `"PDF/A-2B"`.
 fn pdfa_claim_of(doc: &lopdf::Document) -> Option<String> {
-    let metadata = doc.catalog().ok()?.get(b"Metadata").ok()?;
-    let (_, stream) = doc.dereference(metadata).ok()?;
-    let xmp = crate::crypt::stream_bytes(stream.as_stream().ok()?)?;
-    let xmp = String::from_utf8_lossy(&xmp);
+    let xmp = xmp_of(doc)?;
     let part = xmp_value(&xmp, "pdfaid:part")?;
     let conformance = xmp_value(&xmp, "pdfaid:conformance").unwrap_or_default();
     Some(format!("PDF/A-{part}{}", conformance.to_uppercase()))
+}
+
+/// Texte du flux XMP `/Metadata` du catalogue, s'il existe.
+fn xmp_of(doc: &lopdf::Document) -> Option<String> {
+    let metadata = doc.catalog().ok()?.get(b"Metadata").ok()?;
+    let (_, stream) = doc.dereference(metadata).ok()?;
+    let xmp = crate::crypt::stream_bytes(stream.as_stream().ok()?)?;
+    Some(String::from_utf8_lossy(&xmp).into_owned())
+}
+
+/// Vrai si le XMP déclare PDF/A (`pdfaid:part`) ou PDF/UA (`pdfuaid:part`) : un fichier qui
+/// s'en réclame interdit les polices non incorporées, donc Helvetica (audit E6).
+pub(crate) fn declares_conformance(doc: &lopdf::Document) -> bool {
+    pdfa_claim_of(doc).is_some()
+        || xmp_of(doc).is_some_and(|xmp| xmp_value(&xmp, "pdfuaid:part").is_some())
 }
 
 /// Valeur d'une propriété XMP courte (un chiffre, une lettre) : `pdfaid:part`.

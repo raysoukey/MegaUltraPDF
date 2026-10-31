@@ -686,3 +686,27 @@ fn an_existing_page_group_is_kept() {
     doc.add_watermark(&watermark("DEUX", None)).unwrap();
     assert_eq!(page_group(&doc).unwrap(), before);
 }
+
+#[test]
+fn pdfa_documents_get_an_embedded_font_even_for_latin_text() {
+    let mut pdfa = Document::from_bytes(mega_core::testing::pdfa_pdf(), None).unwrap();
+    pdfa.add_watermark(&watermark("BROUILLON", None)).unwrap();
+    let saved = lopdf::Document::load_mem(&pdfa.to_bytes().unwrap()).unwrap();
+    let embedded = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .any(|d| {
+            d.has(b"FontFile2")
+                && d.get(b"FontName")
+                    .ok()
+                    .and_then(|n| n.as_name().ok())
+                    .is_some_and(|n| n.len() > 7 && n[6] == b'+')
+        });
+    assert!(embedded, "police sous-ensemble incorporée attendue");
+    assert!(font_subtypes(&pdfa).contains(&"Type0".to_string()));
+
+    let mut plain = Document::open("../../fixtures/simple.pdf", None).unwrap();
+    plain.add_watermark(&watermark("BROUILLON", None)).unwrap();
+    assert!(!font_subtypes(&plain).contains(&"Type0".to_string()));
+}

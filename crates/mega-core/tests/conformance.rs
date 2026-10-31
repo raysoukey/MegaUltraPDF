@@ -646,9 +646,7 @@ fn verapdf_passes(
 #[test]
 fn a_watermark_keeps_pdfua_and_pdfa2b_conformance() {
     let watermark = |opacity: f32| mega_core::overlay::Watermark {
-        // Texte grec : la police Unicode est incorporée, alors qu'Helvetica (14 polices
-        // standard) ne l'est pas et serait refusée par PDF/UA (7.21.4.1) et PDF/A (6.2.11.4.1).
-        text: "ΩΜΕΓΑ".to_string(),
+        text: "BROUILLON".to_string(),
         size: 40.0,
         opacity,
         angle_deg: 0.0,

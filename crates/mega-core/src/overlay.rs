@@ -197,6 +197,14 @@ impl Document {
         }
     }
 
+    /// Le document se réclame-t-il de PDF/A ou PDF/UA ? Alors le texte ajouté s'écrit en
+    /// police Unicode incorporée, même en WinAnsi (audit E6).
+    fn declares_conformance(&self) -> CoreResult<bool> {
+        let doc =
+            crate::crypt::load_limited(&self.to_bytes()?, self.password()).map_err(structure)?;
+        Ok(crate::properties::declares_conformance(&doc))
+    }
+
     /// Pose un filigrane sur les pages visées.
     pub fn add_watermark(&mut self, w: &Watermark) -> CoreResult<()> {
         self.mark_changed();
@@ -213,7 +221,8 @@ impl Document {
             return Err(invalid("angle invalide"));
         }
         let pages = self.target_pages(&w.pages)?;
-        let width = text_width(&w.text, w.size);
+        let embed = self.declares_conformance()?;
+        let width = text_width_in(&w.text, w.size, embed);
         let (sin, cos) = w.angle_deg.to_radians().sin_cos();
         let mut placements = Vec::with_capacity(pages.len());
         for page in pages {
@@ -230,7 +239,7 @@ impl Document {
                 size: w.size,
                 color: w.color,
                 opacity: w.opacity,
-                unicode: fonts::needs_unicode(&w.text),
+                unicode: embed || fonts::needs_unicode(&w.text),
                 tm: [cos, sin, -sin, cos, tx, ty],
                 frame,
             });
@@ -253,6 +262,7 @@ impl Document {
             return Err(invalid("la marge doit être positive ou nulle"));
         }
         let pages = self.target_pages(&n.pages)?;
+        let embed = self.declares_conformance()?;
         let total = self.page_count();
         let title = self.title().unwrap_or_default();
         let mut placements = Vec::with_capacity(pages.len());
@@ -267,7 +277,7 @@ impl Document {
                 .trim()
                 .to_string();
             check_text(&text)?;
-            let width = text_width(&text, n.size);
+            let width = text_width_in(&text, n.size, embed);
             let frame = self.page_frame(page)?;
             let (pw, ph) = frame.displayed_size();
             let x = match n.corner {
@@ -287,7 +297,7 @@ impl Document {
             }
             placements.push(Placement {
                 page,
-                unicode: fonts::needs_unicode(&text),
+                unicode: embed || fonts::needs_unicode(&text),
                 text,
                 size: n.size,
                 color: Color { r: 0, g: 0, b: 0 },
@@ -395,6 +405,7 @@ impl Document {
             .get_pages()
             .get(&(u32::from(page) + 1))
             .ok_or_else(|| structure("page introuvable"))?;
+        let embed = crate::properties::declares_conformance(&session.doc);
         let unicode_key = free_font_name(&session.doc, &[page_id]);
         // Les mots hors WinAnsi passent par la police Unicode ; un caractère qu'elle n'a pas
         // (CJK) est permis ici : le texte est invisible, seule compte sa valeur `/ToUnicode`.
@@ -412,14 +423,14 @@ impl Document {
             if word.is_empty() || !finite || !(r.w > 0.0 && r.h > 0.0) {
                 continue;
             }
-            let width_100 = text_width(word, 100.0);
+            let width_100 = text_width_in(word, 100.0, embed);
             if width_100 <= 0.0 {
                 continue;
             }
             let size = r.h;
             let natural = width_100 * size / 100.0;
             let scale = 100.0 * r.w / natural;
-            let (key, hex) = if fonts::needs_unicode(text) {
+            let (key, hex) = if embed || fonts::needs_unicode(text) {
                 (unicode_key.as_str(), writer.encode(text))
             } else {
                 let hex = hex_win_ansi(text).ok_or_else(|| invalid("texte non encodable"))?;
@@ -571,7 +582,13 @@ impl Document {
 /// (table AFM : la même pour tous les lecteurs, sans passer par PDFium) ou, hors WinAnsi, la
 /// police Unicode incorporée (ses largeurs sont aussi celles écrites dans `/W`).
 pub(crate) fn text_width(text: &str, size: f32) -> f32 {
-    if fonts::needs_unicode(text) {
+    text_width_in(text, size, false)
+}
+
+/// Comme `text_width`, mais `embed` impose la police Unicode même pour un texte WinAnsi
+/// (document PDF/A ou PDF/UA : Helvetica non incorporée y est refusée).
+fn text_width_in(text: &str, size: f32, embed: bool) -> f32 {
+    if embed || fonts::needs_unicode(text) {
         return UnicodeFont::embedded().text_width(text, size);
     }
     let bytes: Vec<u8> = text

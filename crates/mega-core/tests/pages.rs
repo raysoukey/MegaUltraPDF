@@ -316,3 +316,130 @@ fn catalog_version_entry_survives_a_rewrite() {
     let catalog = reread.get_object(root).unwrap().as_dict().unwrap();
     assert_eq!(catalog.get(b"Version").unwrap().as_name().unwrap(), b"1.7");
 }
+
+// --- Report du catalogue (Lot 14, audit E3) -------------------------------------------------
+
+use mega_core::links::LinkTarget;
+use mega_core::pages::merge;
+use mega_core::testing::{form_parent_kid_pdf, rich_catalog_pdf};
+
+fn rich() -> Document {
+    Document::from_bytes(rich_catalog_pdf("1.7", None), None).unwrap()
+}
+
+/// Nom et valeur de chaque champ de formulaire, toutes pages confondues.
+fn fields(doc: &Document) -> Vec<(String, Option<String>)> {
+    (0..doc.page_count())
+        .flat_map(|p| doc.form_fields(p).unwrap())
+        .map(|f| (f.name, f.value))
+        .collect()
+}
+
+#[test]
+fn merging_two_rich_catalogs_keeps_bookmarks_attachments_fields_and_links() {
+    let (a, b) = (rich(), rich());
+    let merged = Document::from_bytes(merge(&[&a, &b]).unwrap(), None).unwrap();
+    assert_eq!(merged.page_count(), 6);
+    let outline = merged.outline().unwrap();
+    let targets: Vec<(&str, Option<u16>)> =
+        outline.iter().map(|n| (n.title.as_str(), n.page)).collect();
+    assert_eq!(
+        targets,
+        [
+            ("Vers chap2", Some(1)),
+            ("Vers chap3", Some(2)),
+            ("Direct p3", Some(2)),
+            ("Vers chap2", Some(4)),
+            ("Vers chap3", Some(5)),
+            ("Direct p3", Some(5)),
+        ]
+    );
+    let names: Vec<String> = merged
+        .attachments()
+        .unwrap()
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    assert_eq!(names, ["notes (2).txt", "notes.txt"]);
+    let names: Vec<String> = fields(&merged).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["nom", "nom (2)"]);
+    // Les liens de chaque source visent leurs propres pages, même par un nom partagé.
+    for (page, expected) in [(0, [1, 2, 2]), (3, [4, 5, 5])] {
+        let links: Vec<LinkTarget> = merged
+            .links(page)
+            .unwrap()
+            .into_iter()
+            .map(|l| l.target)
+            .collect();
+        assert_eq!(
+            links,
+            expected.map(LinkTarget::Page),
+            "liens de la page {page}"
+        );
+    }
+}
+
+#[test]
+fn extracting_a_page_keeps_attachments_and_its_bookmark() {
+    let bytes = rich().extract_pages(&[1]).unwrap();
+    let part = Document::from_bytes(bytes, None).unwrap();
+    assert_eq!(part.attachments().unwrap().len(), 1);
+    let outline = part.outline().unwrap();
+    assert_eq!(outline.len(), 1);
+    assert_eq!(
+        (outline[0].title.as_str(), outline[0].page),
+        ("Vers chap2", Some(0))
+    );
+}
+
+#[test]
+fn a_merged_parent_kid_form_keeps_its_field() {
+    // [E20d] : sans report, le `/Parent` du widget copié désignait un flux de contenu.
+    let form = Document::from_bytes(form_parent_kid_pdf(), None).unwrap();
+    let simple = Document::open(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/simple.pdf"),
+        None,
+    )
+    .unwrap();
+    let merged = Document::from_bytes(merge(&[&simple, &form]).unwrap(), None).unwrap();
+    assert_eq!(
+        fields(&merged),
+        [("nom".to_string(), Some("ancien".to_string()))]
+    );
+}
+
+#[test]
+fn extracting_from_a_password_protected_source_carries_its_catalog() {
+    let mut doc = rich();
+    doc.protect(&mega_core::security::Protection {
+        user_password: "u".to_string(),
+        owner_password: "o".to_string(),
+        permissions: mega_core::Permissions {
+            print: true,
+            copy: true,
+            modify: true,
+            annotate: true,
+        },
+    })
+    .unwrap();
+    // Protection non enregistrée (état PDFium), puis fichier enregistré rouvert.
+    let saved = doc.to_bytes().unwrap();
+    let reopened = Document::from_bytes(saved, Some("u")).unwrap();
+    for source in [&doc, &reopened] {
+        let part = Document::from_bytes(source.extract_pages(&[1]).unwrap(), None).unwrap();
+        assert_eq!(part.attachments().unwrap().len(), 1);
+        assert_eq!(part.outline().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn attachments_still_encrypted_in_an_identity_file_are_not_carried() {
+    // `/EFF` : la pièce jointe resterait chiffrée dans un document neuf qui ne l'est pas.
+    let doc = Document::from_bytes(
+        mega_core::testing::attachments_only_encrypted_with_file_pdf(),
+        None,
+    )
+    .unwrap();
+    let part = Document::from_bytes(doc.extract_pages(&[0]).unwrap(), None).unwrap();
+    assert!(part.attachments().unwrap().is_empty());
+}

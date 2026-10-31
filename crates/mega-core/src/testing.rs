@@ -1689,3 +1689,152 @@ pub fn identity_encrypted_note_pdf(secret: &str) -> Vec<u8> {
     ));
     out.into_bytes()
 }
+
+/// Paquet XMP minimal (titre « Riche ») du catalogue de [`rich_catalog_pdf`].
+const RICH_XMP: &str = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\
+<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Riche</rdf:li></rdf:Alt></dc:title>\
+<xmp:ModifyDate>2020-01-01T00:00:00Z</xmp:ModifyDate>\
+</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+
+/// Trois pages (« Page 1/2/3 ») et un catalogue qui porte **les 17 structures** dont on vérifie
+/// la conservation à l'enregistrement, à la fusion, à l'extraction et à la scission (audit de
+/// compatibilité, E1 et E3) :
+///
+/// 1. `/StructTreeRoot` (un élément `/P` sur la page 1, qui porte `/StructParents 0`) ;
+/// 2. `/MarkInfo` ;
+/// 3. `/OCProperties`, un calque (OCG) utilisé par la page 2 (`/OC /oc1 BDC`, via
+///    `/Resources /Properties`) ;
+/// 4. `/Names /Dests` : `(chap2)` → page 2 ;
+/// 5. `/Names /JavaScript` (un script `init`) ;
+/// 6. `/Names /EmbeddedFiles` : une pièce jointe `notes.txt` ;
+/// 7. `/Dests` (forme PDF 1.1) : `/chap3` → page 3 ;
+/// 8. `/PageLabels` (romain puis décimal) ;
+/// 9. `/Lang (fr-CA)` ;
+/// 10. `/OpenAction` ;
+/// 11. `/AA` (action JavaScript à la fermeture) ;
+/// 12. `/ViewerPreferences` ;
+/// 13. `/PageMode` ;
+/// 14. `/Metadata` (XMP) ;
+/// 15. `/OutputIntents` ;
+/// 16. `/Outlines` : « Vers chap2 » (destination nommée), « Vers chap3 » (action `GoTo`
+///     nommée), « Direct p3 » (destination explicite) ;
+/// 17. `/AcroForm` avec un champ texte `nom` (widget fusionné au champ, sur la page 1).
+///
+/// La page 1 porte aussi trois liens (`/Dest (chap2)`, `/A /GoTo /D /chap3`, `[p3 /Fit]`).
+/// `header` est la version écrite après `%PDF-`, `catalog_version` la clé `/Version` du
+/// catalogue (absente si `None`).
+pub fn rich_catalog_pdf(header: &str, catalog_version: Option<&str>) -> Vec<u8> {
+    let version = catalog_version
+        .map(|v| format!(" /Version /{v}"))
+        .unwrap_or_default();
+    let stream = |dict: &str, content: &str| {
+        format!(
+            "<< {dict} /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+    };
+    let p1 = "/P << /MCID 0 >> BDC BT /Helv 24 Tf 72 760 Td (Page 1) Tj ET EMC";
+    let p2 = "/OC /oc1 BDC BT /Helv 24 Tf 72 760 Td (Page 2) Tj ET EMC";
+    let p3 = "BT /Helv 24 Tf 72 760 Td (Page 3) Tj ET";
+    let objects: Vec<String> = vec![
+        // 1 Catalog
+        format!(
+            "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 10 0 R /MarkInfo << /Marked true >> \
+             /OCProperties << /OCGs [12 0 R] /D << /ON [12 0 R] /Order [12 0 R] >> >> \
+             /Names 13 0 R /Dests 14 0 R \
+             /PageLabels << /Nums [0 << /S /r >> 1 << /S /D /St 1 >>] >> /Lang (fr-CA) \
+             /OpenAction [4 0 R /Fit] /AA << /WC 15 0 R >> /ViewerPreferences << /HideToolbar true >> \
+             /PageMode /UseOutlines /Metadata 16 0 R /OutputIntents [17 0 R] /Outlines 18 0 R \
+             /AcroForm << /Fields [22 0 R] /NeedAppearances true /DA (/Helv 0 Tf 0 g) \
+             /DR << /Font << /Helv 6 0 R >> >> >>{version} >>"
+        ),
+        // 2 Pages
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>".to_string(),
+        // 3 Page 1
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 6 0 R >> >> \
+         /Contents 7 0 R /StructParents 0 /Annots [19 0 R 20 0 R 21 0 R 22 0 R] >>"
+            .to_string(),
+        // 4 Page 2
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /Font << /Helv 6 0 R >> /Properties << /oc1 12 0 R >> >> /Contents 8 0 R >>"
+            .to_string(),
+        // 5 Page 3
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 6 0 R >> >> \
+         /Contents 9 0 R >>"
+            .to_string(),
+        // 6 Font
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        stream("", p1),
+        stream("", p2),
+        stream("", p3),
+        // 10 StructTreeRoot
+        "<< /Type /StructTreeRoot /K 11 0 R /ParentTree << /Nums [0 [11 0 R]] >> >>".to_string(),
+        // 11 StructElem
+        "<< /Type /StructElem /S /P /P 10 0 R /Pg 3 0 R /K 0 >>".to_string(),
+        // 12 OCG
+        "<< /Type /OCG /Name (Calque) >>".to_string(),
+        // 13 Names
+        "<< /Dests << /Names [(chap2) [4 0 R /Fit]] >> /JavaScript << /Names [(init) 15 0 R] >> \
+         /EmbeddedFiles << /Names [(notes.txt) 23 0 R] >> >>"
+            .to_string(),
+        // 14 Dests (PDF 1.1)
+        "<< /chap3 [5 0 R /Fit] >>".to_string(),
+        // 15 JS
+        r"<< /S /JavaScript /JS (app.alert(1);) >>".to_string(),
+        // 16 XMP
+        stream("/Type /Metadata /Subtype /XML", RICH_XMP),
+        // 17 OutputIntent
+        "<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB) /Info (sRGB) >>"
+            .to_string(),
+        // 18 Outlines
+        "<< /Type /Outlines /First 24 0 R /Last 26 0 R /Count 3 >>".to_string(),
+        // 19-21 Links
+        "<< /Type /Annot /Subtype /Link /Rect [72 700 200 720] /Border [0 0 0] /Dest (chap2) >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Link /Rect [72 650 200 670] /Border [0 0 0] \
+         /A << /S /GoTo /D /chap3 >> >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Link /Rect [72 600 200 620] /Border [0 0 0] /Dest [5 0 R /Fit] >>"
+            .to_string(),
+        // 22 Widget
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (nom) /V () /Rect [72 500 300 524] /F 4 \
+         /DA (/Helv 12 Tf 0 g) /P 3 0 R >>"
+            .to_string(),
+        // 23 Filespec
+        "<< /Type /Filespec /F (notes.txt) /UF (notes.txt) /EF << /F 27 0 R >> >>".to_string(),
+        // 24-26 Outline items
+        "<< /Title (Vers chap2) /Parent 18 0 R /Next 25 0 R /Dest (chap2) >>".to_string(),
+        "<< /Title (Vers chap3) /Parent 18 0 R /Prev 24 0 R /Next 26 0 R \
+         /A << /S /GoTo /D /chap3 >> >>"
+            .to_string(),
+        "<< /Title (Direct p3) /Parent 18 0 R /Prev 25 0 R /Dest [5 0 R /Fit] >>".to_string(),
+        // 27 EmbeddedFile
+        stream(
+            "/Type /EmbeddedFile /Subtype /text#2Fplain /Params << /Size 7 >>",
+            "Bonjour",
+        ),
+        // 28 Info
+        "<< /Title (Riche) /Producer (MegaUltraPDF audit) >>".to_string(),
+    ];
+    let mut out = format!("%PDF-{header}\n%\u{e2}\u{e3}\u{cf}\u{d3}\n");
+    let mut offsets = Vec::with_capacity(objects.len());
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{body}\nendobj\n", i + 1));
+    }
+    let xref = out.len();
+    out.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objects.len() + 1
+    ));
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R /Info 28 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+        objects.len() + 1
+    ));
+    out.into_bytes()
+}

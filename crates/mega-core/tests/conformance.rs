@@ -189,6 +189,52 @@ fn page_editions_produce_conforming_files() {
     }
 }
 
+/// Fusion, scission et extraction assemblent un document neuf, puis y reportent le catalogue
+/// des sources (Lot 14, audit E3) : formulaire, signets, pièces jointes, étiquettes, calques.
+#[test]
+fn merge_split_and_extract_produce_conforming_files() {
+    let Some(qpdf) = qpdf() else { return };
+    use mega_core::pages::{merge, split};
+    use mega_core::testing;
+    let dir = tempfile::tempdir().unwrap();
+    let open = |bytes: Vec<u8>| Document::from_bytes(bytes, None).unwrap();
+    let rich = open(testing::rich_catalog_pdf("1.7", None));
+    let form = open(testing::form_pdf());
+    let parent_kid = open(testing::form_parent_kid_pdf());
+    let simple = Document::open(fixture("simple.pdf"), None).unwrap();
+    let mut outputs: Vec<(String, Vec<u8>)> = vec![
+        (
+            "fusion riche + riche".into(),
+            merge(&[&rich, &rich]).unwrap(),
+        ),
+        (
+            "fusion formulaire + formulaire".into(),
+            merge(&[&form, &form]).unwrap(),
+        ),
+        (
+            "fusion simple + parent/enfant".into(),
+            merge(&[&simple, &parent_kid]).unwrap(),
+        ),
+        ("extraction p2".into(), rich.extract_pages(&[1]).unwrap()),
+        (
+            "extraction p3, p1".into(),
+            rich.extract_pages(&[2, 0]).unwrap(),
+        ),
+    ];
+    for (i, part) in split(&rich, &[vec![0], vec![1, 2]])
+        .unwrap()
+        .into_iter()
+        .enumerate()
+    {
+        outputs.push((format!("scission, partie {}", i + 1), part));
+    }
+    for (what, bytes) in outputs {
+        let path = dir.path().join("sortie.pdf");
+        std::fs::write(&path, bytes).unwrap();
+        assert_conforms(&qpdf, &path, None, &what);
+    }
+}
+
 #[test]
 fn annotations_and_content_produce_conforming_files() {
     let Some(qpdf) = qpdf() else { return };

@@ -254,6 +254,26 @@ impl Document {
                 .into_iter()
                 .nth(wanted)
                 .ok_or_else(|| not_found(index, embedded))?;
+            // `lopdf` et PDFium doivent désigner la même annotation : on vérifie le type avant
+            // de supprimer (une entrée nulle ou une sérialisation divergente décalerait l'index).
+            let is_attachment = {
+                let _guard = engine::guard();
+                let page_index = self.checked_index_unlocked(entry.page)?;
+                let page = self.inner().pages().get(page_index)?;
+                let annotations = page.annotations();
+                usize::from(entry.annot_index) < annotations.len()
+                    && annotations
+                        .get(usize::from(entry.annot_index))
+                        .is_ok_and(|a| {
+                            a.annotation_type()
+                                == pdfium_render::prelude::PdfPageAnnotationType::FileAttachment
+                        })
+            };
+            if !is_attachment {
+                return Err(invalid(
+                    "pièce jointe de page introuvable à cet index".to_string(),
+                ));
+            }
             return self.delete_annotation(entry.page, entry.annot_index);
         }
         self.mark_changed();
@@ -295,7 +315,9 @@ fn file_attachment(
         .and_then(|(_, p)| p.as_dict().ok())
         .and_then(|p| p.get(b"Size").ok())
         .and_then(|s| s.as_i64().ok())
-        .and_then(|s| u64::try_from(s).ok());
+        .and_then(|s| u64::try_from(s).ok())
+        // Une taille déclarée absurde (donnée non fiable) ne s'affiche pas telle quelle.
+        .filter(|s| *s <= 256 * 1024 * 1024);
     let size = match declared {
         Some(size) => size,
         None => crate::crypt::stream_bytes(stream)?.len() as u64,

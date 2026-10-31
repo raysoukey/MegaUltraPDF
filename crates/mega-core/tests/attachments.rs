@@ -167,3 +167,63 @@ fn deleting_a_page_attachment_removes_its_annotation() {
     assert!(doc.attachments().unwrap().is_empty());
     assert_eq!(doc.annotations(0).unwrap().len(), 5);
 }
+
+/// Le fixture, avec `/Annots` de la page réécrit par `edit` (liste d'objets).
+fn with_annots(edit: impl FnOnce(&mut Vec<lopdf::Object>)) -> Document {
+    let mut lo = lopdf::Document::load_mem(&third_party_annots_pdf()).unwrap();
+    let page = lo.get_dictionary_mut((3, 0)).unwrap();
+    let mut annots = page.get(b"Annots").unwrap().as_array().unwrap().clone();
+    edit(&mut annots);
+    page.set("Annots", lopdf::Object::Array(annots));
+    let mut out = Vec::new();
+    lo.save_to(&mut out).unwrap();
+    Document::from_bytes(out, None).unwrap()
+}
+
+fn assert_attachment_targeted_and_deleted(mut doc: Document) {
+    let list = doc.attachments().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "piece.txt");
+    doc.delete_attachment(0).unwrap();
+    assert!(doc.attachments().unwrap().is_empty());
+    // On relit le résultat avec `lopdf` : PDFium arrête son itération à une entrée nulle.
+    let lo = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    let page_id = *lo.get_pages().get(&1).unwrap();
+    let contents: Vec<Vec<u8>> = lo
+        .get_page_annotations(page_id)
+        .unwrap()
+        .iter()
+        .filter_map(|a| a.get(b"Contents").ok()?.as_str().ok().map(<[u8]>::to_vec))
+        .collect();
+    assert!(contents.contains(&b"Note tierce".to_vec()));
+    assert!(contents.contains(&b"Polygone".to_vec()));
+    assert!(!contents.contains(&b"PJ".to_vec()));
+}
+
+#[test]
+fn page_attachment_is_targeted_after_a_note_and_popup() {
+    use lopdf::Object::Reference;
+    let doc = with_annots(|annots| {
+        // Text (10) et Popup (11) avant le FileAttachment (9).
+        *annots = vec![
+            Reference((10, 0)),
+            Reference((11, 0)),
+            Reference((9, 0)),
+            Reference((5, 0)),
+            Reference((6, 0)),
+        ];
+    });
+    assert_attachment_targeted_and_deleted(doc);
+}
+
+#[test]
+fn page_attachment_is_targeted_after_a_null_annots_entry() {
+    use lopdf::Object::{Null, Reference};
+    let doc = with_annots(|annots| {
+        annots.retain(|a| {
+            *a != Reference((11, 0)) && *a != Reference((7, 0)) && *a != Reference((8, 0))
+        });
+        annots.insert(0, Null);
+    });
+    assert_attachment_targeted_and_deleted(doc);
+}

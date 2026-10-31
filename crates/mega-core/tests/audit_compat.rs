@@ -648,41 +648,6 @@ fn fonts_pdf(kind: &str) -> Vec<u8> {
     assemble("1.7", &objects, "")
 }
 
-/// Un champ de signature dont le `/SubFilter` est `subfilter`, avec un `/ByteRange` cohérent
-/// et un `/Contents` factice (zéros).
-fn sig_subfilter_pdf(subfilter: &str) -> Vec<u8> {
-    let zeros = "0".repeat(128);
-    let objects: Vec<Vec<u8>> = vec![
-        s("<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] /SigFlags 3 >> >>"),
-        s("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-        s(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [5 0 R] /Contents 4 0 R >>",
-        ),
-        stream("", b"0 0 1 rg 10 10 50 50 re f"),
-        s(
-            "<< /Type /Annot /Subtype /Widget /FT /Sig /T (Sig1) /V 6 0 R /Rect [0 0 0 0] /F 132 /P 3 0 R >>",
-        ),
-        s(&format!(
-            "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /{subfilter} \
-             /ByteRange [0 0000000000 0000000000 0000000000] /Contents <{zeros}> /M (D:20261031000000Z) >>"
-        )),
-    ];
-    let mut bytes = assemble("1.7", &objects, "");
-    let marker = b"/Contents <";
-    let p = bytes
-        .windows(marker.len())
-        .position(|w| w == marker)
-        .unwrap();
-    let start = p + marker.len() - 1;
-    let end = start + bytes[start..].iter().position(|&c| c == b'>').unwrap() + 1;
-    let total = bytes.len();
-    let br = format!("[0 {start:010} {end:010} {:010}]", total - end);
-    let brm = b"/ByteRange ";
-    let q = bytes.windows(brm.len()).position(|w| w == brm).unwrap() + brm.len();
-    bytes[q..q + br.len()].copy_from_slice(br.as_bytes());
-    bytes
-}
-
 // --- Mesures communes ---------------------------------------------------------------------
 
 const CATALOG_PATHS: &[&[&str]] = &[
@@ -2385,7 +2350,7 @@ fn l18_signature_formats() {
     ] {
         let id = format!("L18-{sf}");
         guarded(&id, || {
-            let bytes = sig_subfilter_pdf(sf);
+            let bytes = testing::sig_subfilter_pdf(sf);
             save(&id, &bytes);
             let r = mega_core::digital_signature::signatures(&bytes);
             verdict(

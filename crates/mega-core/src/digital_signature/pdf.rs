@@ -298,7 +298,12 @@ fn contents_bytes(bytes: &[u8], a: usize, b: usize) -> Result<Vec<u8>, &'static 
 type DigestCache = HashMap<(usize, usize, usize, cms::DigestAlgorithm), Vec<u8>>;
 
 /// Vérifie une signature (dictionnaire `/V`) contre les octets du fichier.
-fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> SignatureInfo {
+fn check_one(
+    doc: &LoDocument,
+    bytes: &[u8],
+    field: &SigField<'_>,
+    digests: &mut DigestCache,
+) -> SignatureInfo {
     let value = field.value;
     let sub_filter = value
         .get(b"SubFilter")
@@ -316,6 +321,11 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
         status: SignatureStatus::Unsupported(SigIssue::CmsUnreadable),
         covers_whole_document: false,
     };
+    if sub_filter == "ETSI.RFC3161" {
+        // Horodatage de document (ISO 32000-2, 12.8.5) : ce n'est pas une signature de personne.
+        info.status = SignatureStatus::Unsupported(SigIssue::DocumentTimestamp);
+        return info;
+    }
     if sub_filter != "adbe.pkcs7.detached" && sub_filter != "ETSI.CAdES.detached" {
         info.status = SignatureStatus::Unsupported(SigIssue::UnsupportedFormat);
         return info;
@@ -327,6 +337,13 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
             return info;
         }
     };
+    // Document certifié sans modification permise (`/DocMDP /P 1`) : toute révision ajoutée
+    // après la signature viole la certification, quel que soit le reste du verdict.
+    if certified_without_changes(doc, value) && !bytes[b + c..].iter().all(u8::is_ascii_whitespace)
+    {
+        info.status = SignatureStatus::Invalid(SigIssue::CertifiedThenModified);
+        return info;
+    }
     let der = match contents_bytes(bytes, a, b) {
         Ok(der) => der,
         Err(_) => {
@@ -383,7 +400,7 @@ fn signatures_with(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<Signa
     let mut digests = DigestCache::new();
     let mut list: Vec<SignatureInfo> = signature_fields(&doc)
         .iter()
-        .map(|field| check_one(bytes, field, &mut digests))
+        .map(|field| check_one(&doc, bytes, field, &mut digests))
         .collect();
     list.extend(usage_rights(&doc));
     Ok(list)
@@ -443,6 +460,30 @@ fn top_level_names(doc: &LoDocument) -> Vec<String> {
         .filter_map(|f| dict(doc, f))
         .filter_map(|d| text_of(d.get(b"T").ok()))
         .collect()
+}
+
+/// Vrai si le dictionnaire de signature porte une référence `/DocMDP` de niveau `P = 1`
+/// (certification : aucune modification permise).
+fn certified_without_changes(doc: &LoDocument, value: &Dictionary) -> bool {
+    value
+        .get(b"Reference")
+        .ok()
+        .and_then(|r| resolve(doc, r))
+        .and_then(|r| r.as_array().ok())
+        .is_some_and(|refs| {
+            refs.iter().filter_map(|r| dict(doc, r)).any(|r| {
+                r.get(b"TransformMethod")
+                    .ok()
+                    .and_then(|m| m.as_name().ok())
+                    .is_some_and(|m| m == b"DocMDP")
+                    && r.get(b"TransformParams")
+                        .ok()
+                        .and_then(|t| dict(doc, t))
+                        .and_then(|t| t.get(b"P").ok())
+                        .and_then(|p| p.as_i64().ok())
+                        == Some(1)
+            })
+        })
 }
 
 /// Refus propres à la signature : document chiffré, formulaire XFA, document certifié qui

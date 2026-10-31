@@ -366,3 +366,43 @@ fn protect_refuses_passwords_that_saslprep_would_change() {
     let reopened = Document::from_bytes(doc.to_bytes().unwrap(), Some("élève été")).unwrap();
     assert_eq!(reopened.page_count(), 1);
 }
+
+/// Audit E8 : l'AES-256 R6 n'existe pas en PDF 1.7 sans l'extension d'Adobe (niveau 8) ;
+/// l'en-tête doit annoncer au moins 1.7 et le catalogue déclarer `/Extensions`.
+#[test]
+fn protect_declares_the_adobe_extension_level_and_a_1_7_header() {
+    let protect_and_read = |version: &str| -> (Vec<u8>, lopdf::Document) {
+        let mut lo = lopdf::Document::load_mem(&sample_pdf(1, "ext")).unwrap();
+        lo.version = version.to_string();
+        let mut input = Vec::new();
+        lo.save_to(&mut input).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("e.pdf");
+        let mut doc = Document::from_bytes(input, None).unwrap();
+        doc.protect(&protection("u", "o", all())).unwrap();
+        doc.save_as(&path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let options = lopdf::LoadOptions {
+            password: Some("u".to_string()),
+            ..Default::default()
+        };
+        let out = lopdf::Document::load_mem_with_options(&bytes, options).unwrap();
+        (bytes, out)
+    };
+    let (bytes, out) = protect_and_read("1.4");
+    assert!(bytes.starts_with(b"%PDF-1.7"), "{:?}", &bytes[..8]);
+    let catalog = out.catalog().unwrap();
+    let adbe = catalog
+        .get(b"Extensions")
+        .and_then(|e| e.as_dict())
+        .and_then(|e| e.get(b"ADBE"))
+        .and_then(|a| a.as_dict())
+        .unwrap();
+    assert_eq!(adbe.get(b"ExtensionLevel").unwrap().as_i64().unwrap(), 8);
+    assert_eq!(adbe.get(b"BaseVersion").unwrap().as_name().unwrap(), b"1.7");
+    let (bytes, _) = protect_and_read("2.0");
+    assert!(
+        bytes.starts_with(b"%PDF-2.0"),
+        "une version plus haute reste"
+    );
+}

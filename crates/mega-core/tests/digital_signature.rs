@@ -931,3 +931,33 @@ fn visible_stamp_with_undrawable_text_is_refused() {
     };
     doc.sign_to(&path, &rsa(), &invisible).unwrap();
 }
+
+/// Audit E14 : un document certifié (`/DocMDP /P 1`) modifié après coup n'est plus « intègre ».
+#[test]
+fn a_certified_document_modified_afterwards_is_reported() {
+    use mega_core::digital_signature::SigIssue;
+    let list = signatures(&mega_core::testing::certified_then_modified_pdf()).unwrap();
+    assert_eq!(
+        only(list).status,
+        SignatureStatus::Invalid(SigIssue::CertifiedThenModified)
+    );
+}
+
+/// Audit E14 : un horodatage de document (`ETSI.RFC3161`) n'est pas une signature inconnue.
+#[test]
+fn rfc3161_subfilter_is_reported_as_a_document_timestamp() {
+    use mega_core::digital_signature::SigIssue;
+    let list = signatures(&mega_core::testing::sig_subfilter_pdf("ETSI.RFC3161")).unwrap();
+    assert_eq!(
+        only(list).status,
+        SignatureStatus::Unsupported(SigIssue::DocumentTimestamp)
+    );
+    for sf in ["adbe.pkcs7.sha1", "adbe.x509.rsa_sha1"] {
+        let list = signatures(&mega_core::testing::sig_subfilter_pdf(sf)).unwrap();
+        assert_eq!(
+            only(list).status,
+            SignatureStatus::Unsupported(SigIssue::UnsupportedFormat),
+            "{sf}"
+        );
+    }
+}

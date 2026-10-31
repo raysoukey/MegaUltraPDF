@@ -1316,6 +1316,89 @@ pub fn certified_pdf(p: i64) -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Un champ de signature dont le `/SubFilter` est `sub_filter`, avec un `/ByteRange` cohérent
+/// et un `/Contents` factice (zéros).
+///
+/// Pourquoi : mesurer comment le vérificateur classe chaque format (`adbe.pkcs7.sha1`,
+/// `ETSI.RFC3161`…) sans fabriquer de vraie signature.
+pub fn sig_subfilter_pdf(sub_filter: &str) -> Vec<u8> {
+    signature_field_pdf(sub_filter, "")
+}
+
+/// Un document **certifié** (`/DocMDP /P 1` : aucune modification permise) puis modifié par une
+/// révision incrémentale (un nouveau `/Info`) : la signature ne couvre plus tout le fichier.
+///
+/// Pourquoi : une certification violée ne doit pas être rapportée « intègre » (audit E14).
+/// La signature est factice mais son `/ByteRange` est cohérent ; le verdict de certification
+/// ne dépend pas du CMS.
+pub fn certified_then_modified_pdf() -> Vec<u8> {
+    let reference = "/Reference [<< /Type /SigRef /TransformMethod /DocMDP \
+                     /TransformParams << /Type /TransformParams /P 1 /V /1.2 >> >>]";
+    let mut bytes = signature_field_pdf("adbe.pkcs7.detached", reference);
+    // Ancienne table : le nombre qui suit le dernier `startxref`.
+    let marker = b"startxref\n";
+    let at = bytes
+        .windows(marker.len())
+        .rposition(|w| w == marker)
+        .map_or(0, |p| p + marker.len());
+    let previous: usize = String::from_utf8_lossy(&bytes[at..])
+        .lines()
+        .next()
+        .and_then(|l| l.trim().parse().ok())
+        .unwrap_or(0);
+    // L'objet 7 est le `/Info` posé par `assemble_pdf` (six objets + Info).
+    let object = "7 0 obj\n<< /Producer (modifie apres certification) >>\nendobj\n";
+    let offset = bytes.len();
+    let update = format!(
+        "{object}xref\n7 1\n{offset:010} 00000 n \n\
+         trailer\n<< /Size 8 /Root 1 0 R /Info 7 0 R /Prev {previous} >>\n\
+         startxref\n{}\n%%EOF\n",
+        offset + object.len()
+    );
+    bytes.extend_from_slice(update.as_bytes());
+    bytes
+}
+
+/// Le PDF à un champ de signature commun à [`sig_subfilter_pdf`] et
+/// [`certified_then_modified_pdf`] ; `extra` s'ajoute au dictionnaire `/Sig`.
+fn signature_field_pdf(sub_filter: &str, extra: &str) -> Vec<u8> {
+    let zeros = "0".repeat(128);
+    let content = "0 0 1 rg 10 10 50 50 re f";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] /SigFlags 3 >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [5 0 R] /Contents 4 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Annot /Subtype /Widget /FT /Sig /T (Sig1) /V 6 0 R /Rect [0 0 0 0] /F 132 /P 3 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /{sub_filter} {extra} \
+             /ByteRange [0 0000000000 0000000000 0000000000] /Contents <{zeros}> \
+             /M (D:20261031000000Z) >>"
+        ),
+    ];
+    let mut bytes = assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>");
+    let marker = b"/Contents <";
+    let Some(p) = bytes.windows(marker.len()).position(|w| w == marker) else {
+        return bytes;
+    };
+    let start = p + marker.len() - 1;
+    let end = start + bytes[start..].iter().position(|&c| c == b'>').unwrap_or(0) + 1;
+    let total = bytes.len();
+    let range = format!("[0 {start:010} {end:010} {:010}]", total - end);
+    let tag = b"/ByteRange ";
+    if let Some(q) = bytes.windows(tag.len()).position(|w| w == tag) {
+        let q = q + tag.len();
+        bytes[q..q + range.len()].copy_from_slice(range.as_bytes());
+    }
+    bytes
+}
+
 /// Une note qui contient `secret`, avec son popup **hors** de la note, une réponse (`/IRT`)
 /// ailleurs sur la page, et un arbre de structure (PDF balisé) qui la cite par `/OBJR`.
 /// Caviarder ou supprimer la note doit faire disparaître `secret` du fichier enregistré.

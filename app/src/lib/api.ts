@@ -426,7 +426,9 @@ export type SigIssue =
   | 'unsupported_format'
   | 'byte_range_invalid'
   | 'contents_invalid'
-  | 'usage_rights';
+  | 'usage_rights'
+  | 'certified_then_modified'
+  | 'document_timestamp';
 
 /** Verdict d'une signature (miroir de `SignatureStatus`, sérialisé `{ kind, issue }`). */
 export type SignatureStatus =

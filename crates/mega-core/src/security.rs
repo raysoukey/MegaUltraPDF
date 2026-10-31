@@ -280,6 +280,7 @@ impl Document {
         doc.encrypt(&state)
             .map_err(|e| CoreError::InvalidOperation(format!("chiffrement : {e}")))?;
         complete_encrypt_dictionary(&mut doc);
+        declare_aes256_extension(&mut doc);
         let mut out = Vec::new();
         doc.save_to(&mut out)?;
         let previous = self.password().map(str::to_string);
@@ -341,5 +342,42 @@ impl Document {
             return Err(e);
         }
         Ok(())
+    }
+}
+
+/// Déclare que le fichier utilise l'AES-256 (révision 6), absent de PDF 1.7 : l'en-tête monte
+/// à 1.7 au moins (une version plus haute reste) et le catalogue reçoit
+/// `/Extensions << /ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >> >>` (Adobe Supplement to
+/// ISO 32000-1 ; ISO 32000-2, 7.6.4). Sans cela, un lecteur strict ne sait pas lire le fichier.
+fn declare_aes256_extension(doc: &mut lopdf::Document) {
+    use lopdf::dictionary;
+    // \[Apprentissage\] Les tuples se comparent champ par champ : (1, 4) < (1, 7).
+    let parse = |v: &str| -> Option<(u8, u8)> {
+        let (major, minor) = v.split_once('.')?;
+        Some((major.parse().ok()?, minor.parse().ok()?))
+    };
+    if parse(&doc.version).is_none_or(|v| v < (1, 7)) {
+        doc.version = "1.7".to_string();
+    }
+    let adbe = dictionary! {
+        "BaseVersion" => lopdf::Object::Name(b"1.7".to_vec()),
+        "ExtensionLevel" => 8,
+    };
+    let Some(root) = doc
+        .trailer
+        .get(b"Root")
+        .ok()
+        .and_then(|r| r.as_reference().ok())
+    else {
+        return;
+    };
+    let Ok(catalog) = doc.get_object_mut(root).and_then(|o| o.as_dict_mut()) else {
+        return;
+    };
+    // Une table `/Extensions` existante est complétée, pas remplacée (autres développeurs).
+    if let Ok(existing) = catalog.get_mut(b"Extensions").and_then(|e| e.as_dict_mut()) {
+        existing.set("ADBE", adbe);
+    } else {
+        catalog.set("Extensions", dictionary! { "ADBE" => adbe });
     }
 }

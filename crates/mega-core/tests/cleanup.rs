@@ -406,9 +406,29 @@ fn group_members_go_with_their_primary_annotation() {
     );
 }
 
+/// `identity_encrypted_note_pdf` rendu à un chiffrement RC4 dont le filtre `/StdCF` annonce une
+/// méthode (`/CFM /Vx`) que lopdf ne connaît pas : PDFium la lit comme du RC4 et ouvre le
+/// fichier, lopdf n'en tire aucun filtre et la passe de nettoyage ne peut pas s'appliquer. Même
+/// longueur que l'original (espaces de bourrage) : les décalages du fichier restent exacts.
+fn uncleanable_note_pdf(secret: &str) -> Vec<u8> {
+    let mut bytes = identity_encrypted_note_pdf(secret);
+    let swap = |bytes: &mut Vec<u8>, from: &[u8], to: &[u8]| {
+        assert_eq!(from.len(), to.len());
+        let at = bytes.windows(from.len()).position(|w| w == from).unwrap();
+        bytes[at..at + from.len()].copy_from_slice(to);
+    };
+    swap(
+        &mut bytes,
+        b"/StmF /Identity /StrF /Identity",
+        b"/StmF /StdCF    /StrF /StdCF   ",
+    );
+    swap(&mut bytes, b"/CFM /V2", b"/CFM /Vx");
+    bytes
+}
+
 #[test]
 fn deleting_an_annotation_on_an_uncleanable_file_is_refused() {
-    let mut doc = Document::from_bytes(identity_encrypted_note_pdf("SECRET-ZX9"), None).unwrap();
+    let mut doc = Document::from_bytes(uncleanable_note_pdf("SECRET-ZX9"), None).unwrap();
     let err = doc.delete_annotation(0, 0).unwrap_err();
     assert!(matches!(err, CoreError::InvalidOperation(m) if m.contains("suppression est refusée")));
     // `is_modified` suit l'historique, pas le drapeau `changed` : `save_as` recopie les octets
@@ -418,13 +438,13 @@ fn deleting_an_annotation_on_an_uncleanable_file_is_refused() {
     doc.save_as(&out).unwrap();
     assert_eq!(
         std::fs::read(&out).unwrap(),
-        identity_encrypted_note_pdf("SECRET-ZX9")
+        uncleanable_note_pdf("SECRET-ZX9")
     );
 }
 
 #[test]
 fn adding_an_annotation_on_an_uncleanable_file_still_works() {
-    let mut doc = Document::from_bytes(identity_encrypted_note_pdf("x"), None).unwrap();
+    let mut doc = Document::from_bytes(uncleanable_note_pdf("x"), None).unwrap();
     let note = NewAnnotation {
         kind: AnnotationKind::Rect,
         geometry: Geometry::Rect {
@@ -444,9 +464,12 @@ fn adding_an_annotation_on_an_uncleanable_file_still_works() {
 
 #[test]
 fn can_clean_distinguishes_identity_filters_from_plain_files() {
-    // Avant A2 ; devient vrai après A2 (passe-plat) : le test est alors inversé dans A2.
-    assert!(!mega_core::cleanup::can_clean(
+    assert!(mega_core::cleanup::can_clean(
         &identity_encrypted_note_pdf("x"),
+        None
+    ));
+    assert!(!mega_core::cleanup::can_clean(
+        &uncleanable_note_pdf("x"),
         None
     ));
     assert!(mega_core::cleanup::can_clean(&sample_pdf(1, "t"), None));
@@ -489,4 +512,26 @@ fn before_save_raw_fallback_also_raises_the_header() {
     let out = mega_core::cleanup::before_save(junk, None, Some((2, 0))).unwrap();
     assert!(out.starts_with(b"%PDF-2.0"));
     assert_eq!(out.len(), junk.len());
+}
+
+/// Audit E1 : un fichier `/StmF /StrF /Identity` se relit par la session « passe-plat » ; la
+/// note supprimée n'y survit donc pas, et le `/Encrypt` d'origine reste dans le fichier.
+#[test]
+fn deleted_note_does_not_survive_in_an_identity_encrypted_file() {
+    let mut doc = Document::from_bytes(identity_encrypted_note_pdf("SECRET-ZX9"), None).unwrap();
+    doc.delete_annotation(0, 0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("o.pdf");
+    doc.save_as(&out).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(
+        !bytes.windows(10).any(|w| w == b"SECRET-ZX9"),
+        "le texte de la note supprimée survit"
+    );
+    assert!(
+        bytes.windows(9).any(|w| w == b"/Encrypt "),
+        "/Encrypt d'origine conservé"
+    );
+    let reopened = Document::from_bytes(bytes, None).unwrap();
+    assert!(reopened.page_text(0).unwrap().contains("Visible"));
 }

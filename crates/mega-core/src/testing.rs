@@ -1358,9 +1358,26 @@ fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {
 /// d'ouverture vide, propriétaire `owner`, `/O` et `/U` calculés pour ces valeurs (RC4
 /// 128 bits, révision 4, `/P -4`, premier `/ID` `00112233…eeff`).
 pub fn attachments_only_encrypted_pdf() -> Vec<u8> {
+    attachments_only_build(false)
+}
+
+/// Comme [`attachments_only_encrypted_pdf`], avec une pièce jointe `a.txt` dont le flux
+/// `/EF /F` porte `/Filter /Crypt` (filtre `/StdCF`, §7.6.6) : ses octets, ici le faux chiffré
+/// `CIPHERTEXT-ABC123`, ne doivent jamais être touchés par une réécriture.
+pub fn attachments_only_encrypted_with_file_pdf() -> Vec<u8> {
+    attachments_only_build(true)
+}
+
+/// Construit l'un des deux PDF « pièces jointes seules » ci-dessus.
+fn attachments_only_build(with_file: bool) -> Vec<u8> {
     let content = "BT /F1 24 Tf 72 700 Td (Hello Identity) Tj ET";
-    let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+    let catalog = if with_file {
+        "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(a.txt) 8 0 R] >> >> >>"
+    } else {
+        "<< /Type /Catalog /Pages 2 0 R >>"
+    };
+    let mut objects = vec![
+        catalog.to_string(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
          /Resources << /Font << /F1 5 0 R >> >> >>"
@@ -1378,6 +1395,16 @@ pub fn attachments_only_encrypted_pdf() -> Vec<u8> {
             .to_string(),
         "<< /Title (Plain title) >>".to_string(),
     ];
+    if with_file {
+        let ciphertext = "CIPHERTEXT-ABC123";
+        objects.push("<< /Type /Filespec /F (a.txt) /EF << /F 9 0 R >> >>".to_string());
+        objects.push(format!(
+            "<< /Type /EmbeddedFile /Length {} /Filter /Crypt \
+             /DecodeParms << /Type /CryptFilterDecodeParms /Name /StdCF >> >>\n\
+             stream\n{ciphertext}\nendstream",
+            ciphertext.len()
+        ));
+    }
     let mut out = String::from("%PDF-1.6\n");
     let mut offsets = Vec::new();
     for (i, body) in objects.iter().enumerate() {

@@ -97,22 +97,43 @@ pub(crate) fn stream_bytes(stream: &Stream) -> Option<Vec<u8>> {
     }
 }
 
-/// Refuse un chiffrement que lopdf ne rechiffrerait pas à l'identique (relecture du Lot 10) :
-/// un filtre `/StmF` ou `/StrF` qui n'est pas une entrée de `/CF` (le nom réservé `Identity`,
-/// « en clair », par exemple : lopdf le traiterait en RC4 et brouillerait le fichier), ou un
-/// `/EFF` (pièces jointes) différent de `/StmF`, que lopdf ne sait pas réécrire.
-fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<()> {
-    let refuse = || {
-        CoreError::InvalidOperation(
-            "document chiffré par filtres (pièces jointes seules, filtre « Identity ») : \
-             non réécrit par cette version"
-                .to_string(),
-        )
-    };
+/// Ce que la session doit faire d'un document chiffré lu par lopdf.
+enum FilterCheck {
+    /// Les filtres sont ceux que lopdf sait rechiffrer à l'identique : déchiffrer, travailler,
+    /// rechiffrer.
+    Standard,
+    /// `/StmF` et `/StrF` valent `Identity` : flux et chaînes sont en clair dans le fichier
+    /// (seules les pièces jointes, `/EFF`, peuvent être chiffrées). lopdf les « déchiffrerait »
+    /// pourtant en RC4 : la session relit alors le fichier sans le déchiffrer et garde son
+    /// `/Encrypt` tel quel.
+    Passthrough,
+}
+
+fn refuse() -> CoreError {
+    CoreError::InvalidOperation(
+        "document chiffré par filtres (filtre inconnu ou pièces jointes seules mal décrites) : \
+         non réécrit par cette version"
+            .to_string(),
+    )
+}
+
+/// Vrai pour le filtre « en clair » : le nom réservé `Identity`, ou l'absence de nom (la norme
+/// en fait la valeur par défaut, §7.6.5).
+fn is_identity(name: Option<&[u8]>) -> bool {
+    // [Apprentissage] `matches!` teste un motif sans écrire un `match` complet ; ici il
+    // reconnaît trois formes d'un même sens (absent, vide, `Identity`).
+    matches!(name, None | Some(b"") | Some(b"Identity"))
+}
+
+/// Choisit le mode de la session pour un document chiffré, ou refuse un chiffrement que lopdf
+/// ne rechiffrerait pas à l'identique (relecture du Lot 10) : un filtre `/StmF` ou `/StrF`
+/// qui n'est pas une entrée de `/CF` (sans être `Identity` des deux côtés), ou un `/EFF`
+/// (pièces jointes) différent de `/StmF`, que lopdf ne sait pas réécrire.
+fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<FilterCheck> {
     let encoded = state.encode().map_err(|_| refuse())?;
     let version = encoded.get(b"V").and_then(|v| v.as_i64()).unwrap_or(0);
     if version < 4 {
-        return Ok(());
+        return Ok(FilterCheck::Standard);
     }
     let filters: Vec<Vec<u8>> = encoded
         .get(b"CF")
@@ -121,6 +142,9 @@ fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<
         .unwrap_or_default();
     let name_of = |key: &[u8]| encoded.get(key).and_then(|n| n.as_name()).ok();
     let stream = name_of(b"StmF");
+    if is_identity(stream) && is_identity(name_of(b"StrF")) {
+        return Ok(FilterCheck::Passthrough);
+    }
     for key in [&b"StmF"[..], b"StrF"] {
         match name_of(key) {
             Some(name) if filters.iter().any(|f| f.as_slice() == name) => {}
@@ -146,7 +170,48 @@ fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<
     {
         return Err(refuse());
     }
-    Ok(())
+    Ok(FilterCheck::Standard)
+}
+
+/// Copie de `bytes` où chaque référence `/Encrypt N G R` d'une remorque (ou d'un flux de
+/// références) est rebaptisée `/Encrypx N G R`, sans changer la longueur : lopdf voit alors un
+/// fichier non chiffré et ne touche à aucun octet, et le dictionnaire `/Encrypt` reste un objet
+/// ordinaire, comme les flux chiffrés des pièces jointes.
+fn hide_encrypt_entry(bytes: &[u8]) -> Vec<u8> {
+    const KEY: &[u8] = b"/Encrypt";
+    let is_space = |b: u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0 | 0x0c);
+    // Position après « espaces (au moins un) puis chiffres (au moins un) » à partir de `at`.
+    let skip_number = |mut at: usize| -> Option<usize> {
+        let start = at;
+        while bytes.get(at).copied().is_some_and(is_space) {
+            at += 1;
+        }
+        if at == start {
+            return None;
+        }
+        let digits = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        (at > digits).then_some(at)
+    };
+    let mut out = bytes.to_vec();
+    let mut from = 0;
+    while let Some(found) = bytes[from..].windows(KEY.len()).position(|w| w == KEY) {
+        let at = from + found;
+        from = at + KEY.len();
+        let is_reference = skip_number(from).and_then(skip_number).is_some_and(|end| {
+            let mut r = end;
+            while bytes.get(r).copied().is_some_and(is_space) {
+                r += 1;
+            }
+            r > end && bytes.get(r) == Some(&b'R')
+        });
+        if is_reference {
+            out[at + KEY.len() - 1] = b'x';
+        }
+    }
+    out
 }
 
 /// Un document `lopdf` déchiffré le temps d'une passe, à rechiffrer à l'identique.
@@ -162,15 +227,19 @@ impl LopdfSession {
     /// Refuse un document resté chiffré : mot de passe faux, ou chiffrement que lopdf ne sait
     /// pas lire (filtre inconnu).
     pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> CoreResult<Self> {
-        Self::from_loaded(load_limited(bytes, password))
+        Self::from_loaded(load_limited(bytes, password), bytes, true)
     }
 
     /// Comme [`LopdfSession::load`], sans réparer la remorque (voir [`load_exact`]).
     pub(crate) fn load_exact(bytes: &[u8], password: Option<&str>) -> CoreResult<Self> {
-        Self::from_loaded(load_exact(bytes, password))
+        Self::from_loaded(load_exact(bytes, password), bytes, false)
     }
 
-    fn from_loaded(loaded: lopdf::Result<LoDocument>) -> CoreResult<Self> {
+    fn from_loaded(
+        loaded: lopdf::Result<LoDocument>,
+        bytes: &[u8],
+        repair: bool,
+    ) -> CoreResult<Self> {
         let mut doc = loaded.map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;
@@ -182,10 +251,39 @@ impl LopdfSession {
             ));
         }
         let state = doc.encryption_state.take();
-        if let Some(state) = &state {
-            check_crypt_filters(&doc, state)?;
+        if let Some(state) = &state
+            && matches!(check_crypt_filters(&doc, state)?, FilterCheck::Passthrough)
+        {
+            return Self::passthrough(state, bytes, repair);
         }
         Ok(LopdfSession { doc, state })
+    }
+
+    /// Session d'un fichier `/StmF /StrF Identity` : relu sans déchiffrement (la première
+    /// lecture a déjà authentifié le mot de passe), avec `/Encrypt` remis dans la remorque pour
+    /// que l'élagage et la renumérotation le gardent ; `/ID` n'est pas touché. `finish` n'a
+    /// rien à rechiffrer : ce qui est chiffré (les pièces jointes) n'a jamais été lu en clair.
+    fn passthrough(state: &EncryptionState, bytes: &[u8], repair: bool) -> CoreResult<Self> {
+        let hidden = hide_encrypt_entry(bytes);
+        let loaded = if repair {
+            load_limited(&hidden, None)
+        } else {
+            load_exact(&hidden, None)
+        };
+        let mut doc = loaded.map_err(|e| {
+            CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
+        })?;
+        let id = state.encrypt_object_id().ok_or_else(refuse)?;
+        let is_standard = doc
+            .get_dictionary(id)
+            .ok()
+            .and_then(|d| d.get(b"Filter").and_then(Object::as_name).ok())
+            == Some(b"Standard".as_slice());
+        if !is_standard {
+            return Err(refuse());
+        }
+        doc.trailer.set("Encrypt", Object::Reference(id));
+        Ok(LopdfSession { doc, state: None })
     }
 
     /// Rechiffre (si besoin) avec l'état d'origine et sérialise le document.

@@ -271,23 +271,84 @@ fn attachments_only_encryption_is_not_corrupted() {
     let reopened = Document::from_bytes(out, None).unwrap();
     assert!(reopened.page_text(0).unwrap().contains("Hello Identity"));
     assert_eq!(reopened.title().as_deref(), Some("Plain title"));
-    // Une passe lopdf (filigrane) refuse clairement au lieu d'abîmer le fichier.
+    // Une passe lopdf (filigrane) passe désormais par la session « passe-plat » (audit L16).
     let mut doc = Document::from_bytes(bytes, None).unwrap();
-    let result = doc.add_watermark(&Watermark {
+    doc.add_watermark(&Watermark {
         text: "X".to_string(),
         size: 40.0,
         opacity: 0.5,
         angle_deg: 0.0,
         color: Color { r: 0, g: 0, b: 0 },
         pages: None,
-    });
-    match result {
-        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffr"), "{m}"),
-        Ok(()) => {
-            let again = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
-            assert!(again.page_text(0).unwrap().contains("Hello Identity"));
-            assert_eq!(again.title().as_deref(), Some("Plain title"));
-        }
-        Err(other) => panic!("{other:?}"),
+    })
+    .unwrap();
+    let again = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    assert!(again.page_text(0).unwrap().contains("Hello Identity"));
+    assert_eq!(again.title().as_deref(), Some("Plain title"));
+}
+
+/// Octets bruts du flux `/EF /F` de la première pièce jointe. Le fichier est lu **sans**
+/// déchiffrement (`/Encrypt` rebaptisé, même longueur) : lopdf appliquerait sinon RC4 aux
+/// flux d'un fichier `/StmF /Identity`.
+fn without_encrypt(bytes: &[u8]) -> lopdf::Document {
+    let mut raw = bytes.to_vec();
+    let hits: Vec<usize> = (0..raw.len().saturating_sub(9))
+        .filter(|&i| raw[i..].starts_with(b"/Encrypt "))
+        .collect();
+    for at in hits {
+        raw[at + 7] = b'x';
     }
+    lopdf::Document::load_mem(&raw).unwrap()
+}
+
+fn embedded_file_stream_bytes(bytes: &[u8]) -> Vec<u8> {
+    let doc = without_encrypt(bytes);
+    let dict_at = |obj: &lopdf::Object| doc.dereference(obj).unwrap().1.clone();
+    let root = dict_at(doc.trailer.get(b"Root").unwrap());
+    let names = dict_at(root.as_dict().unwrap().get(b"Names").unwrap());
+    let embedded = dict_at(names.as_dict().unwrap().get(b"EmbeddedFiles").unwrap());
+    let list = embedded
+        .as_dict()
+        .unwrap()
+        .get(b"Names")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let spec = dict_at(&list[1]);
+    let ef = dict_at(spec.as_dict().unwrap().get(b"EF").unwrap());
+    let file = dict_at(ef.as_dict().unwrap().get(b"F").unwrap());
+    file.as_stream().unwrap().content.clone()
+}
+
+/// Audit L16 : un fichier dont seules les pièces jointes sont chiffrées se filigrane et se
+/// réécrit ; son `/Encrypt`, son `/ID` et les octets (chiffrés) de la pièce jointe restent
+/// ceux d'origine.
+#[test]
+fn identity_filtered_file_keeps_its_encrypt_dictionary_and_attachment_bytes_after_watermark() {
+    let input = mega_core::testing::attachments_only_encrypted_with_file_pdf();
+    let ef_before = embedded_file_stream_bytes(&input);
+    assert_eq!(ef_before, b"CIPHERTEXT-ABC123");
+    let mut doc = Document::from_bytes(input.clone(), None).unwrap();
+    doc.add_watermark(&Watermark {
+        text: "x".to_string(),
+        size: 40.0,
+        opacity: 0.5,
+        angle_deg: 0.0,
+        color: Color { r: 0, g: 0, b: 0 },
+        pages: None,
+    })
+    .unwrap();
+    let pdfium_bytes = doc.to_bytes().unwrap();
+    let out = before_save(&pdfium_bytes, None, None).unwrap();
+    assert_eq!(embedded_file_stream_bytes(&out), ef_before);
+    assert!(out.windows(9).any(|w| w == b"/Encrypt "));
+    let id_of = |bytes: &[u8]| without_encrypt(bytes).trailer.get(b"ID").unwrap().clone();
+    // PDFium écrit lui-même un nouveau second élément de `/ID` : la passe ne doit rien changer.
+    assert_eq!(id_of(&out), id_of(&pdfium_bytes));
+    assert_eq!(
+        id_of(&out).as_array().unwrap()[0],
+        id_of(&input).as_array().unwrap()[0]
+    );
+    let reopened = Document::from_bytes(out, None).unwrap();
+    assert!(reopened.page_text(0).unwrap().contains("Hello Identity"));
 }

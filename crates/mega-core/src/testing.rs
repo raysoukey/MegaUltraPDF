@@ -301,18 +301,32 @@ pub fn checkbox_states_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
-/// Un document avec des métadonnées **XMP** non compressées (`/Metadata` du catalogue) :
-/// titre « Ancien », auteur « Alice », date de modification 2020.
 /// Une page qui **déclare** la conformité PDF/A-2B : identification `pdfaid` dans les
 /// métadonnées XMP (attributs, comme l'écrivent Acrobat et LibreOffice) et `/OutputIntents`
 /// (profil de sortie). Le fichier n'est pas réellement conforme (police non incorporée) :
 /// seule compte la déclaration, que l'application signale et doit conserver (Lot 13, C6).
 pub fn pdfa_pdf() -> Vec<u8> {
-    let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+    pdfa_part_pdf(2)
+}
+
+/// [`pdfa_pdf`] déclaré en partie `part` de PDF/A : niveau `B` pour les parties 1 à 3, aucun
+/// niveau pour la partie 4 (qui n'en a plus, ISO 19005-4).
+///
+/// Pourquoi : PDF/A-1 interdit toute transparence et PDF/A-4 tout `/Info` ; ce que l'on écrit
+/// dépend de la partie déclarée (Lot 14).
+pub fn pdfa_part_pdf(part: u8) -> Vec<u8> {
+    let conformance = if part < 4 {
+        " pdfaid:conformance=\"B\""
+    } else {
+        ""
+    };
+    let xmp = format!(
+        "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
 <rdf:Description rdf:about=\"\" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\" \
-pdfaid:part=\"2\" pdfaid:conformance=\"B\"/>\
-</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+pdfaid:part=\"{part}\"{conformance}/>\
+</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>"
+    );
     let content = "BT /F1 24 Tf 72 700 Td (Archive) Tj ET";
     let objects = vec![
         "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R /OutputIntents [6 0 R] >>".to_string(),
@@ -388,6 +402,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end";
     assemble_pdf(&objects, "<< /Title (Astral) >>")
 }
 
+/// Un document avec des métadonnées **XMP** non compressées (`/Metadata` du catalogue) :
+/// titre « Ancien », auteur « Alice », date de modification 2020.
 pub fn xmp_pdf() -> Vec<u8> {
     let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\

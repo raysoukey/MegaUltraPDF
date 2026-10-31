@@ -33,8 +33,7 @@ pub(super) fn xmp_li(xmp: &str, tag: &str, prefer_default: bool) -> Option<Strin
 /// section CDATA ne la coupe pas). Partagé par `xmp_value` et `xmp_text`.
 fn xmp_raw<'a>(xmp: &'a str, name: &str) -> Option<&'a str> {
     let attribute = ['"', '\''].into_iter().find_map(|quote| {
-        let start = format!(" {name}={quote}");
-        let from = xmp.find(&start)? + start.len();
+        let from = attribute_value_start(xmp, name, quote)?;
         Some(&xmp[from..from + xmp[from..].find(quote)?])
     });
     attribute.or_else(|| {
@@ -42,6 +41,26 @@ fn xmp_raw<'a>(xmp: &'a str, name: &str) -> Option<&'a str> {
         let from = xmp.find(&open)? + open.len();
         Some(&xmp[from..from + xmp[from..].find(&format!("</{name}>"))?])
     })
+}
+
+/// Début de la valeur de l'attribut `name={quote}…` : le premier dont le nom est précédé d'un
+/// blanc XML (espace, tabulation, fin de ligne : un outil peut aller à la ligne entre deux
+/// attributs), pour que `xpdfaid:part` ne passe pas pour `pdfaid:part`.
+fn attribute_value_start(xmp: &str, name: &str, quote: char) -> Option<usize> {
+    let pattern = format!("{name}={quote}");
+    let mut from = 0;
+    while let Some(found) = xmp[from..].find(&pattern) {
+        let at = from + found;
+        if xmp[..at]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace)
+        {
+            return Some(at + pattern.len());
+        }
+        from = at + pattern.len();
+    }
+    None
 }
 
 /// Valeur d'une propriété XMP simple, nettoyée, sans limite autre que `MAX_METADATA_CHARS`.
@@ -190,11 +209,35 @@ fn xmp_of(doc: &lopdf::Document) -> Option<String> {
     Some(String::from_utf8_lossy(&xmp).into_owned())
 }
 
-/// Vrai si le XMP déclare PDF/A (`pdfaid:part`) ou PDF/UA (`pdfuaid:part`) : un fichier qui
-/// s'en réclame interdit les polices non incorporées, donc Helvetica (audit E6).
-pub(crate) fn declares_conformance(doc: &lopdf::Document) -> bool {
-    pdfa_claim_of(doc).is_some()
-        || xmp_of(doc).is_some_and(|xmp| xmp_value(&xmp, "pdfuaid:part").is_some())
+/// Conformité **déclarée** par le XMP du document : ce qu'on ajoute au fichier (filigrane,
+/// numéros, couche OCR, métadonnées) doit la respecter, sans quoi un fichier conforme ne le
+/// serait plus après une simple modification (audit E6).
+///
+/// Pourquoi une structure plutôt qu'un booléen : chaque partie interdit autre chose. PDF/A et
+/// PDF/UA refusent les polices non incorporées (donc Helvetica) ; PDF/A refuse DeviceRGB sans
+/// profil de sortie RVB ; PDF/A-1 refuse toute transparence ; PDF/A-4 refuse `/Info`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Conformance {
+    /// Partie de PDF/A déclarée (`pdfaid:part` : 1 à 4), `None` sans déclaration PDF/A (ou
+    /// une partie illisible).
+    pub pdfa_part: Option<u8>,
+    /// Le document déclare PDF/UA (`pdfuaid:part`).
+    pub pdfua: bool,
+}
+
+/// Conformité déclarée par le XMP `/Metadata` du catalogue, lu et décodé **une** fois ;
+/// `None` si le document ne déclare ni PDF/A ni PDF/UA.
+pub(crate) fn conformance_of(doc: &lopdf::Document) -> Option<Conformance> {
+    let xmp = xmp_of(doc)?;
+    let pdfa = xmp_value(&xmp, "pdfaid:part");
+    let pdfua = xmp_value(&xmp, "pdfuaid:part").is_some();
+    if pdfa.is_none() && !pdfua {
+        return None;
+    }
+    Some(Conformance {
+        pdfa_part: pdfa.and_then(|part| part.parse().ok()),
+        pdfua,
+    })
 }
 
 /// Valeur d'une propriété XMP courte (un chiffre, une lettre) : `pdfaid:part`.
@@ -254,18 +297,21 @@ fn set_list_property(text: String, tag: &str, kind: ListKind, value: &str) -> St
         return new;
     }
     // Élément absent, ou présent mais sans entrée exploitable : on le refait proprement.
-    let base = remove_element(&text, tag).unwrap_or(text);
     let element = match kind {
         ListKind::Alt => format!(
             "<{tag}><rdf:Alt><rdf:li xml:lang=\"x-default\">{escaped}</rdf:li></rdf:Alt></{tag}>"
         ),
         ListKind::Seq => format!("<{tag}><rdf:Seq><rdf:li>{escaped}</rdf:li></rdf:Seq></{tag}>"),
     };
-    insert_property(&base, tag, &element).unwrap_or(base)
+    // Si l'insertion échoue (aucun `rdf:Description`), le texte d'origine est rendu tel quel :
+    // l'ancien élément, même inexploitable, n'est pas perdu pour rien.
+    let base = remove_element(&text, tag);
+    let inserted = insert_property(base.as_deref().unwrap_or(&text), tag, &element);
+    inserted.unwrap_or(text)
 }
 
 /// Pose la propriété simple `tag` (élément ou attribut), de la même façon.
-fn set_simple_property(text: String, tag: &str, value: &str) -> String {
+pub(super) fn set_simple_property(text: String, tag: &str, value: &str) -> String {
     if value.is_empty() {
         let removed = remove_element(&text, tag);
         return removed
@@ -287,8 +333,13 @@ fn remove_element(xmp: &str, tag: &str) -> Option<String> {
     while let Some(found) = xmp[from..].find(&open) {
         let start = from + found;
         let after = &xmp[start + open.len()..];
-        // `<dc:titleX` n'est pas `<dc:title` : la balise doit se terminer là.
-        if !after.starts_with(['>', '/', ' ']) {
+        // `<dc:titleX` n'est pas `<dc:title` : la balise doit se terminer là (par `>`, `/` ou
+        // tout blanc XML : espace, tabulation, fin de ligne).
+        if !after
+            .chars()
+            .next()
+            .is_some_and(|c| c == '>' || c == '/' || c.is_whitespace())
+        {
             from = start + open.len();
             continue;
         }
@@ -305,6 +356,11 @@ fn remove_element(xmp: &str, tag: &str) -> Option<String> {
 
 /// Fin (index du `>`) de la balise ouvrante qui commence en `start` : le premier `>` hors
 /// guillemets, car une valeur d'attribut peut en contenir un.
+///
+/// \[Apprentissage\] Une **petite machine à états** : l'état est `quote` (`None` hors d'une
+/// valeur, `Some(q)` dans une valeur ouverte par le guillemet `q`) ; chaque caractère fait
+/// passer d'un état à l'autre, et le `match` sur le couple (état, caractère) énumère toutes les
+/// transitions. Plus sûr qu'un `find('>')`, qui s'arrêterait dans `rdf:about="a>b"`.
 fn open_tag_end(xmp: &str, start: usize) -> Option<usize> {
     let mut quote: Option<char> = None;
     for (i, c) in xmp[start..].char_indices() {
@@ -439,9 +495,7 @@ pub(super) fn replace_simple(xmp: &str, tag: &str, value: &str) -> Option<String
     }
     // Attribut entre guillemets ou entre apostrophes (les deux sont du XML valide).
     for quote in ['"', '\''] {
-        let attr = format!(" {tag}={quote}");
-        if let Some(found) = xmp.find(&attr) {
-            let start = found + attr.len();
+        if let Some(start) = attribute_value_start(xmp, tag, quote) {
             let end = start + xmp[start..].find(quote)?;
             return Some(format!("{}{value}{}", &xmp[..start], &xmp[end..]));
         }
@@ -560,6 +614,33 @@ mod tests {
             out.contains("xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:creator><rdf:Seq><rdf:li>Ève</rdf:li></rdf:Seq></dc:creator></rdf:Description>"),
             "{out}"
         );
+    }
+
+    /// Revue de la partie C : un attribut peut suivre une tabulation ou une fin de ligne, et
+    /// un nom plus long (`xpdfaid:part`) n'est pas le nôtre.
+    #[test]
+    fn attributes_after_any_whitespace_are_found() {
+        let xmp = "<rdf:Description\n\tpdfaid:part=\"1\"\r\n pdf:Keywords='a'/>";
+        assert_eq!(xmp_raw(xmp, "pdfaid:part"), Some("1"));
+        assert_eq!(
+            replace_simple(xmp, "pdf:Keywords", "b").as_deref(),
+            Some("<rdf:Description\n\tpdfaid:part=\"1\"\r\n pdf:Keywords='b'/>")
+        );
+        assert_eq!(xmp_raw("<a xpdfaid:part=\"3\"/>", "pdfaid:part"), None);
+        // Un élément suivi d'une fin de ligne avant ses attributs est bien retiré.
+        assert_eq!(
+            remove_element("<x><dc:title\nxml:lang=\"fr\">T</dc:title></x>", "dc:title").as_deref(),
+            Some("<x></x>")
+        );
+    }
+
+    /// Revue de la partie C : sans `rdf:Description` où insérer, l'ancien élément (même sans
+    /// entrée exploitable) n'est pas perdu.
+    #[test]
+    fn a_failed_insertion_keeps_the_original_text() {
+        let xmp = "<x:xmpmeta><dc:title><rdf:Alt/></dc:title></x:xmpmeta>".to_string();
+        let out = set_list_property(xmp.clone(), "dc:title", ListKind::Alt, "Nouveau");
+        assert_eq!(out, xmp);
     }
 
     #[test]

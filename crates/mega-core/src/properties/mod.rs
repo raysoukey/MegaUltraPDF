@@ -9,8 +9,12 @@ use crate::engine;
 use crate::error::{CoreError, CoreResult};
 
 mod xmp;
-pub(crate) use xmp::{XmpUpdate, declares_conformance, update_xmp};
-use xmp::{edit_xmp, pdfa_claim_of, replace_simple, xmp_date_to_pdf, xmp_li, xmp_text};
+// [Apprentissage] Le sous-module `xmp` est privé (`mod xmp;` sans `pub`) et ses fonctions
+// sont `pub(super)` (visibles de ce module seulement) ou `pub(crate)`. `pub(crate) use`
+// **réexporte** ces dernières : le reste du crate écrit `crate::properties::conformance_of`
+// sans savoir qu'elles vivent dans `xmp`, qu'on peut donc réorganiser librement.
+pub(crate) use xmp::{Conformance, XmpUpdate, conformance_of, update_xmp};
+use xmp::{edit_xmp, pdfa_claim_of, set_simple_property, xmp_date_to_pdf, xmp_li, xmp_text};
 
 /// Les métadonnées lisibles d'un document (dictionnaire `/Info`) et sa version PDF.
 ///
@@ -135,22 +139,35 @@ impl Document {
         // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
         let mut session = crate::crypt::LopdfSession::load(&bytes, self.password())?;
         let doc = &mut session.doc;
-        let info_id = info_id(doc);
-        let info = doc
-            .get_dictionary_mut(info_id)
-            .map_err(|e| CoreError::InvalidOperation(format!("dictionnaire /Info : {e}")))?;
-        for (key, value) in [
-            ("Title", &patch.title),
-            ("Author", &patch.author),
-            ("Subject", &patch.subject),
-            ("Keywords", &patch.keywords),
-        ] {
-            match value.as_deref().map(str::trim) {
-                None => {}
-                Some("") => {
-                    info.remove(key.as_bytes());
+        let pdfa4 = conformance_of(doc).and_then(|c| c.pdfa_part) == Some(4);
+        // PDF/A-4 (ISO 19005-4, 6.1.3) interdit `/Info`, hors `/ModDate` : les métadonnées n'y
+        // vont que dans le XMP. Un `/Info` existant (fichier déjà non conforme) perd les clés
+        // modifiées, qui contrediraient le XMP ; aucun n'est créé.
+        let info_id = if pdfa4 {
+            existing_info_id(doc)
+        } else {
+            Some(info_id(doc))
+        };
+        if let Some(info_id) = info_id {
+            let info = doc
+                .get_dictionary_mut(info_id)
+                .map_err(|e| CoreError::InvalidOperation(format!("dictionnaire /Info : {e}")))?;
+            for (key, value) in [
+                ("Title", &patch.title),
+                ("Author", &patch.author),
+                ("Subject", &patch.subject),
+                ("Keywords", &patch.keywords),
+            ] {
+                match value.as_deref().map(str::trim) {
+                    None => {}
+                    Some("") => {
+                        info.remove(key.as_bytes());
+                    }
+                    Some(_) if pdfa4 => {
+                        info.remove(key.as_bytes());
+                    }
+                    Some(text) => info.set(key, crate::forms::write::pdf_text(text)),
                 }
-                Some(text) => info.set(key, crate::forms::write::pdf_text(text)),
             }
         }
         // [Apprentissage] Une fonction nommée plutôt qu'une fermeture : sa signature dit que
@@ -336,15 +353,23 @@ pub(crate) fn info_id(doc: &mut lopdf::Document) -> lopdf::ObjectId {
     }
 }
 
+/// Identifiant du dictionnaire `/Info` s'il existe (indirect et lisible), sans le créer.
+fn existing_info_id(doc: &lopdf::Document) -> Option<lopdf::ObjectId> {
+    let id = doc.trailer.get(b"Info").ok()?.as_reference().ok()?;
+    doc.get_dictionary(id).is_ok().then_some(id)
+}
+
 /// Pose `/ModDate` (et, s'il y a des métadonnées XMP, `xmp:ModifyDate` et
-/// `xmp:MetadataDate`) à maintenant : appelé à chaque réécriture du fichier (C12).
+/// `xmp:MetadataDate`, créées si elles manquent) à maintenant : appelé à chaque réécriture du
+/// fichier (C12). Les créer garde `/ModDate` et `xmp:ModifyDate` d'accord, ce que PDF/A exige
+/// quand les deux existent (ISO 19005-1, 6.7.3).
 pub(crate) fn stamp_mod_date(doc: &mut lopdf::Document) {
     let now = chrono::Utc::now();
     // §7.9.4 : D:YYYYMMDDHHmmSS suivi du décalage horaire (ici UTC).
     let pdf = now.format("D:%Y%m%d%H%M%S+00'00'").to_string();
     // PDF/A-4 (ISO 19005-4) interdit `/Info` (hors `/ModDate` avec `/PieceInfo`) : on ne le
     // crée pas, et on ne met à jour que celui qui existe déjà (audit E6).
-    let pdfa4 = pdfa_claim_of(doc).is_some_and(|claim| claim.starts_with("PDF/A-4"));
+    let pdfa4 = conformance_of(doc).and_then(|c| c.pdfa_part) == Some(4);
     let has_info = doc
         .trailer
         .get(b"Info")
@@ -359,8 +384,8 @@ pub(crate) fn stamp_mod_date(doc: &mut lopdf::Document) {
     }
     let xmp = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     edit_xmp(doc, |text| {
-        let text = replace_simple(&text, "xmp:ModifyDate", &xmp).unwrap_or(text);
-        replace_simple(&text, "xmp:MetadataDate", &xmp).unwrap_or(text)
+        let text = set_simple_property(text, "xmp:ModifyDate", &xmp);
+        set_simple_property(text, "xmp:MetadataDate", &xmp)
     });
 }
 

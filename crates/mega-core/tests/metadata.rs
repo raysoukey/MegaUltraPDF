@@ -662,3 +662,44 @@ fn retitling_a_pdfa_1b_file_keeps_it_conformant() {
     let text = String::from_utf8_lossy(&report.stdout).into_owned();
     assert!(text.starts_with("PASS"), "veraPDF :\n{text}");
 }
+
+/// Revue de la partie C du Lot 14 : PDF/A-4 interdit `/Info` (6.1.3, hors `/ModDate`) ;
+/// changer les métadonnées n'écrit que le XMP. Un `/Info` existant perd les clés modifiées
+/// (elles contrediraient le XMP) et n'en reçoit aucune ; sans `/Info`, aucun n'est créé.
+#[test]
+fn set_metadata_on_a_pdfa_4_document_writes_only_the_xmp() {
+    let mut d = Document::from_bytes(mega_core::testing::pdfa_part_pdf(4), None).unwrap();
+    d.set_metadata(&MetadataPatch {
+        title: Some("Titre quatre".to_string()),
+        author: Some("Ève".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    let bytes = d.to_bytes().unwrap();
+    assert_eq!(info_value(&bytes, b"Title"), None, "/Info /Title retiré");
+    assert_eq!(info_value(&bytes, b"Author"), None, "/Info /Author absent");
+    let xmp = xmp_of(&bytes);
+    assert!(
+        xmp.contains("<rdf:li xml:lang=\"x-default\">Titre quatre</rdf:li>"),
+        "{xmp}"
+    );
+    assert!(xmp.contains("<rdf:li>Ève</rdf:li>"), "{xmp}");
+    assert_eq!(
+        d.properties().unwrap().title.as_deref(),
+        Some("Titre quatre")
+    );
+
+    // Sans `/Info` : aucun n'est créé.
+    let mut bare = Document::from_bytes(pdfa_with("4", None), None).unwrap();
+    bare.set_metadata(&title("Sans info")).unwrap();
+    let out = lopdf::Document::load_mem(&bare.to_bytes().unwrap()).unwrap();
+    assert!(out.trailer.get(b"Info").is_err(), "PDF/A-4 : pas de /Info");
+
+    // Un `/Info` réduit à `/ModDate` le garde, et rien d'autre.
+    let mut dated =
+        Document::from_bytes(pdfa_with("4", Some("D:20010101000000+00'00'")), None).unwrap();
+    dated.set_metadata(&title("Daté")).unwrap();
+    let bytes = dated.to_bytes().unwrap();
+    assert!(info_value(&bytes, b"ModDate").is_some());
+    assert_eq!(info_value(&bytes, b"Title"), None);
+}

@@ -30,6 +30,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::fonts;
 use crate::fonts::unicode::{Type0Writer, UnicodeFont};
 use crate::geometry::{PageFrame, Rect, Rotation};
+use crate::properties::Conformance;
 
 /// Longueur maximale d'un texte de filigrane ou de numérotation (après substitution).
 pub const MAX_OVERLAY_TEXT_CHARS: usize = 200;
@@ -42,6 +43,25 @@ const FONT_KEY: &str = "MegaF1";
 const UNICODE_FONT_PREFIX: &str = "MegaU";
 /// Préfixe du nom de ressource des états graphiques (opacité) que nous ajoutons.
 const GS_PREFIX: &str = "MegaGS";
+/// Préfixe du nom de ressource de l'espace de couleur calibré (`CalRGB`) que nous ajoutons
+/// aux pages d'un document PDF/A (`MegaCS1`, `MegaCS2`… : un nom libre de la page).
+const COLOR_SPACE_PREFIX: &str = "MegaCS";
+/// Point blanc D65 (CIE 1931, Y = 1), celui de sRGB.
+const D65_WHITE_POINT: [f32; 3] = [0.9505, 1.0, 1.089];
+/// Gamma et matrice (colonnes R, G, B → X, Y, Z) de sRGB (CEI 61966-2-1, gamma approché à
+/// 2,2) : sans eux, un `CalRGB` lirait nos composantes comme des X, Y, Z (matrice identité) et
+/// un lecteur qui convertit vraiment les couleurs (PDFium, pdf.js) les fausserait. La somme de
+/// chaque ligne redonne le point blanc : le blanc reste blanc.
+const SRGB_GAMMA: f32 = 2.2;
+const SRGB_MATRIX: [f32; 9] = [
+    0.4124, 0.2126, 0.0193, 0.3576, 0.7152, 0.1192, 0.1805, 0.0722, 0.9505,
+];
+/// Ouverture du contenu marqué d'un ajout décoratif (filigrane, couche OCR) : un artefact sans
+/// propriétés (ISO 32000-1 §14.8.2.2).
+const ARTIFACT: &[u8] = b"/Artifact BMC\n";
+/// Ouverture du contenu marqué d'un numéro de page : un artefact **de pagination**
+/// (§14.8.2.2.2), que les technologies d'assistance savent reconnaître comme tel.
+const PAGINATION_ARTIFACT: &[u8] = b"/Artifact <</Type /Pagination>> BDC\n";
 
 /// Un filigrane : texte centré sur la page, incliné, translucide.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -197,16 +217,18 @@ impl Document {
         }
     }
 
-    /// Le document se réclame-t-il de PDF/A ou PDF/UA ? Alors le texte ajouté s'écrit en
-    /// police Unicode incorporée, même en WinAnsi (audit E6).
-    fn declares_conformance(&self) -> CoreResult<bool> {
-        let doc =
-            crate::crypt::load_limited(&self.to_bytes()?, self.password()).map_err(structure)?;
-        Ok(crate::properties::declares_conformance(&doc))
+    /// La conformité que le document déclare (PDF/A, PDF/UA), lue dans la vue `lopdf` gardée :
+    /// rien à relire tant que le document n'a pas changé. Elle décide de la police (incorporée
+    /// même en WinAnsi), de l'espace de couleur et de la transparence du texte ajouté (audit
+    /// E6). À lire **avant** `mark_changed`, qui vide cette vue.
+    fn conformance(&self) -> Option<Conformance> {
+        self.lopdf_view()
+            .and_then(crate::properties::conformance_of)
     }
 
     /// Pose un filigrane sur les pages visées.
     pub fn add_watermark(&mut self, w: &Watermark) -> CoreResult<()> {
+        let conformance = self.conformance();
         self.mark_changed();
         check_text(&w.text)?;
         if !(w.size.is_finite() && (4.0..=400.0).contains(&w.size)) {
@@ -221,7 +243,7 @@ impl Document {
             return Err(invalid("angle invalide"));
         }
         let pages = self.target_pages(&w.pages)?;
-        let embed = self.declares_conformance()?;
+        let embed = conformance.is_some();
         let width = text_width_in(&w.text, w.size, embed);
         let (sin, cos) = w.angle_deg.to_radians().sin_cos();
         let mut placements = Vec::with_capacity(pages.len());
@@ -244,11 +266,12 @@ impl Document {
                 frame,
             });
         }
-        self.apply_placements(placements)
+        self.apply_placements(placements, conformance, ARTIFACT)
     }
 
     /// Numérote les pages visées d'après le modèle.
     pub fn add_page_numbers(&mut self, n: &PageNumbering) -> CoreResult<()> {
+        let conformance = self.conformance();
         self.mark_changed();
         if n.template.trim().is_empty() {
             return Err(invalid("le modèle ne peut pas être vide"));
@@ -262,7 +285,7 @@ impl Document {
             return Err(invalid("la marge doit être positive ou nulle"));
         }
         let pages = self.target_pages(&n.pages)?;
-        let embed = self.declares_conformance()?;
+        let embed = conformance.is_some();
         let total = self.page_count();
         let title = self.title().unwrap_or_default();
         let mut placements = Vec::with_capacity(pages.len());
@@ -306,7 +329,7 @@ impl Document {
                 frame,
             });
         }
-        self.apply_placements(placements)
+        self.apply_placements(placements, conformance, PAGINATION_ARTIFACT)
     }
 
     /// Recadre les pages visées (`/CropBox`) par marges depuis la MediaBox, en points
@@ -388,6 +411,12 @@ impl Document {
     /// Ajoute à la page une couche de texte **invisible** (mode de rendu `3 Tr`) : chaque mot
     /// est placé dans sa boîte et étiré horizontalement (`Tz`) à sa largeur. Le rendu ne
     /// change pas ; l'extraction, la recherche et la copie trouvent les mots (OCR).
+    ///
+    /// La couche est marquée comme **artefact** (`/Artifact BMC`), sans quoi un PDF balisé
+    /// deviendrait invalide (PDF/UA-1 §7.1 : tout contenu est balisé ou artefact). Conséquence :
+    /// dans un PDF balisé, un lecteur d'écran **ignore** ce texte ; il sert à la recherche et à
+    /// la copie, pas à la lecture vocale. Rendre un scan accessible demanderait de baliser le
+    /// texte reconnu dans l'arbre de structure, ce que cette version ne fait pas.
     pub fn add_invisible_words(&mut self, page: u16, words: &[InvisibleWord]) -> CoreResult<()> {
         self.mark_changed();
         let count = self.page_count();
@@ -405,8 +434,9 @@ impl Document {
             .get_pages()
             .get(&(u32::from(page) + 1))
             .ok_or_else(|| structure("page introuvable"))?;
-        let embed = crate::properties::declares_conformance(&session.doc);
-        let unicode_key = free_font_name(&session.doc, &[page_id]);
+        let embed = crate::properties::conformance_of(&session.doc).is_some();
+        let unicode_key =
+            free_resource_name(&session.doc, &[page_id], b"Font", UNICODE_FONT_PREFIX);
         // Les mots hors WinAnsi passent par la police Unicode ; un caractère qu'elle n'a pas
         // (CJK) est permis ici : le texte est invisible, seule compte sa valeur `/ToUnicode`.
         let mut writer = Type0Writer::new();
@@ -470,13 +500,39 @@ impl Document {
         };
         let content = format!("\nq\n{cm}BT\n3 Tr\n{ops}ET\nQ\n");
         let mut wrapped = BTreeSet::new();
-        append_content(doc, page_id, &mut wrapped, content.into_bytes(), false)?;
+        append_content(
+            doc,
+            page_id,
+            &mut wrapped,
+            ARTIFACT,
+            content.into_bytes(),
+            None,
+        )?;
         let out = session.finish()?;
         self.reload_from_bytes(out)
     }
 
     /// Écrit les textes dans le fichier (phase `lopdf`), puis recharge le document.
-    fn apply_placements(&mut self, placements: Vec<Placement>) -> CoreResult<()> {
+    ///
+    /// `conformance` (lue avant toute modification) décide de la façon d'écrire la couleur :
+    /// - document PDF/A (toute partie) : couleur dans un espace **indépendant du périphérique**
+    ///   (`CalRGB`, ressource `/ColorSpace` de la page, opérateurs `cs` / `sc`), car DeviceRGB
+    ///   (`rg`) n'y est permis qu'avec un profil de sortie RVB (PDF/A-2 6.2.4.3) ; le groupe de
+    ///   transparence éventuel fusionne dans ce même espace ;
+    /// - PDF/A-1 : aucune transparence (6.4) ; l'opacité est **simulée** en éclaircissant la
+    ///   couleur vers le blanc (`c' = c·α + (1 − α)`), ce qui donne le même rendu sur une
+    ///   page blanche (le texte d'origine qu'il recouvre, lui, ne transparaît plus) ;
+    /// - sinon : `rg` (DeviceRGB), comme avant.
+    ///
+    /// `artifact` ouvre le contenu marqué qui enveloppe le texte ajouté ([`ARTIFACT`] ou
+    /// [`PAGINATION_ARTIFACT`]).
+    fn apply_placements(
+        &mut self,
+        placements: Vec<Placement>,
+        conformance: Option<Conformance>,
+        artifact: &[u8],
+    ) -> CoreResult<()> {
+        let pdfa_part = conformance.and_then(|c| c.pdfa_part);
         let bytes = self.to_bytes()?;
         // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
         let mut session = LopdfSession::load(&bytes, self.password())?;
@@ -507,10 +563,21 @@ impl Document {
             .iter()
             .filter_map(|p| page_ids.get(&(u32::from(p.page) + 1)).copied())
             .collect();
-        let unicode_key = free_font_name(doc, &targets);
+        let unicode_key = free_resource_name(doc, &targets, b"Font", UNICODE_FONT_PREFIX);
+        // PDF/A : un espace `CalRGB` partagé par toutes les pages, sous un nom libre partout.
+        let calibrated = pdfa_part.map(|_| {
+            let name = free_resource_name(doc, &targets, b"ColorSpace", COLOR_SPACE_PREFIX);
+            let space = calibrated_rgb();
+            let id = doc.add_object(space.clone());
+            (name, id, space)
+        });
         let mut states: BTreeMap<u32, (String, ObjectId)> = BTreeMap::new();
         let mut wrapped: BTreeSet<ObjectId> = BTreeSet::new();
-        for (p, hex) in placements.into_iter().zip(encoded) {
+        for (mut p, hex) in placements.into_iter().zip(encoded) {
+            if pdfa_part == Some(1) {
+                p.color = over_white(p.color, p.opacity);
+                p.opacity = 1.0;
+            }
             let (font_key, font_id) = if p.unicode {
                 (unicode_key.as_str(), unicode)
             } else {
@@ -533,11 +600,11 @@ impl Document {
                     (format!("{GS_PREFIX}{key}"), id)
                 })
                 .clone();
-            ensure_resources(
-                doc,
-                page_id,
-                &[("Font", font_key, font_id), ("ExtGState", &gs_name, gs_id)],
-            )?;
+            let mut entries = vec![("Font", font_key, font_id), ("ExtGState", &gs_name, gs_id)];
+            if let Some((name, id, _)) = &calibrated {
+                entries.push(("ColorSpace", name.as_str(), *id));
+            }
+            ensure_resources(doc, page_id, &entries)?;
             let m = p.frame.matrix_to_user_space();
             let cm = if p.frame.is_identity() {
                 String::new()
@@ -552,11 +619,18 @@ impl Document {
                     num(m[5])
                 )
             };
-            let content = format!(
-                "\nq\n{cm}/{gs_name} gs\n{} {} {} rg\nBT\n/{font_key} {} Tf\n{} {} {} {} {} {} Tm\n{hex} Tj\nET\nQ\n",
+            let components = format!(
+                "{} {} {}",
                 num(f32::from(p.color.r) / 255.0),
                 num(f32::from(p.color.g) / 255.0),
                 num(f32::from(p.color.b) / 255.0),
+            );
+            let fill = match &calibrated {
+                Some((name, _, _)) => format!("/{name} cs\n{components} sc"),
+                None => format!("{components} rg"),
+            };
+            let content = format!(
+                "\nq\n{cm}/{gs_name} gs\n{fill}\nBT\n/{font_key} {} Tf\n{} {} {} {} {} {} Tm\n{hex} Tj\nET\nQ\n",
                 num(p.size),
                 num(p.tm[0]),
                 num(p.tm[1]),
@@ -565,12 +639,19 @@ impl Document {
                 num(p.tm[4]),
                 num(p.tm[5]),
             );
+            // Un groupe de transparence pour un contenu translucide (jamais en PDF/A-1, où
+            // l'opacité vaut désormais 1), dans l'espace de la couleur écrite.
+            let group_space = (p.opacity < 1.0).then(|| match &calibrated {
+                Some((_, _, space)) => space.clone(),
+                None => Object::Name(b"DeviceRGB".to_vec()),
+            });
             append_content(
                 doc,
                 page_id,
                 &mut wrapped,
+                artifact,
                 content.into_bytes(),
-                p.opacity < 1.0,
+                group_space,
             )?;
         }
         let out = session.finish()?;
@@ -598,9 +679,47 @@ fn text_width_in(text: &str, size: f32, embed: bool) -> f32 {
     fonts::text_width(&bytes, size)
 }
 
-/// Un nom de police `MegaU<n>` absent des ressources `/Font` (propres ou héritées) de toutes
-/// les pages `pages`.
-fn free_font_name(doc: &LoDocument, pages: &[ObjectId]) -> String {
+/// L'espace de couleur `[/CalRGB << /WhitePoint … /Gamma … /Matrix … >>]` qui reproduit sRGB
+/// (ISO 32000-1 §8.6.5.3) : indépendant du périphérique, donc permis en PDF/A sans profil de
+/// sortie, et rendu comme `rg` par un lecteur qui ne convertit pas les couleurs.
+fn calibrated_rgb() -> Object {
+    let reals = |values: &[f32]| Object::Array(values.iter().map(|v| Object::Real(*v)).collect());
+    Object::Array(vec![
+        Object::Name(b"CalRGB".to_vec()),
+        Object::Dictionary(Dictionary::from_iter(vec![
+            ("WhitePoint", reals(&D65_WHITE_POINT)),
+            ("Gamma", reals(&[SRGB_GAMMA; 3])),
+            ("Matrix", reals(&SRGB_MATRIX)),
+        ])),
+    ])
+}
+
+/// La couleur `color` posée à l'opacité `alpha` sur du blanc, devenue opaque :
+/// `c' = c·α + (1 − α)` pour chaque composante (sur 0-1 ; ici sur 0-255). Sert à PDF/A-1,
+/// qui interdit la transparence (6.4) : sur une page blanche, le rendu est le même.
+fn over_white(color: Color, alpha: f32) -> Color {
+    let blend = |c: u8| -> u8 {
+        let value = f32::from(c) * alpha + 255.0 * (1.0 - alpha);
+        // [Apprentissage] `as u8` sature (0 en dessous, 255 au-dessus) depuis Rust 1.45 : le
+        // `clamp` dit l'intention, la conversion ne peut pas déborder.
+        value.round().clamp(0.0, 255.0) as u8
+    };
+    Color {
+        r: blend(color.r),
+        g: blend(color.g),
+        b: blend(color.b),
+    }
+}
+
+/// Un nom `<prefix><n>` absent du sous-dictionnaire `category` (`/Font`, `/ColorSpace`…) des
+/// ressources (propres ou héritées) de toutes les pages `pages` : réutiliser un nom pris
+/// remplacerait la ressource d'un autre contenu de la page.
+fn free_resource_name(
+    doc: &LoDocument,
+    pages: &[ObjectId],
+    category: &[u8],
+    prefix: &str,
+) -> String {
     let taken: BTreeSet<Vec<u8>> = pages
         .iter()
         .filter_map(|id| doc.get_dictionary(*id).ok())
@@ -614,7 +733,7 @@ fn free_font_name(doc: &LoDocument, pages: &[ObjectId]) -> String {
                 Err(_) => inherited_resources(doc, page),
             };
             resources
-                .get(b"Font")
+                .get(category)
                 .ok()
                 .and_then(|f| doc.dereference(f).ok())
                 .and_then(|(_, f)| f.as_dict().ok().cloned())
@@ -625,9 +744,9 @@ fn free_font_name(doc: &LoDocument, pages: &[ObjectId]) -> String {
         })
         .collect();
     (1..)
-        .map(|n| format!("{UNICODE_FONT_PREFIX}{n}"))
+        .map(|n| format!("{prefix}{n}"))
         .find(|name| !taken.contains(name.as_bytes()))
-        .unwrap_or_else(|| format!("{UNICODE_FONT_PREFIX}0"))
+        .unwrap_or_else(|| format!("{prefix}0"))
 }
 
 /// Ajoute à `doc` une police Helvetica (Standard 14, encodage WinAnsi) avec ses largeurs
@@ -729,26 +848,25 @@ fn ensure_resources(
 /// `q … Q` pour que son état graphique (transformation en cours, couleur) ne déteigne pas.
 ///
 /// Le contenu ajouté (filigrane, numéros, couche OCR) est décoration, non contenu réel :
-/// il est enveloppé dans `/Artifact BMC … EMC` (ISO 32000-1 §14.8.2.2), sans quoi un PDF
-/// balisé (PDF/UA-1 §7.1) serait invalide. `translucent` dit que ce contenu pose un état
-/// graphique à opacité < 1 : la page reçoit alors un groupe de transparence (§11.6.6) si
-/// elle n'en a pas, ce qu'exige PDF/A-2 (6.2.10) sans profil de sortie.
+/// il est enveloppé dans un artefact, `artifact` (`/Artifact BMC` ou `/Artifact <<…>> BDC`)
+/// … `EMC` (ISO 32000-1 §14.8.2.2), sans quoi un PDF balisé (PDF/UA-1 §7.1) serait invalide.
+///
+/// `group_space` (`Some` quand ce contenu pose un état graphique à opacité < 1) : la page
+/// reçoit un groupe de transparence (§11.6.6) de cet espace de fusion si elle n'en a pas, ce
+/// qu'exige PDF/A-2 (6.2.10) sans profil de sortie. `/I` (groupe isolé) n'est pas posé : sa
+/// valeur par défaut (faux) laisse le filigrane se composer directement sur le contenu de la
+/// page qu'il recouvre, ce que l'on veut.
 fn append_content(
     doc: &mut LoDocument,
     page_id: ObjectId,
     wrapped: &mut BTreeSet<ObjectId>,
+    artifact: &[u8],
     content: Vec<u8>,
-    translucent: bool,
+    group_space: Option<Object>,
 ) -> CoreResult<()> {
-    let mut marked = b"/Artifact BMC
-"
-    .to_vec();
+    let mut marked = artifact.to_vec();
     marked.extend_from_slice(&content);
-    marked.extend_from_slice(
-        b"
-EMC
-",
-    );
+    marked.extend_from_slice(b"\nEMC\n");
     let content = marked;
     let existing = doc.get_page_contents(page_id);
     let mut list: Vec<Object> = Vec::with_capacity(existing.len() + 3);
@@ -785,13 +903,14 @@ EMC
     list.push(Object::Reference(stream(doc, &content)));
     let page = doc.get_dictionary_mut(page_id).map_err(structure)?;
     page.set("Contents", Object::Array(list));
-    if translucent && !page.has(b"Group") {
+    if let Some(space) = group_space
+        && !page.has(b"Group")
+    {
         page.set(
             "Group",
             Object::Dictionary(Dictionary::from_iter(vec![
                 ("S", Object::Name(b"Transparency".to_vec())),
-                ("CS", Object::Name(b"DeviceRGB".to_vec())),
-                ("I", Object::Boolean(true)),
+                ("CS", space),
             ])),
         );
     }

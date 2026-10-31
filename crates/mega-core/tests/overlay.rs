@@ -588,10 +588,10 @@ fn first_page_content(doc: &Document) -> String {
     String::from_utf8_lossy(&saved.get_page_content(id)).into_owned()
 }
 
-/// Le contenu d'origine reste hors de l'artefact ; le texte ajouté est entre `/Artifact BMC`
-/// et `EMC` (PDF/UA-1 §7.1).
+/// Le contenu d'origine reste hors de l'artefact ; le texte ajouté est entre `/Artifact`
+/// (`BMC`, ou `BDC` avec des propriétés) et `EMC` (PDF/UA-1 §7.1).
 fn assert_added_is_artifact(content: &str, original: &str, added: &str) {
-    let bmc = content.find("/Artifact BMC").expect("/Artifact BMC absent");
+    let bmc = content.find("/Artifact").expect("/Artifact absent");
     let emc = content.rfind("EMC").expect("EMC absent");
     assert!(bmc < emc, "{content}");
     let orig = content.find(original).expect("contenu d'origine perdu");
@@ -615,7 +615,15 @@ fn page_numbers_and_ocr_layer_are_marked_as_artifacts() {
         .unwrap();
     assert_added_is_artifact(&first_page_content(&numbered), "TJ", "Tf");
     let content = first_page_content(&numbered);
-    assert_eq!(content.matches("/Artifact BMC").count(), 1);
+    // Un numéro de page est un artefact de pagination (ISO 32000-1 §14.8.2.2.2).
+    assert_eq!(
+        content
+            .matches("/Artifact <</Type /Pagination>> BDC")
+            .count(),
+        1,
+        "{content}"
+    );
+    assert!(!content.contains("/Artifact BMC"), "{content}");
 
     let mut ocr = Document::from_bytes(sample_pdf(1, "ocr"), None).unwrap();
     ocr.add_invisible_words(0, &[word("Mot", 20.0, 100.0, 60.0, 20.0)])
@@ -706,7 +714,147 @@ fn pdfa_documents_get_an_embedded_font_even_for_latin_text() {
     assert!(embedded, "police sous-ensemble incorporée attendue");
     assert!(font_subtypes(&pdfa).contains(&"Type0".to_string()));
 
-    let mut plain = Document::open("../../fixtures/simple.pdf", None).unwrap();
+    let mut plain = Document::open(fixture("simple.pdf"), None).unwrap();
     plain.add_watermark(&watermark("BROUILLON", None)).unwrap();
     assert!(!font_subtypes(&plain).contains(&"Type0".to_string()));
+}
+
+// --- Lot 14, partie C : couleur et transparence sur un document PDF/A -------------------
+
+/// Chemin d'un fichier de `fixtures/`, indépendant du dossier courant.
+fn fixture(name: &str) -> String {
+    format!("{}/../../fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// Dernier flux de contenu de la première page (celui que nous venons d'ajouter), décodé, et
+/// les ressources `/ColorSpace` de la page.
+fn added_content_and_color_spaces(doc: &Document) -> (String, Option<lopdf::Dictionary>) {
+    let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    let id = *saved.get_pages().get(&1).unwrap();
+    let last = *saved.get_page_contents(id).last().unwrap();
+    let stream = saved.get_object(last).unwrap().as_stream().unwrap();
+    let content = stream
+        .decompressed_content()
+        .unwrap_or_else(|_| stream.content.clone());
+    let page = saved.get_dictionary(id).unwrap();
+    let resources = saved
+        .dereference(page.get(b"Resources").unwrap())
+        .unwrap()
+        .1
+        .as_dict()
+        .unwrap()
+        .clone();
+    let spaces = resources
+        .get(b"ColorSpace")
+        .ok()
+        .and_then(|c| saved.dereference(c).ok())
+        .and_then(|(_, c)| c.as_dict().ok().cloned())
+        .map(|spaces| {
+            // Chaque entrée déréférencée, pour lire le tableau `[/CalRGB << … >>]`.
+            let mut out = lopdf::Dictionary::new();
+            for (name, value) in spaces.iter() {
+                out.set(name.clone(), saved.dereference(value).unwrap().1.clone());
+            }
+            out
+        });
+    (String::from_utf8_lossy(&content).into_owned(), spaces)
+}
+
+/// Les trois composantes de la couleur posée par `sc` (ou `rg`) dans `content`.
+fn fill_components(content: &str, operator: &str) -> [f32; 3] {
+    let line = content
+        .lines()
+        .find(|l| l.trim_end().ends_with(&format!(" {operator}")) && !l.contains(" cs "))
+        .or_else(|| {
+            content
+                .lines()
+                .find(|l| l.trim_end().ends_with(&format!(" {operator}")))
+        })
+        .unwrap_or_else(|| panic!("opérateur {operator} absent : {content}"));
+    let numbers: Vec<f32> = line
+        .split_whitespace()
+        .filter_map(|t| t.parse().ok())
+        .collect();
+    let n = numbers.len();
+    [numbers[n - 3], numbers[n - 2], numbers[n - 1]]
+}
+
+/// PDF/A (toutes parties) : la couleur du texte ajouté s'écrit dans un espace indépendant du
+/// périphérique (CalRGB), pas en DeviceRGB (`rg`), interdit sans profil de sortie RVB
+/// (PDF/A-2 6.2.4.3).
+#[test]
+fn pdfa_overlays_use_a_calibrated_color_space() {
+    let mut pdfa = Document::from_bytes(mega_core::testing::pdfa_pdf(), None).unwrap();
+    pdfa.add_watermark(&watermark("BROUILLON", None)).unwrap();
+    let (content, spaces) = added_content_and_color_spaces(&pdfa);
+    assert!(content.contains(" cs"), "{content}");
+    assert!(content.contains(" sc"), "{content}");
+    assert!(!content.contains(" rg"), "{content}");
+    let spaces = spaces.expect("/ColorSpace dans les ressources de la page");
+    let (name, space) = spaces.iter().next().unwrap();
+    assert!(
+        content.contains(&format!("/{} cs", String::from_utf8_lossy(name))),
+        "{content}"
+    );
+    let space = space.as_array().unwrap();
+    assert_eq!(space[0].as_name().unwrap(), b"CalRGB");
+    let white = space[1]
+        .as_dict()
+        .unwrap()
+        .get(b"WhitePoint")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(white.len(), 3);
+    // Le groupe de transparence fusionne dans ce même espace.
+    let group = page_group(&pdfa).expect("/Group posé (opacité 0,3)");
+    let cs = group.get(b"CS").unwrap().as_array().unwrap();
+    assert_eq!(cs[0].as_name().unwrap(), b"CalRGB");
+
+    // Les numéros de page aussi.
+    let mut numbered = Document::from_bytes(mega_core::testing::pdfa_pdf(), None).unwrap();
+    numbered
+        .add_page_numbers(&numbering("{n}", Corner::BottomCenter, 1))
+        .unwrap();
+    let (content, _) = added_content_and_color_spaces(&numbered);
+    assert!(
+        content.contains(" sc") && !content.contains(" rg"),
+        "{content}"
+    );
+
+    // Un document ordinaire garde `rg` (DeviceRGB).
+    let mut plain = Document::open(fixture("simple.pdf"), None).unwrap();
+    plain.add_watermark(&watermark("BROUILLON", None)).unwrap();
+    let (content, spaces) = added_content_and_color_spaces(&plain);
+    assert!(content.contains(" rg"), "{content}");
+    assert!(!content.contains(" sc"), "{content}");
+    assert!(spaces.is_none_or(|s| !s.iter().any(|(n, _)| n.starts_with(b"MegaCS"))));
+}
+
+/// PDF/A-1 interdit toute transparence (6.4) : ni `/Group`, ni `/CA`/`/ca` < 1 ; l'opacité
+/// est simulée en éclaircissant la couleur vers le blanc.
+#[test]
+fn pdfa1_watermarks_simulate_opacity_without_transparency() {
+    let mut doc = Document::from_bytes(mega_core::testing::pdfa_part_pdf(1), None).unwrap();
+    doc.add_watermark(&watermark("BROUILLON", None)).unwrap();
+    assert!(page_group(&doc).is_none(), "PDF/A-1 : aucun /Group");
+    let saved = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+    for state in saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter(|d| d.get(b"Type").ok() == Some(&lopdf::Object::Name(b"ExtGState".to_vec())))
+    {
+        for key in [&b"CA"[..], b"ca"] {
+            if let Ok(v) = state.get(key) {
+                assert!(v.as_float().unwrap() >= 1.0, "{state:?}");
+            }
+        }
+    }
+    let (content, _) = added_content_and_color_spaces(&doc);
+    // Gris 128 à 30 % sur du blanc : 128/255 × 0,3 + 0,7 ≈ 0,851.
+    let [r, g, b] = fill_components(&content, "sc");
+    for c in [r, g, b] {
+        assert!((c - 0.851).abs() < 0.01, "couleur éclaircie : {content}");
+    }
 }

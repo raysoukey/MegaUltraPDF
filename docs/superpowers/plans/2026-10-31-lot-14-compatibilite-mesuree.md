@@ -52,7 +52,7 @@ strict (deux champs et deux codes d'erreur côté interface).
 
 ## Partie A — Enregistrement sûr et fidèle
 
-### Task A1: `cleanup::can_clean` et refus des suppressions non nettoyables
+### Task 1 (A1): `cleanup::can_clean` et refus des suppressions non nettoyables
 
 **Files:**
 - Modify: `crates/mega-core/src/cleanup.rs` (après `before_save`, ligne 61)
@@ -108,7 +108,7 @@ git add crates/mega-core/src/cleanup.rs crates/mega-core/src/document.rs crates/
 git commit -m "fix(core): refuse deletions when the save-time cleanup cannot run (audit E1)"
 ```
 
-### Task A2: session lopdf passe-plat pour `/StmF /StrF Identity`
+### Task 2 (A2): session lopdf passe-plat pour `/StmF /StrF Identity`
 
 **Files:**
 - Modify: `crates/mega-core/src/crypt.rs:104-205` (`check_crypt_filters`, `LopdfSession::from_loaded`, `finish`)
@@ -166,7 +166,7 @@ Expected: PASS
 git commit -am "feat(core): rewrite Identity-filtered encrypted files through a pass-through lopdf session (audit E1, L16)"
 ```
 
-### Task A3: version d'en-tête d'origine conservée
+### Task 3 (A3): version d'en-tête d'origine conservée
 
 **Files:**
 - Modify: `crates/mega-core/src/crypt.rs` (nouvelle fonction pure), `crates/mega-core/src/cleanup.rs:28` (`before_save`), `crates/mega-core/src/document.rs` (champ `file_version`), `crates/mega-core/src/edit.rs:823` (`rewritten_bytes`), `crates/mega-core/src/pages.rs:142,212` (`extract_pages`, `merge`), `crates/mega-core/src/security.rs:256`, `crates/mega-core/src/digital_signature/pdf.rs` (réécriture avant signature), `crates/mega-cli/src` (appels de `before_save` s'il y en a), `crates/mega-core/src/testing/fuzz.rs:116`
@@ -205,7 +205,7 @@ git commit -am "feat(core): rewrite Identity-filtered encrypted files through a 
 
 - [ ] **Step 5: Commit** `fix(core): keep the original PDF header version on save (audit E2)`
 
-### Task A4: report du catalogue après `merge`, `extract_pages`, `split`
+### Task 4 (A4): report du catalogue après `merge`, `extract_pages`, `split`
 
 **Files:**
 - Create: `crates/mega-core/src/pages/carry.rs` ; `pages.rs` devient `pages/mod.rs` (déplacement sans changement)
@@ -242,7 +242,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 
 - [ ] **Step 5: Commit** `feat(core): carry outlines, forms, attachments, labels, layers and metadata through merge, extract and split (audit E3)`
 
-### Task A5: `move_pages` par réordonnancement `/Kids` et destinations orphelines après `delete_pages`
+### Task 5 (A5): `move_pages` par réordonnancement `/Kids` et destinations orphelines après `delete_pages`
 
 **Files:**
 - Modify: `crates/mega-core/src/pages/mod.rs:106-122` ; Create: `crates/mega-core/src/pages/reorder.rs`
@@ -278,7 +278,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 
 - [ ] **Step 5: Commit** `fix(core): move pages by reordering /Kids so bookmarks, links and tagging survive; neutralize destinations to deleted pages (audit E4)`
 
-### Task A6: MCID orphelins et `/Info` sur PDF/A-4
+### Task 6 (A6): MCID orphelins et `/Info` sur PDF/A-4
 
 **Files:**
 - Modify: `crates/mega-core/src/cleanup.rs` (nouvelle passe), `crates/mega-core/src/properties.rs:327` (`stamp_mod_date`)
@@ -294,7 +294,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 4: Run** → PASS
 - [ ] **Step 5: Commit** `fix(core): prune orphan MCIDs after content edits; no /Info on PDF/A-4 (audit E5, E6)`
 
-### Task A7: PR A — vérification, relecture, fusion
+### Task 7 (A7): PR A — vérification, relecture, fusion
 
 - [ ] `/verif` 8/8 (`MEGA_QPDF` posé) ; `bash scripts/audit/write-bench.sh fixtures/corpus/pdfa fixtures/corpus/formulaires` : veraPDF `PASS` conservé sur `pdfa-4-*` après rotation et métadonnées.
 - [ ] Agent `rust-reviewer` sur `crates/mega-core/src/{cleanup.rs,crypt.rs,pages/}` ; corrections test d'abord.
@@ -302,7 +302,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 
 ## Partie B — Texte extrait et annotations tierces
 
-### Task B1: paires de substitution
+### Task 8 (B1): paires de substitution
 
 **Files:**
 - Modify: `crates/mega-core/src/text.rs:110-135` (`drawn_chars`)
@@ -318,7 +318,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 4: Run** `cargo test -p mega-core` → PASS (ordre de lecture inchangé : `tests/document.rs` existants)
 - [ ] **Step 5: Commit** `fix(core): recompose UTF-16 surrogate pairs in extracted text (audit L1)`
 
-### Task B2: espaces de mots en écriture de droite à gauche
+### Task 9 (B2): espaces de mots en écriture de droite à gauche
 
 **Files:**
 - Modify: `crates/mega-core/src/reading_order.rs` (nouvelle fonction pure), `crates/mega-core/src/text.rs:103` (`reading_chars`)
@@ -331,7 +331,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 1: Tests** : unitaire `word_gaps_finds_a_gap_wider_than_a_quarter_em_only_when_the_line_has_no_space` (deux cas) ; `tests/document.rs::arabic_words_are_separated_by_spaces` (`page_text` contient un espace entre les deux mots ; `search_page` du second mot = 1) ; corpus `ArabicCIDTrueType.pdf` sous `MEGA_CORPUS` : ≥ 10 espaces.
 - [ ] **Step 2–5** : FAIL → implement → PASS → `fix(core): synthesize word spaces on right-to-left lines (audit L3)`
 
-### Task B3: police CFF CID OpenType sans texte (diagnostic puis correction)
+### Task 10 (B3): police CFF CID OpenType sans texte (diagnostic puis correction)
 
 **Files:**
 - Modify: `crates/mega-core/src/testing.rs` (`opentype_cff_cid_pdf()` : un programme CFF minimal d'un glyphe enveloppé OpenType, `/FontFile3 /Subtype /OpenType`, `/ToUnicode` CID 1 → « 除 »)
@@ -344,7 +344,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 4: Run** → PASS ; `cargo test -p mega-core` sans régression.
 - [ ] **Step 5: Commit** `fix(core): fall back to /ToUnicode when PDFium exposes no text for an OpenType CFF CID font (audit L2)`
 
-### Task B4: annotations tierces et pièces jointes de page
+### Task 11 (B4): annotations tierces et pièces jointes de page
 
 **Files:**
 - Modify: `crates/mega-core/src/annotations/mod.rs:388-420,926-960`, `crates/mega-core/src/attachments.rs:26-155`
@@ -358,7 +358,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 1: Tests** : `third_party_free_text_is_shown_but_not_editable` (+ `update_annotation` → `InvalidOperation`) ; `popups_are_not_listed` ; `file_attachment_annotations_are_listed_with_their_page_and_extracted` (`attachments()` contient `page: Some(0)`, `save_attachment` écrit les octets attendus) ; `file_attachment_in_a_password_protected_document_is_extracted` (fixture chiffrée par qpdf dans `gen-fixtures` ou `testing` + `crypt::stream_bytes`) ; Vitest si formatage.
 - [ ] **Step 2–5** : FAIL → implement → PASS → `feat(core): list page file attachments, keep third-party FreeText read-only, hide popups (audit L11)`
 
-### Task B5: titre depuis le XMP et `/UserUnit`
+### Task 12 (B5): titre depuis le XMP et `/UserUnit`
 
 **Files:**
 - Modify: `crates/mega-core/src/properties.rs:45-69,175-200,225` ; `app/src/lib/api.ts:72` (`user_unit: number | null`) ; `app/src/lib/strings.ts` (`properties.physicalSize` fr « Taille physique » / en « Physical size », `properties.userUnit`) ; boîte Propriétés
@@ -368,14 +368,14 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 1: Tests** : `title_falls_back_to_xmp_dc_title_when_info_is_absent` (`"Ancien"` de `xmp_pdf`), idem `author`, `subject`, `keywords`, `creation_date` ; `user_unit_is_reported` (`Some(10.0)`, `None` sur `simple.pdf`) ; Vitest `physicalSize`.
 - [ ] **Step 2–5** : FAIL → implement (`LopdfInfo` gagne `xmp_fallback: XmpFields`, `user_unit`) → PASS → `feat(core,ui): metadata fallback on XMP, /UserUnit reported in properties (audit L12, L13)`
 
-### Task B6: PR B — vérification, relecture, fusion
+### Task 13 (B6): PR B — vérification, relecture, fusion
 
 - [ ] `/verif` 8/8 ; `bash scripts/audit/read-bench.sh fixtures/corpus/polices fixtures/corpus/producteurs` : similarité de texte ≥ 80 % avec deux moteurs sur `bug1937438_from_word`, `ArabicCIDTrueType`, `Embedded_font`.
 - [ ] `rust-reviewer` + `ui-reviewer` ; résumé « Ce que vous venez de voir » ; PR « Lot 14 (B): extracted text and third-party annotations » ; fusion.
 
 ## Partie C — Ajouts respectueux de PDF/A et PDF/UA
 
-### Task C1: artefacts, `/CIDSet`, groupe de transparence
+### Task 14 (C1): artefacts, `/CIDSet`, groupe de transparence
 
 **Files:**
 - Modify: `crates/mega-core/src/overlay.rs:201-300,381-465,707-750` (`append_content`), `crates/mega-core/src/fonts/unicode.rs:182-282` (`Type0Writer::write`)
@@ -387,7 +387,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 1: Tests** : `watermark_content_is_marked_as_artifact` (contenu contient `/Artifact BMC` et `EMC`) ; `unicode_subset_has_a_cidset` ; `translucent_watermark_adds_a_page_transparency_group` ; `conformance.rs` : avec `MEGA_VERAPDF` et `MEGA_CORPUS`, `pdfua-1-7-1-t01-pass-a.pdf` + filigrane opaque → `PASS` ua1 (sauté sinon).
 - [ ] **Step 2–5** : FAIL → implement → PASS → `fix(core): mark overlays as artifacts, write /CIDSet, add a transparency group (audit E6)`
 
-### Task C2: XMP écrit même absent, `/NeedAppearances` retiré, `/AP` des marquages
+### Task 15 (C2): XMP écrit même absent, `/NeedAppearances` retiré, `/AP` des marquages
 
 **Files:**
 - Modify: `crates/mega-core/src/properties.rs:352-452` (`update_xmp` crée les propriétés manquantes dans `rdf:Description`), `crates/mega-core/src/cleanup.rs` (`drop_need_appearances`), `crates/mega-core/src/edit.rs:823` (`rewritten_bytes` : rendu 8 px des pages à marquage sans apparence avant `save_to_bytes`)
@@ -396,7 +396,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 1: Tests** : `set_metadata_creates_dc_title_in_an_xmp_without_it` (XMP de `pdfa_pdf` sans `dc:title` → après : `dc:title` x-default = titre, et `/Info /Title` égal) ; `need_appearances_is_dropped_when_every_widget_has_an_appearance` (4 variantes du banc E3 → `/NeedAppearances` absent) ; `highlight_added_then_saved_has_an_appearance_stream` (`/AP /N` présent, contient `/Multiply` ou l'ExtGState `/BM`).
 - [ ] **Step 2–5** : FAIL → implement → PASS → `fix(core): sync XMP on metadata edits, drop /NeedAppearances when appearances exist, write highlight appearances (audit E6, E7, E11)`
 
-### Task C3: `/Extensions` au chiffrement AES-256, verdicts DocMDP et horodatage
+### Task 16 (C3): `/Extensions` au chiffrement AES-256, verdicts DocMDP et horodatage
 
 **Files:**
 - Modify: `crates/mega-core/src/security.rs:237-290`, `crates/mega-core/src/digital_signature/mod.rs:35-125`, `crates/mega-core/src/digital_signature/pdf.rs:319-322,449-471`
@@ -407,14 +407,14 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 1: Tests** : `protect_declares_the_adobe_extension_level_and_a_1_7_header` (entrée 1.4 → en-tête `%PDF-1.7`, `/Extensions /ADBE /ExtensionLevel 8`) ; `a_certified_document_modified_afterwards_is_reported` (`Invalid(CertifiedThenModified)`) ; `rfc3161_subfilter_is_reported_as_a_document_timestamp` (`Unsupported(DocumentTimestamp)`).
 - [ ] **Step 2–5** : FAIL → implement → PASS (`pnpm --dir app test` pour la symétrie fr/en) → `feat(core,ui): AES-256 extension declaration, DocMDP and timestamp verdicts (audit E8, E14)`
 
-### Task C4: PR C — vérification, relecture, fusion
+### Task 17 (C4): PR C — vérification, relecture, fusion
 
 - [ ] `/verif` 8/8 ; `bash scripts/audit/write-bench.sh fixtures/corpus/pdfa fixtures/corpus/pdfua` puis veraPDF avant/après : `PASS` conservé sur 1b/2b/2u/3b/ua1 après filigrane opaque et métadonnées (le filigrane translucide sur PDF/A-1 reste `FAIL` : limite documentée).
 - [ ] `rust-reviewer`, `ui-reviewer` ; résumé ; PR « Lot 14 (C): PDF/A and PDF/UA friendly additions » ; fusion.
 
 ## Partie D — Taille des fichiers
 
-### Task D1: image insérée par lopdf (`/DCTDecode` tel quel, `/SMask` réel seulement)
+### Task 18 (D1): image insérée par lopdf (`/DCTDecode` tel quel, `/SMask` réel seulement)
 
 **Files:**
 - Modify: `crates/mega-core/src/content/image.rs:78-97` (`place`), `crates/mega-core/src/content/mod.rs:548-563` (`insert_image`)
@@ -426,7 +426,7 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 1: Tests** : `inserted_jpeg_keeps_dct_encoding_and_has_no_smask` (taille sortie < 1,2 × JPEG + 3 Ko ; `/Filter /DCTDecode`) ; `inserted_png_with_alpha_gets_a_real_smask` ; `inserted_opaque_png_has_no_smask` ; `inserted_image_on_a_rotated_page_lands_at_the_displayed_rectangle` (rendu : pixels sombres dans `rect`, `tests/rotation.rs` pattern) ; conformance PNG alpha.
 - [ ] **Step 2–5** : FAIL → implement → PASS → `perf(core): insert images through lopdf, JPEG bytes kept as DCT (audit E9)`
 
-### Task D2: sous-ensemble des polices DejaVu incorporées par PDFium
+### Task 19 (D2): sous-ensemble des polices DejaVu incorporées par PDFium
 
 **Files:**
 - Modify: `crates/mega-core/src/cleanup.rs` (`subset_embedded_fonts`), `crates/mega-core/src/fonts/unicode.rs` (exposer `subset_tag`, `DEJAVU_SANS` empreinte)
@@ -438,14 +438,14 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] **Step 1: Tests** : `inserted_unicode_text_embeds_a_subset_font` (`/FontFile2` < 40 Ko, `/BaseFont` commence par 6 majuscules + `+`, `page_text` = « Ω », rendu identique avant/après par `compare`) ; `two_unicode_annotations_share_one_subset` ; conformance `insert-text` Unicode déjà couvert.
 - [ ] **Step 2–5** : FAIL → implement → PASS → `perf(core): subset the Unicode font embedded by PDFium at save time (audit E10)`
 
-### Task D3: PR D — vérification, relecture, fusion
+### Task 20 (D3): PR D — vérification, relecture, fusion
 
 - [ ] `/verif` 8/8 ; `bash scripts/audit/write-bench.sh fixtures/corpus/images` : aucune régression qpdf/MuPDF/pdf.js.
 - [ ] `rust-reviewer` ; résumé ; PR « Lot 14 (D): file size » ; fusion.
 
 ## Partie E — Conformance et documentation
 
-### Task E1: `conformance.rs` étendu, avertissement qpdf, tests corpus
+### Task 21 (E1): `conformance.rs` étendu, avertissement qpdf, tests corpus
 
 **Files:**
 - Modify: `crates/mega-core/tests/conformance.rs`, `CONTRIBUTING.md`
@@ -458,19 +458,19 @@ Intégration `tests/pages.rs` : `merge` de deux `rich_catalog_pdf` → `Document
 - [ ] Quand qpdf manque sans `MEGA_REQUIRE_QPDF` : `eprintln!("AVERTISSEMENT : qpdf introuvable, contrôle de conformité SAUTÉ (poser MEGA_QPDF)")` en tête de chaque test, et `CONTRIBUTING.md` documente `MEGA_QPDF`, `MEGA_MUTOOL`, `MEGA_PDFJS_CHECK`, `MEGA_VERAPDF`, `MEGA_CORPUS`.
 - [ ] `MEGA_QPDF=… MEGA_REQUIRE_QPDF=1 cargo test -p mega-core --test conformance` → PASS ; commit `test(core): conformance covers every write path, catalogue preservation and optional cross-readers`
 
-### Task E2: documentation et ADR-0019
+### Task 22 (E2): documentation et ADR-0019
 
 **Files:**
 - Create: `docs/adr/0019-save-fidelity.md` (statut accepté : report du catalogue, déplacement par lopdf, `can_clean`, version d'en-tête, passe-plat `Identity`)
 - Modify: `docs/adr/0007…` (déjà en A5), `0008` (`/InkList` et `prune_objects` : paragraphes retirés ; `/AP` des marquages écrit), `0009` (« chiffrés non modifiables » retiré), `0010` (passe lopdf sur chiffré, E5), `0011` (mots de passe Latin-1 retiré ; `/Extensions`), `0013` (OCR WinAnsi retiré ; DocMDP, horodatage), `0018` (§7 : mesures veraPDF, ce qui conserve PDF/A), `docs/FONCTIONNALITES.md` (L7, L9, L10, L13, E12, E13, E15 ; « vérifié par pdf.js et MuPDF »), `README.md` (ligne « compatibilité mesurée »), `docs/ROADMAP.md`
 - [ ] Rédiger, relire les liens, commit `docs: ADR-0019 save fidelity, ADRs refreshed after the compatibility audit`
 
-### Task E3: migration des générateurs et retrait du banc
+### Task 23 (E3): migration des générateurs et retrait du banc
 
 - [ ] Vérifier que chaque expérience E1–E20, L11–L19 a son test (grep des identifiants dans `tests/`) ; supprimer `crates/mega-core/tests/audit_compat.rs` ; `scripts/audit/` reste (mesure de non-régression) ; `cargo clippy --workspace --all-targets -- -D warnings`.
 - [ ] Commit `test(core): measurement bench retired, every experiment is now an asserting test`
 
-### Task E4: fin de lot
+### Task 24 (E4): fin de lot
 
 - [ ] Checklist manuelle de la spec (8 points) sur l'application lancée (`pnpm --dir app tauri dev -- -- fixtures/corpus/formulaires/160F-2019.pdf`).
 - [ ] `bash scripts/audit/read-bench.sh` et `write-bench.sh` complets ; comparer à `target/audit/*.csv` de l'audit (archivés dans `docs/audit/mesures-2026-10-31/` sous forme de CSV commités, taille < 200 Ko) : aucune régression, gains L1, L2, L3, E3, E6 visibles.

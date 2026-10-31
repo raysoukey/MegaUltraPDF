@@ -44,6 +44,10 @@ pub struct Document {
     /// Vrai dès qu'une modification éloigne le document de `file_bytes` ; redevient faux à
     /// l'enregistrement, ou quand annuler / rétablir ramène à l'état enregistré.
     pub(crate) changed: bool,
+    /// Une suppression (annotation, page, objet) a eu lieu depuis le dernier enregistrement :
+    /// `rewritten_bytes` refuse alors d'écrire si le nettoyage `lopdf` n'a pas pu s'appliquer,
+    /// car les restes de ce qui a été supprimé survivraient dans le fichier (audit E1).
+    pub(crate) needs_cleanup: bool,
     /// Compte rendu du caviardage que la dernière édition vient d'appliquer (sinon `None`) :
     /// l'interface le reçoit avec l'état de l'historique pour avertir l'utilisateur.
     pub(crate) last_redaction: Option<crate::content::redact::RedactReport>,
@@ -121,6 +125,7 @@ impl Document {
             history: crate::edit::History::new(crate::edit::HistoryLimits::default()),
             file_bytes,
             changed: false,
+            needs_cleanup: false,
             last_redaction: None,
             unicode_font: None,
         })
@@ -210,9 +215,14 @@ impl Document {
     /// Refuse une opération qui supprime ou remplace du contenu si le nettoyage à
     /// l'enregistrement ne pourra pas retirer ce qui est supprimé (audit E1).
     ///
+    /// Pose aussi `needs_cleanup` : l'opération suit, `rewritten_bytes` vérifiera à
+    /// l'enregistrement que le nettoyage a eu lieu.
+    ///
     /// À appeler **avant** `engine::guard()` : `to_bytes` prend le verrou, non réentrant.
-    pub(crate) fn ensure_cleanable(&self) -> CoreResult<()> {
+    pub(crate) fn ensure_cleanable(&mut self) -> CoreResult<()> {
         if crate::cleanup::can_clean(&self.to_bytes()?, self.password()) {
+            // L'appelant va supprimer : l'enregistrement devra vérifier que le nettoyage a eu lieu.
+            self.needs_cleanup = true;
             return Ok(());
         }
         Err(CoreError::InvalidOperation(
@@ -302,4 +312,22 @@ impl Document {
 fn uses_certificate_encryption(bytes: &[u8]) -> bool {
     let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
     contains(b"/Adobe.PubSec") && !contains(b"/Standard")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Le drapeau `needs_cleanup` monte avec une suppression et retombe à l'enregistrement.
+    #[test]
+    fn needs_cleanup_is_set_by_a_deletion_and_cleared_by_a_save() {
+        let mut doc =
+            Document::from_bytes(crate::testing::note_with_popup_pdf("SECRET-ZX9"), None).unwrap();
+        assert!(!doc.needs_cleanup);
+        doc.delete_annotation(0, 0).unwrap();
+        assert!(doc.needs_cleanup);
+        let dir = tempfile::tempdir().unwrap();
+        doc.save_as(dir.path().join("o.pdf")).unwrap();
+        assert!(!doc.needs_cleanup);
+    }
 }

@@ -187,7 +187,9 @@ fn deeply_nested_xobjects_do_not_overflow_the_stack() {
 #[test]
 fn the_save_pass_cleans_a_decompression_bomb_without_inflating_it() {
     let bytes = corpus("bombe-flate.pdf");
-    let out = mega_core::cleanup::before_save(&bytes, None, None).unwrap();
+    let out = mega_core::cleanup::before_save(&bytes, None, None)
+        .unwrap()
+        .bytes;
     assert!(out != bytes, "nettoyage abandonné devant la bombe");
     assert!(out.len() < 2 * bytes.len(), "{} octets", out.len());
     let reopened = mega_core::Document::from_bytes(out, None).unwrap();

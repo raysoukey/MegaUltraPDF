@@ -254,7 +254,8 @@ impl Document {
         // La passe d'enregistrement (`/InkList`, clé privée de PDFium, orphelins) doit avoir
         // lieu **avant** le chiffrement : ensuite, elle s'abstient sur un fichier chiffré.
         let bytes =
-            crate::cleanup::before_save(&self.to_bytes()?, self.password(), self.file_version())?;
+            crate::cleanup::before_save(&self.to_bytes()?, self.password(), self.file_version())?
+                .bytes;
         let mut doc = crate::crypt::load_limited(&bytes, None).map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;

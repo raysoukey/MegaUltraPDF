@@ -22,6 +22,19 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
     CoreError::InvalidOperation(format!("nettoyage avant enregistrement : {e}"))
 }
 
+/// Résultat de [`before_save`] : les octets à écrire, et si le nettoyage a pu s'appliquer.
+///
+/// Pourquoi : quand `lopdf` ne relit pas le fichier, `before_save` rend les octets de PDFium
+/// tels quels, orphelins compris ; l'appelant qui vient de supprimer quelque chose doit le
+/// savoir pour refuser d'écrire un fichier où la suppression survivrait (audit E1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Saved {
+    /// Les octets prêts à écrire.
+    pub bytes: Vec<u8>,
+    /// Faux si `before_save` a dû se rabattre sur les octets de PDFium sans nettoyage.
+    pub cleaned: bool,
+}
+
 /// Octets prêts à écrire : notes sans apparence imposée, `/InkList` sur les formes, objets
 /// orphelins élagués et renumérotés. Un document chiffré (ouvert avec `password`) est nettoyé
 /// en clair puis **rechiffré à l'identique** (`crypt::LopdfSession`, Lot 10).
@@ -33,12 +46,16 @@ pub fn before_save(
     bytes: &[u8],
     password: Option<&str>,
     min_version: Option<(u8, u8)>,
-) -> CoreResult<Vec<u8>> {
+) -> CoreResult<Saved> {
+    let raw = || Saved {
+        bytes: crate::crypt::raise_header_version(bytes, min_version),
+        cleaned: false,
+    };
     let mut session = match crate::crypt::LopdfSession::load(bytes, password) {
         Ok(session) => session,
         // Un fichier que lopdf ne relit (ou ne déchiffre) pas est écrit tel que PDFium l'a
         // produit, protection comprise.
-        Err(_) => return Ok(crate::crypt::raise_header_version(bytes, min_version)),
+        Err(_) => return Ok(raw()),
     };
     let doc = &mut session.doc;
     // [Apprentissage] Les tuples se comparent champ par champ : (2, 0) > (1, 7), d'où `max`.
@@ -68,9 +85,12 @@ pub fn before_save(
     // contrôles (audit du Lot 13, R6 : trois chargements par enregistrement auparavant).
     let reread = reload_if_sane(pages_before, &out, password).map(|s| page_contents(&s.doc));
     if reread.as_ref() != Some(&contents_before) {
-        return Ok(crate::crypt::raise_header_version(bytes, min_version));
+        return Ok(raw());
     }
-    Ok(out)
+    Ok(Saved {
+        bytes: out,
+        cleaned: true,
+    })
 }
 
 /// Vrai si [`before_save`] pourra nettoyer ces octets : `lopdf` doit les relire (et les

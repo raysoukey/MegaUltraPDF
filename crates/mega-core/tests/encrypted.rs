@@ -41,7 +41,7 @@ fn is_encrypted(bytes: &[u8]) -> bool {
 #[test]
 fn encrypted_document_is_cleaned_and_stays_encrypted() {
     let bytes = fixture("encrypted.pdf");
-    let out = before_save(&bytes, Some("secret"), None).unwrap();
+    let out = before_save(&bytes, Some("secret"), None).unwrap().bytes;
     assert_ne!(out, bytes, "le document a été réécrit (nettoyé)");
     assert!(mod_date(&out, "secret").is_some(), "/ModDate posé");
     assert!(is_encrypted(&out));
@@ -57,7 +57,7 @@ fn encrypted_document_is_cleaned_and_stays_encrypted() {
 #[test]
 fn owner_only_document_is_cleaned_and_stays_protected() {
     let bytes = fixture("owner-only.pdf");
-    let out = before_save(&bytes, None, None).unwrap();
+    let out = before_save(&bytes, None, None).unwrap().bytes;
     assert_ne!(out, bytes, "réécrit");
     assert!(mod_date(&out, "").is_some(), "/ModDate posé");
     assert!(
@@ -91,7 +91,7 @@ fn aes256_cleanup_keeps_password_and_permissions() {
         .unwrap()
         .security()
         .unwrap();
-    let out = before_save(&bytes, Some("u"), None).unwrap();
+    let out = before_save(&bytes, Some("u"), None).unwrap().bytes;
     assert!(mod_date(&out, "u").is_some(), "nettoyé");
     assert!(!String::from_utf8_lossy(&out).contains("TitreConfidentiel"));
     let reopened = Document::from_bytes(out, Some("u")).unwrap();
@@ -148,7 +148,7 @@ fn rc4_and_aes128_documents_are_cleaned_and_reopen() {
             Document::from_bytes(bytes.clone(), Some("u")).is_ok(),
             "fixture lisible"
         );
-        let out = before_save(&bytes, Some("u"), None).unwrap();
+        let out = before_save(&bytes, Some("u"), None).unwrap().bytes;
         assert!(mod_date(&out, "u").is_some(), "aes={aes} : nettoyé");
         let doc = Document::from_bytes(out, Some("u")).unwrap();
         assert!(doc.page_text(0).unwrap().contains("Page 1"), "aes={aes}");
@@ -267,7 +267,7 @@ fn attachments_only_encryption_is_not_corrupted() {
         doc.page_text(0).unwrap().contains("Hello Identity"),
         "fixture lisible"
     );
-    let out = before_save(&bytes, None, None).unwrap();
+    let out = before_save(&bytes, None, None).unwrap().bytes;
     let reopened = Document::from_bytes(out, None).unwrap();
     assert!(reopened.page_text(0).unwrap().contains("Hello Identity"));
     assert_eq!(reopened.title().as_deref(), Some("Plain title"));
@@ -339,7 +339,7 @@ fn identity_filtered_file_keeps_its_encrypt_dictionary_and_attachment_bytes_afte
     })
     .unwrap();
     let pdfium_bytes = doc.to_bytes().unwrap();
-    let out = before_save(&pdfium_bytes, None, None).unwrap();
+    let out = before_save(&pdfium_bytes, None, None).unwrap().bytes;
     assert_eq!(embedded_file_stream_bytes(&out), ef_before);
     assert!(out.windows(9).any(|w| w == b"/Encrypt "));
     let id_of = |bytes: &[u8]| without_encrypt(bytes).trailer.get(b"ID").unwrap().clone();

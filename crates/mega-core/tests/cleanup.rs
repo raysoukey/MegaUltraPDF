@@ -104,7 +104,9 @@ fn cleanup_without_password_keeps_encrypted_bytes() {
         env!("CARGO_MANIFEST_DIR")
     ))
     .unwrap();
-    let out = mega_core::cleanup::before_save(&bytes, None, None).unwrap();
+    let out = mega_core::cleanup::before_save(&bytes, None, None)
+        .unwrap()
+        .bytes;
     assert_eq!(out, bytes);
 }
 
@@ -125,7 +127,9 @@ fn cleanup_inklist_follows_ink_strokes() {
     )
     .unwrap();
     let raw = doc.to_bytes().unwrap();
-    let out = mega_core::cleanup::before_save(&raw, None, None).unwrap();
+    let out = mega_core::cleanup::before_save(&raw, None, None)
+        .unwrap()
+        .bytes;
     let text = String::from_utf8_lossy(&out);
     let i = text.find("/InkList").expect("InkList");
     let tail = &text[i..i + 80];
@@ -186,7 +190,9 @@ fn fixture_bytes(name: &str) -> Vec<u8> {
 fn owner_password_document_keeps_its_encryption_on_save() {
     let bytes = fixture_bytes("owner-only.pdf");
     assert!(String::from_utf8_lossy(&bytes).contains("/Encrypt"));
-    let out = mega_core::cleanup::before_save(&bytes, None, None).unwrap();
+    let out = mega_core::cleanup::before_save(&bytes, None, None)
+        .unwrap()
+        .bytes;
     assert!(
         String::from_utf8_lossy(&out).contains("/Encrypt"),
         "la passe de nettoyage ne doit pas déchiffrer"
@@ -295,7 +301,9 @@ fn saved_annotations_have_nm_and_p() {
         doc.add_annotation(0, &shape(AnnotationKind::Rect, x, 100.0, 80.0, 40.0))
             .unwrap();
     }
-    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap(), None, None).unwrap();
+    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap(), None, None)
+        .unwrap()
+        .bytes;
     let saved = lopdf::Document::load_mem(&out).unwrap();
     let annots = annots_of(&saved);
     assert_eq!(annots.len(), 2);
@@ -317,7 +325,9 @@ fn ellipse_ink_list_samples_the_curves() {
         &shape(AnnotationKind::Ellipse, 100.0, 100.0, 200.0, 100.0),
     )
     .unwrap();
-    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap(), None, None).unwrap();
+    let out = mega_core::cleanup::before_save(&doc.to_bytes().unwrap(), None, None)
+        .unwrap()
+        .bytes;
     let saved = lopdf::Document::load_mem(&out).unwrap();
     let (_, dict) = annots_of(&saved).remove(0);
     let points: Vec<f32> = dict
@@ -349,7 +359,8 @@ fn ellipse_ink_list_samples_the_curves() {
 fn ink_matrix_is_applied() {
     let out =
         mega_core::cleanup::before_save(&mega_core::testing::ink_with_matrix_pdf(), None, None)
-            .unwrap();
+            .unwrap()
+            .bytes;
     let saved = lopdf::Document::load_mem(&out).unwrap();
     let (_, dict) = annots_of(&saved).remove(0);
     let first: Vec<f32> = dict.get(b"InkList").unwrap().as_array().unwrap()[0]
@@ -499,9 +510,13 @@ fn before_save_keeps_a_2_0_header() {
         pdfium_bytes.starts_with(b"%PDF-1."),
         "PDFium rabaisse l'en-tête"
     );
-    let out = mega_core::cleanup::before_save(&pdfium_bytes, None, Some((2, 0))).unwrap();
+    let out = mega_core::cleanup::before_save(&pdfium_bytes, None, Some((2, 0)))
+        .unwrap()
+        .bytes;
     assert!(out.starts_with(b"%PDF-2.0"));
-    let kept = mega_core::cleanup::before_save(&pdfium_bytes, None, None).unwrap();
+    let kept = mega_core::cleanup::before_save(&pdfium_bytes, None, None)
+        .unwrap()
+        .bytes;
     assert!(!kept.starts_with(b"%PDF-2.0"));
 }
 
@@ -509,7 +524,9 @@ fn before_save_keeps_a_2_0_header() {
 fn before_save_raw_fallback_also_raises_the_header() {
     // Octets que lopdf ne relit pas : le repli brut recopie PDFium, version comprise.
     let junk = b"%PDF-1.4\nnot a pdf at all\n%%EOF\n";
-    let out = mega_core::cleanup::before_save(junk, None, Some((2, 0))).unwrap();
+    let out = mega_core::cleanup::before_save(junk, None, Some((2, 0)))
+        .unwrap()
+        .bytes;
     assert!(out.starts_with(b"%PDF-2.0"));
     assert_eq!(out.len(), junk.len());
 }
@@ -534,4 +551,16 @@ fn deleted_note_does_not_survive_in_an_identity_encrypted_file() {
     );
     let reopened = Document::from_bytes(bytes, None).unwrap();
     assert!(reopened.page_text(0).unwrap().contains("Visible"));
+}
+
+/// La passe dit si elle a pu s'appliquer : `Document` refuse d'enregistrer une suppression
+/// dont le nettoyage a dû être sauté (second repli de `before_save`, audit E1).
+#[test]
+fn before_save_reports_whether_the_cleanup_applied() {
+    let cleaned = mega_core::cleanup::before_save(&sample_pdf(1, "t"), None, None).unwrap();
+    assert!(cleaned.cleaned);
+    let input = uncleanable_note_pdf("x");
+    let fallback = mega_core::cleanup::before_save(&input, None, None).unwrap();
+    assert!(!fallback.cleaned, "filtre inconnu de lopdf : repli");
+    assert_eq!(fallback.bytes, input, "le repli rend les octets tels quels");
 }

@@ -430,3 +430,89 @@ fn user_unit_is_reported() {
     let simple = Document::from_bytes(simple, None).unwrap();
     assert_eq!(simple.properties().unwrap().user_unit, None);
 }
+
+/// Document sans `/Info` dont le XMP ne contient que `description` (le contenu de
+/// `rdf:Description`).
+fn doc_with_xmp(description: &str) -> Document {
+    let xmp = format!(
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF \
+         xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+         <rdf:Description rdf:about=\"\">{description}</rdf:Description></rdf:RDF></x:xmpmeta>"
+    );
+    let mut lo =
+        lopdf::Document::load_mem(&mega_core::testing::metadata_variant_pdf("xmp-only")).unwrap();
+    let id = lo
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = lo.get_object_mut(id).unwrap().as_stream_mut().unwrap();
+    stream.set_plain_content(xmp.into_bytes());
+    let mut out = Vec::new();
+    lo.save_to(&mut out).unwrap();
+    Document::from_bytes(out, None).unwrap()
+}
+
+fn xmp_title(raw: &str) -> Option<String> {
+    let li = format!(
+        "<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">{raw}</rdf:li></rdf:Alt></dc:title>"
+    );
+    doc_with_xmp(&li).properties().unwrap().title
+}
+
+#[test]
+fn xmp_entities_cdata_and_control_characters_are_cleaned() {
+    assert_eq!(xmp_title("A &amp; B").as_deref(), Some("A & B"));
+    assert_eq!(xmp_title("caf&#233;").as_deref(), Some("café"));
+    assert_eq!(xmp_title("caf&#xE9;").as_deref(), Some("café"));
+    assert_eq!(
+        xmp_title("<![CDATA[a <b> &amp; c]]>").as_deref(),
+        Some("a <b> &amp; c")
+    );
+    assert_eq!(xmp_title("a&#0;b&#xD800;c").as_deref(), Some("abc"));
+    assert_eq!(
+        xmp_title("un\ndeux\u{0}trois\u{7f}").as_deref(),
+        Some("un deuxtrois")
+    );
+}
+
+#[test]
+fn an_oversize_xmp_title_is_cut_to_the_metadata_limit() {
+    let long = "x".repeat(2000);
+    let title = xmp_title(&long).unwrap();
+    assert_eq!(
+        title.chars().count(),
+        mega_core::properties::MAX_METADATA_CHARS
+    );
+}
+
+#[test]
+fn xmp_create_date_keeps_its_time_zone() {
+    let d = doc_with_xmp("<xmp:CreateDate>2020-01-02T03:04:05+01:00</xmp:CreateDate>");
+    assert_eq!(
+        d.properties().unwrap().creation_date.as_deref(),
+        Some("D:20200102030405+01'00'")
+    );
+}
+
+fn user_unit_doc(value: lopdf::Object) -> Document {
+    let mut lo = lopdf::Document::load_mem(&mega_core::testing::user_unit_pdf()).unwrap();
+    let page = *lo.get_pages().values().next().unwrap();
+    lo.get_dictionary_mut(page).unwrap().set("UserUnit", value);
+    let mut out = Vec::new();
+    lo.save_to(&mut out).unwrap();
+    Document::from_bytes(out, None).unwrap()
+}
+
+#[test]
+fn user_unit_accepts_reals_and_is_bounded() {
+    let unit = |v| user_unit_doc(v).properties().unwrap().user_unit;
+    assert_eq!(unit(lopdf::Object::Real(0.5)), Some(0.5));
+    assert_eq!(unit(lopdf::Object::Real(75_000.0)), Some(75_000.0));
+    assert_eq!(unit(lopdf::Object::Real(75_001.0)), None);
+    assert_eq!(unit(lopdf::Object::Real(0.0)), None);
+    assert_eq!(unit(lopdf::Object::Real(-2.0)), None);
+    assert_eq!(unit(lopdf::Object::Integer(1)), None);
+}

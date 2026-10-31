@@ -209,6 +209,9 @@ fn xmp_text_of(doc: &lopdf::Document) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Maximum de `/UserUnit` toléré : 75 000 (ISO 32000-1, tableau 30, limite des tailles de page).
+const MAX_USER_UNIT: f32 = 75_000.0;
+
 /// `/UserUnit` de la première page (§7.7.3.3), cherché aussi chez les parents par tolérance.
 /// `None` pour 1 (valeur par défaut) ou une valeur absurde.
 fn user_unit_of(doc: &lopdf::Document) -> Option<f32> {
@@ -219,7 +222,7 @@ fn user_unit_of(doc: &lopdf::Document) -> Option<f32> {
         if let Ok(raw) = dict.get(b"UserUnit") {
             let (_, value) = doc.dereference(raw).ok()?;
             let unit = value.as_float().ok()?;
-            return (unit.is_finite() && unit > 0.0 && (unit - 1.0).abs() > f32::EPSILON)
+            return (unit > 0.0 && unit <= MAX_USER_UNIT && (unit - 1.0).abs() > f32::EPSILON)
                 .then_some(unit);
         }
         id = dict.get(b"Parent").ok()?.as_reference().ok()?;
@@ -261,35 +264,93 @@ fn xmp_li(xmp: &str, tag: &str, prefer_default: bool) -> Option<String> {
     clean_xmp_text(&body[open_end..close])
 }
 
-/// Valeur d'une propriété XMP simple (élément ou attribut), sans la limite de longueur de
-/// `xmp_value`.
-fn xmp_text(xmp: &str, name: &str) -> Option<String> {
-    let element = || {
+/// Texte brut d'une propriété XMP simple, écrite en attribut (`nom="2"`, guillemets ou
+/// apostrophes) ou en élément (`<nom>2</nom>`, jusqu'à la balise fermante, pour qu'une
+/// section CDATA ne la coupe pas). Partagé par `xmp_value` et `xmp_text`.
+fn xmp_raw<'a>(xmp: &'a str, name: &str) -> Option<&'a str> {
+    let attribute = ['"', '\''].into_iter().find_map(|quote| {
+        let start = format!("{name}={quote}");
+        let from = xmp.find(&start)? + start.len();
+        Some(&xmp[from..from + xmp[from..].find(quote)?])
+    });
+    attribute.or_else(|| {
         let open = format!("<{name}>");
         let from = xmp.find(&open)? + open.len();
-        Some(&xmp[from..from + xmp[from..].find('<')?])
-    };
-    let attribute = || {
-        ['"', '\''].into_iter().find_map(|quote| {
-            let start = format!(" {name}={quote}");
-            let from = xmp.find(&start)? + start.len();
-            Some(&xmp[from..from + xmp[from..].find(quote)?])
-        })
-    };
-    clean_xmp_text(element().or_else(attribute)?)
+        Some(&xmp[from..from + xmp[from..].find(&format!("</{name}>"))?])
+    })
 }
 
-/// Texte XMP prêt à afficher : entités XML décodées, espaces rognés, `None` si vide ou
-/// démesuré (une donnée de fichier n'est pas fiable).
+/// Valeur d'une propriété XMP simple, nettoyée, sans limite autre que `MAX_METADATA_CHARS`.
+fn xmp_text(xmp: &str, name: &str) -> Option<String> {
+    clean_xmp_text(xmp_raw(xmp, name)?)
+}
+
+/// Texte XMP prêt à afficher : CDATA déballé, entités XML décodées (nommées et numériques),
+/// caractères de contrôle retirés (tabulation et fins de ligne deviennent des espaces),
+/// espaces rognés, tronqué à `MAX_METADATA_CHARS`. `None` si rien ne reste : une donnée
+/// de fichier n'est pas fiable.
 fn clean_xmp_text(raw: &str) -> Option<String> {
-    let text = raw
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&");
-    let text = text.trim();
-    (!text.is_empty() && text.chars().count() <= MAX_METADATA_CHARS).then(|| text.to_string())
+    let mut out = String::new();
+    let mut rest = raw;
+    while !rest.is_empty() {
+        if let Some(inner) = rest.strip_prefix("<![CDATA[") {
+            // Une section CDATA non fermée court jusqu'à la fin.
+            let end = inner.find("]]>").unwrap_or(inner.len());
+            out.push_str(&inner[..end]);
+            rest = inner.get(end + 3..).unwrap_or("");
+        } else {
+            let end = rest.find("<![CDATA[").unwrap_or(rest.len());
+            decode_entities(&rest[..end], &mut out);
+            rest = &rest[end..];
+        }
+    }
+    let cleaned: String = out
+        .chars()
+        .filter_map(|c| match c {
+            '\t' | '\n' | '\r' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .take(MAX_METADATA_CHARS + 1)
+        .collect();
+    let text: String = cleaned.trim().chars().take(MAX_METADATA_CHARS).collect();
+    (!text.is_empty()).then_some(text)
+}
+
+/// Ajoute à `out` le texte `raw` dont les entités XML sont décodées ; une entité inconnue
+/// ou un point de code invalide (`&#0;`, `&#xD800;`) est écarté.
+fn decode_entities(raw: &str, out: &mut String) {
+    let mut rest = raw;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        // Une entité tient en peu de caractères : on ne cherche `;` que près de l'esperluette.
+        let Some(semi) = rest.get(..12).unwrap_or(rest).find(';') else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let body = &rest[1..semi];
+        let decoded = match body {
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "amp" => Some('&'),
+            _ => body.strip_prefix('#').and_then(|num| {
+                let code = match num.strip_prefix(['x', 'X']) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                    None => num.parse().ok()?,
+                };
+                char::from_u32(code)
+            }),
+        };
+        if let Some(c) = decoded {
+            out.push(c);
+        }
+        rest = &rest[semi + 1..];
+    }
+    out.push_str(rest);
 }
 
 /// Date XMP (ISO 8601, `2020-01-02T03:04:05+01:00`) en date PDF (`D:20200102030405+01'00'`),
@@ -342,24 +403,9 @@ fn pdfa_claim_of(doc: &lopdf::Document) -> Option<String> {
     Some(format!("PDF/A-{part}{}", conformance.to_uppercase()))
 }
 
-/// Valeur d'une propriété XMP simple, écrite en attribut (`nom="2"`) ou en élément
-/// (`<nom>2</nom>`).
+/// Valeur d'une propriété XMP courte (un chiffre, une lettre) : `pdfaid:part`.
 fn xmp_value(xmp: &str, name: &str) -> Option<String> {
-    let attribute = [format!("{name}=\""), format!("{name}='")]
-        .into_iter()
-        .find_map(|start| {
-            let from = xmp.find(&start)? + start.len();
-            let end = xmp[from..].find(['"', '\''])?;
-            Some(xmp[from..from + end].to_string())
-        });
-    let element = || {
-        let open = format!("<{name}>");
-        let from = xmp.find(&open)? + open.len();
-        let end = xmp[from..].find('<')?;
-        Some(xmp[from..from + end].to_string())
-    };
-    attribute
-        .or_else(element)
+    xmp_raw(xmp, name)
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty() && v.len() <= 8)
 }

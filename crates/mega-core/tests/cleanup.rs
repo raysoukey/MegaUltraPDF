@@ -549,6 +549,10 @@ fn deleted_note_does_not_survive_in_an_identity_encrypted_file() {
         bytes.windows(9).any(|w| w == b"/Encrypt "),
         "/Encrypt d'origine conservé"
     );
+    assert!(
+        !bytes.windows(8).any(|w| w == b"/Encrypx"),
+        "aucune clé rebaptisée écrite"
+    );
     let reopened = Document::from_bytes(bytes, None).unwrap();
     assert!(reopened.page_text(0).unwrap().contains("Visible"));
 }

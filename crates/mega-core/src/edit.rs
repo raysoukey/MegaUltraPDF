@@ -838,12 +838,7 @@ impl Document {
         let saved = crate::cleanup::before_save(&bytes, self.password(), self.file_version())?;
         // Une suppression a eu lieu et le nettoyage n'a pas pu retirer ses restes : écrire les
         // octets de PDFium ferait survivre ce que l'utilisateur a supprimé (audit E1).
-        if self.needs_cleanup && !saved.cleaned {
-            return Err(CoreError::InvalidOperation(
-                "enregistrement refusé : le nettoyage n'a pas pu s'appliquer après une                  suppression ; le fichier d'origine est conservé"
-                    .to_string(),
-            ));
-        }
+        crate::cleanup::refuse_if_uncleaned(self.needs_cleanup, &saved, "enregistrement refusé")?;
         Ok(saved.bytes)
     }
 

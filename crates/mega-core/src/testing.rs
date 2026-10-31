@@ -1358,30 +1358,48 @@ fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {
 /// d'ouverture vide, propriétaire `owner`, `/O` et `/U` calculés pour ces valeurs (RC4
 /// 128 bits, révision 4, `/P -4`, premier `/ID` `00112233…eeff`).
 pub fn attachments_only_encrypted_pdf() -> Vec<u8> {
-    attachments_only_build(false)
+    attachments_only_build(false, false)
 }
 
 /// Comme [`attachments_only_encrypted_pdf`], avec une pièce jointe `a.txt` dont le flux
 /// `/EF /F` porte `/Filter /Crypt` (filtre `/StdCF`, §7.6.6) : ses octets, ici le faux chiffré
 /// `CIPHERTEXT-ABC123`, ne doivent jamais être touchés par une réécriture.
 pub fn attachments_only_encrypted_with_file_pdf() -> Vec<u8> {
-    attachments_only_build(true)
+    attachments_only_build(true, false)
+}
+
+/// Comme [`attachments_only_encrypted_with_file_pdf`], avec une **note** numérotée *avant* la
+/// pièce jointe (objet 8, la pièce jointe suit en 9 et 10) : la supprimer décalerait le numéro
+/// du flux chiffré si l'on renumérotait les objets. Le flux de contenu, non compressé, cite
+/// en commentaire le texte `/Encrypt 12 0 R`, qu'aucune réécriture ne doit modifier.
+pub fn attachments_only_encrypted_with_note_pdf() -> Vec<u8> {
+    attachments_only_build(true, true)
 }
 
 /// Construit l'un des deux PDF « pièces jointes seules » ci-dessus.
-fn attachments_only_build(with_file: bool) -> Vec<u8> {
-    let content = "BT /F1 24 Tf 72 700 Td (Hello Identity) Tj ET";
-    let catalog = if with_file {
-        "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(a.txt) 8 0 R] >> >> >>"
+fn attachments_only_build(with_file: bool, with_note: bool) -> Vec<u8> {
+    let content = if with_note {
+        "BT /F1 24 Tf 72 700 Td (Hello Identity) Tj ET\n% /Encrypt 12 0 R"
     } else {
-        "<< /Type /Catalog /Pages 2 0 R >>"
+        "BT /F1 24 Tf 72 700 Td (Hello Identity) Tj ET"
     };
+    // Numéro de la fiche de la pièce jointe (son flux est le suivant).
+    let spec = if with_note { 9 } else { 8 };
+    let catalog = if with_file {
+        format!(
+            "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(a.txt) {spec} 0 R] >> >> >>"
+        )
+    } else {
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string()
+    };
+    let annots = if with_note { "/Annots [8 0 R] " } else { "" };
     let mut objects = vec![
-        catalog.to_string(),
+        catalog,
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
-         /Resources << /Font << /F1 5 0 R >> >> >>"
-            .to_string(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] {annots}/Contents 4 0 R \
+             /Resources << /Font << /F1 5 0 R >> >> >>"
+        ),
         format!(
             "<< /Length {} >>\nstream\n{content}\nendstream",
             content.len()
@@ -1395,9 +1413,19 @@ fn attachments_only_build(with_file: bool) -> Vec<u8> {
             .to_string(),
         "<< /Title (Plain title) >>".to_string(),
     ];
+    if with_note {
+        objects.push(
+            "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents (SECRET-NOTE) \
+             /T (Auteur) /P 3 0 R >>"
+                .to_string(),
+        );
+    }
     if with_file {
         let ciphertext = "CIPHERTEXT-ABC123";
-        objects.push("<< /Type /Filespec /F (a.txt) /EF << /F 9 0 R >> >>".to_string());
+        objects.push(format!(
+            "<< /Type /Filespec /F (a.txt) /EF << /F {} 0 R >> >>",
+            spec + 1
+        ));
         objects.push(format!(
             "<< /Type /EmbeddedFile /Length {} /Filter /Crypt \
              /DecodeParms << /Type /CryptFilterDecodeParms /Name /StdCF >> >>\n\

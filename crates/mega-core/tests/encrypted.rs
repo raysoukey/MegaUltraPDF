@@ -342,6 +342,7 @@ fn identity_filtered_file_keeps_its_encrypt_dictionary_and_attachment_bytes_afte
     let out = before_save(&pdfium_bytes, None, None).unwrap().bytes;
     assert_eq!(embedded_file_stream_bytes(&out), ef_before);
     assert!(out.windows(9).any(|w| w == b"/Encrypt "));
+    assert!(!out.windows(8).any(|w| w == b"/Encrypx"));
     let id_of = |bytes: &[u8]| without_encrypt(bytes).trailer.get(b"ID").unwrap().clone();
     // PDFium écrit lui-même un nouveau second élément de `/ID` : la passe ne doit rien changer.
     assert_eq!(id_of(&out), id_of(&pdfium_bytes));
@@ -351,4 +352,85 @@ fn identity_filtered_file_keeps_its_encrypt_dictionary_and_attachment_bytes_afte
     );
     let reopened = Document::from_bytes(out, None).unwrap();
     assert!(reopened.page_text(0).unwrap().contains("Hello Identity"));
+}
+
+/// Numéro d'objet et octets bruts du flux `/EF /F` de la première pièce jointe.
+fn embedded_file_stream(bytes: &[u8]) -> (lopdf::ObjectId, Vec<u8>) {
+    let doc = without_encrypt(bytes);
+    let dict_at = |obj: &lopdf::Object| doc.dereference(obj).unwrap().1.clone();
+    let root = dict_at(doc.trailer.get(b"Root").unwrap());
+    let names = dict_at(root.as_dict().unwrap().get(b"Names").unwrap());
+    let embedded = dict_at(names.as_dict().unwrap().get(b"EmbeddedFiles").unwrap());
+    let list = embedded
+        .as_dict()
+        .unwrap()
+        .get(b"Names")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let spec = dict_at(&list[1]);
+    let ef = dict_at(spec.as_dict().unwrap().get(b"EF").unwrap());
+    let file = ef.as_dict().unwrap().get(b"F").unwrap();
+    let id = file.as_reference().unwrap();
+    (id, dict_at(file).as_stream().unwrap().content.clone())
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Le numéro d'un objet chiffré entre dans sa clé (RC4 et AES) : supprimer une note numérotée
+/// avant la pièce jointe ne doit pas renuméroter le flux de celle-ci.
+#[test]
+fn deleting_a_lower_numbered_note_keeps_the_attachment_object_number() {
+    let input = mega_core::testing::attachments_only_encrypted_with_note_pdf();
+    let before = embedded_file_stream(&input);
+    assert_eq!(before.0, (10, 0));
+    let mut doc = Document::from_bytes(input, None).unwrap();
+    doc.delete_annotation(0, 0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("o.pdf");
+    doc.save_as(&path).unwrap();
+    let out = std::fs::read(&path).unwrap();
+    assert!(!contains(&out, b"SECRET-NOTE"), "la note ne survit pas");
+    assert!(!contains(&out, b"/Encrypx"), "aucune clé rebaptisée écrite");
+    assert_eq!(embedded_file_stream(&out), before);
+}
+
+/// Seule la remorque est lue pour cacher `/Encrypt` : un contenu de page non compressé qui
+/// cite le même texte reste intact.
+#[test]
+fn a_page_content_quoting_the_encrypt_reference_is_not_altered() {
+    // Passe directe : PDFium, lui, recompresse les contenus qu'il réécrit.
+    let input = mega_core::testing::attachments_only_encrypted_with_note_pdf();
+    assert!(contains(&input, b"% /Encrypt 12 0 R"));
+    let out = before_save(&input, None, None).unwrap();
+    assert!(out.cleaned);
+    assert!(contains(&out.bytes, b"% /Encrypt 12 0 R"));
+    assert!(!contains(&out.bytes, b"/Encrypx"));
+}
+
+/// Le dictionnaire `/Encrypt` écrit est celui d'origine, sans le moindre changement.
+#[test]
+fn identity_pass_keeps_the_encrypt_dictionary_unchanged() {
+    let input = mega_core::testing::attachments_only_encrypted_with_file_pdf();
+    let out = before_save(&input, None, None).unwrap();
+    assert!(out.cleaned);
+    assert!(!contains(&out.bytes, b"/Encrypx"));
+    let encrypt_of = |bytes: &[u8]| {
+        let doc = without_encrypt(bytes);
+        let reference = doc.trailer.get(b"Encrypx").unwrap();
+        doc.dereference(reference).unwrap().1.clone()
+    };
+    let (original, written) = (encrypt_of(&input), encrypt_of(&out.bytes));
+    for key in [
+        "O", "U", "P", "CF", "EFF", "V", "R", "StmF", "StrF", "Length",
+    ] {
+        assert_eq!(
+            original.as_dict().unwrap().get(key.as_bytes()).unwrap(),
+            written.as_dict().unwrap().get(key.as_bytes()).unwrap(),
+            "{key}"
+        );
+    }
+    assert_eq!(original, written);
 }

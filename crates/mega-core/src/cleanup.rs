@@ -57,6 +57,7 @@ pub fn before_save(
         // produit, protection comprise.
         Err(_) => return Ok(raw()),
     };
+    let keeps_numbers = session.keeps_object_numbers();
     let doc = &mut session.doc;
     // [Apprentissage] Les tuples se comparent champ par champ : (2, 0) > (1, 7), d'où `max`.
     let written = crate::crypt::header_version(bytes).max(min_version);
@@ -77,7 +78,10 @@ pub fn before_save(
     crate::properties::stamp_mod_date(doc);
     let pages_before = doc.get_pages().len();
     prune(doc);
-    doc.renumber_objects();
+    // Passe-plat : le numéro d'un objet entre dans la clé de ses octets chiffrés.
+    if !keeps_numbers {
+        doc.renumber_objects();
+    }
     let out = session.finish()?;
     // Ceinture de sécurité : la réécriture `lopdf` remplace le fichier de l'utilisateur ; si
     // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages et les mêmes
@@ -91,6 +95,23 @@ pub fn before_save(
         bytes: out,
         cleaned: true,
     })
+}
+
+/// Refuse d'écrire `saved` quand une suppression a eu lieu (`needs_cleanup`) et que le
+/// nettoyage n'a pas pu s'appliquer : les restes de ce qui a été supprimé survivraient (E1).
+/// `what` ouvre le message (« enregistrement refusé », « protection refusée »…).
+pub(crate) fn refuse_if_uncleaned(
+    needs_cleanup: bool,
+    saved: &Saved,
+    what: &str,
+) -> CoreResult<()> {
+    if needs_cleanup && !saved.cleaned {
+        return Err(CoreError::InvalidOperation(format!(
+            "{what} : le nettoyage n'a pas pu s'appliquer après une suppression ; \
+             le fichier d'origine est conservé"
+        )));
+    }
+    Ok(())
 }
 
 /// Vrai si [`before_save`] pourra nettoyer ces octets : `lopdf` doit les relire (et les
@@ -745,6 +766,31 @@ mod tests {
         let k = rootless.windows(5).rposition(|w| w == b"/Root").unwrap();
         rootless[k..k + 5].copy_from_slice(b"/Roox");
         assert!(!rewrite_is_sane(3, &rootless, None));
+    }
+}
+
+#[cfg(test)]
+mod refuse_tests {
+    use super::*;
+
+    #[test]
+    fn refuse_if_uncleaned_only_refuses_a_fallback_after_a_deletion() {
+        let fallback = Saved {
+            bytes: Vec::new(),
+            cleaned: false,
+        };
+        let cleaned = Saved {
+            bytes: Vec::new(),
+            cleaned: true,
+        };
+        assert!(refuse_if_uncleaned(true, &fallback, "protection refusée").is_err());
+        assert!(refuse_if_uncleaned(false, &fallback, "x").is_ok());
+        assert!(refuse_if_uncleaned(true, &cleaned, "x").is_ok());
+        let message = refuse_if_uncleaned(true, &fallback, "protection refusée")
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("protection refusée"), "{message}");
+        assert!(!message.contains("  "), "pas d'espaces répétés : {message}");
     }
 }
 

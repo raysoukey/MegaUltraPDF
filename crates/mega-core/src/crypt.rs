@@ -173,11 +173,15 @@ fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<
     Ok(FilterCheck::Standard)
 }
 
-/// Copie de `bytes` où chaque référence `/Encrypt N G R` d'une remorque (ou d'un flux de
-/// références) est rebaptisée `/Encrypx N G R`, sans changer la longueur : lopdf voit alors un
-/// fichier non chiffré et ne touche à aucun octet, et le dictionnaire `/Encrypt` reste un objet
-/// ordinaire, comme les flux chiffrés des pièces jointes.
-fn hide_encrypt_entry(bytes: &[u8]) -> Vec<u8> {
+/// Copie de `bytes` où la référence `/Encrypt N G R` de chaque remorque (le dictionnaire qui
+/// suit un mot-clé `trailer`) est rebaptisée `/Encrypx N G R`, sans changer la longueur : lopdf
+/// voit alors un fichier non chiffré et ne touche à aucun octet, et le dictionnaire `/Encrypt`
+/// reste un objet ordinaire, comme les flux chiffrés des pièces jointes.
+///
+/// Rien d'autre n'est modifié : dans un fichier `Identity`, chaînes et flux non compressés sont
+/// en clair et pourraient citer le même texte. `None` si aucune remorque classique ne porte la
+/// référence (fichier à flux de références : elle y est dans un flux, non réécrit ici).
+fn hide_encrypt_entry(bytes: &[u8]) -> Option<Vec<u8>> {
     const KEY: &[u8] = b"/Encrypt";
     let is_space = |b: u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0 | 0x0c);
     // Position après « espaces (au moins un) puis chiffres (au moins un) » à partir de `at`.
@@ -196,22 +200,57 @@ fn hide_encrypt_entry(bytes: &[u8]) -> Vec<u8> {
         (at > digits).then_some(at)
     };
     let mut out = bytes.to_vec();
+    let mut renamed = false;
     let mut from = 0;
-    while let Some(found) = bytes[from..].windows(KEY.len()).position(|w| w == KEY) {
-        let at = from + found;
-        from = at + KEY.len();
-        let is_reference = skip_number(from).and_then(skip_number).is_some_and(|end| {
-            let mut r = end;
-            while bytes.get(r).copied().is_some_and(is_space) {
-                r += 1;
+    while let Some(found) = bytes[from..].windows(7).position(|w| w == b"trailer") {
+        let mut at = from + found + 7;
+        from = at;
+        while bytes.get(at).copied().is_some_and(is_space) {
+            at += 1;
+        }
+        if !bytes[at..].starts_with(b"<<") {
+            continue;
+        }
+        // Fin du dictionnaire de remorque : `<<` et `>>` équilibrés (un `<` seul ouvre une
+        // chaîne hexadécimale, il n'est pas compté).
+        let start = at;
+        let mut depth = 0usize;
+        while at < bytes.len() {
+            if bytes[at..].starts_with(b"<<") {
+                depth += 1;
+                at += 2;
+            } else if bytes[at..].starts_with(b">>") {
+                depth = depth.saturating_sub(1);
+                at += 2;
+                if depth == 0 {
+                    break;
+                }
+            } else {
+                at += 1;
             }
-            r > end && bytes.get(r) == Some(&b'R')
-        });
-        if is_reference {
-            out[at + KEY.len() - 1] = b'x';
+        }
+        let end = at;
+        from = end;
+        let mut scan = start;
+        while let Some(found) = bytes[scan..end].windows(KEY.len()).position(|w| w == KEY) {
+            let key_at = scan + found;
+            scan = key_at + KEY.len();
+            let is_reference = skip_number(scan)
+                .and_then(skip_number)
+                .is_some_and(|num_end| {
+                    let mut r = num_end;
+                    while bytes.get(r).copied().is_some_and(is_space) {
+                        r += 1;
+                    }
+                    r > num_end && bytes.get(r) == Some(&b'R')
+                });
+            if is_reference {
+                out[key_at + KEY.len() - 1] = b'x';
+                renamed = true;
+            }
         }
     }
-    out
+    renamed.then_some(out)
 }
 
 /// Un document `lopdf` déchiffré le temps d'une passe, à rechiffrer à l'identique.
@@ -220,9 +259,19 @@ pub(crate) struct LopdfSession {
     pub(crate) doc: LoDocument,
     /// L'état de chiffrement d'origine (`None` : document non chiffré).
     state: Option<EncryptionState>,
+    /// Vrai pour un fichier lu en passe-plat : ses objets chiffrés (pièces jointes) sont
+    /// chiffrés **avec leur numéro d'objet** dans la clé (RC4 et AES, §7.6.2) ; les renuméroter
+    /// les rendrait illisibles. Voir [`LopdfSession::keeps_object_numbers`].
+    passthrough: bool,
 }
 
 impl LopdfSession {
+    /// Vrai si la passe ne doit **pas** renuméroter les objets (`renumber_objects`) : élaguer
+    /// reste permis, déplacer un numéro non.
+    pub(crate) fn keeps_object_numbers(&self) -> bool {
+        self.passthrough
+    }
+
     /// Charge `bytes` (déchiffré avec `password`, ou le mot de passe vide s'il n'y en a pas).
     /// Refuse un document resté chiffré : mot de passe faux, ou chiffrement que lopdf ne sait
     /// pas lire (filtre inconnu).
@@ -256,7 +305,11 @@ impl LopdfSession {
         {
             return Self::passthrough(state, bytes, repair);
         }
-        Ok(LopdfSession { doc, state })
+        Ok(LopdfSession {
+            doc,
+            state,
+            passthrough: false,
+        })
     }
 
     /// Session d'un fichier `/StmF /StrF Identity` : relu sans déchiffrement (la première
@@ -264,7 +317,7 @@ impl LopdfSession {
     /// que l'élagage et la renumérotation le gardent ; `/ID` n'est pas touché. `finish` n'a
     /// rien à rechiffrer : ce qui est chiffré (les pièces jointes) n'a jamais été lu en clair.
     fn passthrough(state: &EncryptionState, bytes: &[u8], repair: bool) -> CoreResult<Self> {
-        let hidden = hide_encrypt_entry(bytes);
+        let hidden = hide_encrypt_entry(bytes).ok_or_else(refuse)?;
         let loaded = if repair {
             load_limited(&hidden, None)
         } else {
@@ -282,8 +335,14 @@ impl LopdfSession {
         if !is_standard {
             return Err(refuse());
         }
+        // La clé rebaptisée n'a plus de raison d'être : elle ne doit pas se retrouver écrite.
+        doc.trailer.remove(b"Encrypx");
         doc.trailer.set("Encrypt", Object::Reference(id));
-        Ok(LopdfSession { doc, state: None })
+        Ok(LopdfSession {
+            doc,
+            state: None,
+            passthrough: true,
+        })
     }
 
     /// Rechiffre (si besoin) avec l'état d'origine et sérialise le document.
@@ -356,5 +415,29 @@ mod header_tests {
             b"%PDF-1.7\nx"
         );
         assert_eq!(raise_header_version(b"%PDF-1.7\nx", None), b"%PDF-1.7\nx");
+    }
+}
+
+#[cfg(test)]
+mod hide_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_trailer_reference_is_renamed() {
+        let input = b"%PDF-1.6\n1 0 obj\n(/Encrypt 12 0 R)\nendobj\ntrailer\n<< /Size 3 /Encrypt 6 0 R /ID [<aa><bb>] >>\nstartxref\n0\n%%EOF\n";
+        let out = hide_encrypt_entry(input).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("(/Encrypt 12 0 R)"),
+            "texte hors remorque intact"
+        );
+        assert!(text.contains("/Encrypx 6 0 R"));
+        assert_eq!(text.len(), input.len());
+    }
+
+    #[test]
+    fn no_trailer_means_no_passthrough() {
+        assert!(hide_encrypt_entry(b"%PDF-1.6\n<< /Encrypt 6 0 R >>\n").is_none());
+        assert!(hide_encrypt_entry(b"trailer\n<< /Size 3 >>\n").is_none());
     }
 }

@@ -140,7 +140,10 @@ impl Document {
         let mut target = new_document(&guard)?;
         copy_pages(&mut target, self.inner(), &source, 0)?;
         // Document neuf assemblé par PDFium : jamais chiffré.
-        Ok(crate::cleanup::before_save(&target.save_to_bytes()?, None, self.file_version())?.bytes)
+        let saved =
+            crate::cleanup::before_save(&target.save_to_bytes()?, None, self.file_version())?;
+        crate::cleanup::refuse_if_uncleaned(self.needs_cleanup, &saved, "extraction refusée")?;
+        Ok(saved.bytes)
     }
 
     /// Indices valides, triés, sans doublon ; erreur si la liste est vide ou hors bornes.
@@ -212,7 +215,10 @@ pub fn merge(docs: &[&Document]) -> CoreResult<Vec<u8>> {
     }
     // Le plus récent des en-têtes sources : la fusion ne doit pas rabaisser la version.
     let version = docs.iter().filter_map(|d| d.file_version()).max();
-    Ok(crate::cleanup::before_save(&target.save_to_bytes()?, None, version)?.bytes)
+    let saved = crate::cleanup::before_save(&target.save_to_bytes()?, None, version)?;
+    let deleted = docs.iter().any(|d| d.needs_cleanup);
+    crate::cleanup::refuse_if_uncleaned(deleted, &saved, "fusion refusée")?;
+    Ok(saved.bytes)
 }
 
 /// Scinde `doc` en autant de PDF que de groupes dans `parts` (indices 0-based).

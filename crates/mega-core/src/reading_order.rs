@@ -83,10 +83,11 @@ pub fn layout_chars(rects: &[Rect], chars: &[char]) -> Vec<Block> {
 ///
 /// PDFium n'invente les espaces d'après les blancs que pour le texte de gauche à droite ; un
 /// fichier arabe ou hébreu dessiné sans glyphe espace donnerait des mots collés. La règle ne
-/// s'applique donc qu'à une ligne **sans aucune espace** (sinon le fichier sait ce qu'il fait)
-/// : un blanc visuel de plus d'un quart de la hauteur médiane sépare deux mots (le « em » : voir le corps). `line` est dans
-/// l'ordre logique (voir [`logical_order`]) ; l'espace se place après celui des deux voisins
-/// visuels que l'on lit en premier, s'ils se suivent dans `line`.
+/// s'applique donc qu'à une ligne **sans aucune espace** (sinon le fichier sait ce qu'il
+/// fait) : un blanc visuel de plus d'un quart du « em » de la ligne (sa hauteur médiane,
+/// bornée par sa largeur médiane : voir le corps) sépare deux mots. `line` est dans l'ordre
+/// logique (voir [`logical_order`]) ; l'espace se place après celui des deux voisins visuels
+/// que l'on lit en premier, s'ils se suivent dans `line`.
 pub fn word_gaps(line: &[usize], rects: &[Rect], chars: &[char]) -> Vec<usize> {
     if line.len() < 2 || line.iter().any(|&i| chars[i].is_whitespace()) {
         return Vec::new();
@@ -100,6 +101,10 @@ pub fn word_gaps(line: &[usize], rects: &[Rect], chars: &[char]) -> Vec<usize> {
     if rtl * 2 <= line.len() {
         return Vec::new();
     }
+    // [Apprentissage] `fn(&Rect) -> f32` est un **pointeur de fonction** : `median` reçoit
+    // une fonction (ici une fermeture sans capture, `|r| r.h`, qui s'y convertit) et
+    // l'applique à chaque rectangle. Un seul calcul de médiane sert ainsi pour la hauteur et
+    // pour la largeur.
     let median = |value: fn(&Rect) -> f32| {
         let mut values: Vec<f32> = line.iter().map(|&i| value(&rects[i])).collect();
         values.sort_by(f32::total_cmp);

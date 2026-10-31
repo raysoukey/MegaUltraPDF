@@ -80,7 +80,8 @@ pub(super) struct FoundChar {
     pub(super) ch: char,
     /// Son emprise, en espace **utilisateur**.
     pub(super) rect: Rect,
-    /// Son angle en degrés (0 à 360), mesuré comme `FPDFText_GetCharAngle` de PDFium.
+    /// Son angle en degrés (0 à 360), en espace utilisateur, mesuré comme
+    /// `FPDFText_GetCharAngle` de PDFium : atan2(-b, a), dans le sens horaire.
     pub(super) angle: f32,
 }
 

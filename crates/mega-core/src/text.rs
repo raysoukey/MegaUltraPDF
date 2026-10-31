@@ -142,53 +142,37 @@ impl Document {
             return Ok((Vec::new(), draws_text(&page)));
         }
         let frame = crate::geometry::frame_of(&page);
-        // Les unités UTF-16 que PDFium rend, avec leur emprise et leur angle à l'écran. Une unité
-        // sans emprise est ignorée.
-        let mut units: Vec<(u32, Rect, f32)> = Vec::with_capacity(text.len().max(0) as usize);
+        // Les unités UTF-16 que PDFium rend, avec leur emprise, et à part leur angle à l'écran.
+        // Une unité sans emprise est ignorée.
+        let capacity = usize::try_from(text.len()).unwrap_or(0);
+        let mut units: Vec<(u32, Rect)> = Vec::with_capacity(capacity);
+        let mut angles: Vec<f32> = Vec::with_capacity(capacity);
         for c in text.chars().iter() {
             let Ok(bounds) = c.loose_bounds() else {
                 continue;
             };
-            // PDFium mesure l'angle dans l'espace utilisateur, sens trigonométrique ; `/Rotate`
-            // tourne l'affichage dans le sens horaire.
-            let angle =
-                (c.angle_degrees().unwrap_or(0.0) - f32::from(frame.rotate)).rem_euclid(360.0);
             units.push((
                 c.unicode_value(),
                 frame.from_user_space(Rect::from_pdf(bounds)),
-                angle,
             ));
+            angles.push(screen_angle(c.angle_degrees().unwrap_or(0.0), frame.rotate));
         }
-        let mut chars = Vec::with_capacity(units.len());
-        let mut i = 0;
-        while i < units.len() {
-            // Une paire de substitution (deux unités) donne un seul caractère, à l'angle de la
-            // première unité ; toute autre unité se recompose seule.
-            let width = if is_high_surrogate(units[i].0)
-                && units.get(i + 1).is_some_and(|u| is_low_surrogate(u.0))
-            {
-                2
-            } else {
-                1
-            };
-            let angle = units[i].2;
-            let group: Vec<(u32, Rect)> = units[i..i + width].iter().map(|u| (u.0, u.1)).collect();
-            i += width;
-            // Un caractère sans valeur Unicode (glyphe de contrôle) est ignoré, ainsi que les
-            // sauts de ligne ajoutés par PDFium.
-            for (ch, rect) in pair_surrogates(&group) {
-                if ch == '\r' || ch == '\n' {
-                    continue;
-                }
-                let horizontal = angle <= ANGLE_TOLERANCE || angle >= 360.0 - ANGLE_TOLERANCE;
-                chars.push(DrawnChar {
+        // Une paire de substitution (deux unités) donne un seul caractère, à l'angle de sa
+        // première unité. Un caractère sans valeur Unicode (glyphe de contrôle) est ignoré, ainsi
+        // que les sauts de ligne ajoutés par PDFium.
+        let chars = pair_surrogates(&units)
+            .into_iter()
+            .filter(|(ch, _, _)| *ch != '\r' && *ch != '\n')
+            .map(|(ch, rect, first)| {
+                let angle = angles[first];
+                DrawnChar {
                     ch,
                     rect,
-                    horizontal,
+                    horizontal: is_horizontal(angle),
                     angle,
-                });
-            }
-        }
+                }
+            })
+            .collect();
         Ok((chars, false))
     }
 
@@ -219,11 +203,11 @@ impl Document {
             .into_iter()
             .filter(|c| c.ch != '\r' && c.ch != '\n')
             .map(|c| {
-                let angle = (c.angle - f32::from(frame.rotate)).rem_euclid(360.0);
+                let angle = screen_angle(c.angle, frame.rotate);
                 DrawnChar {
                     ch: c.ch,
                     rect: frame.from_user_space(c.rect),
-                    horizontal: angle <= ANGLE_TOLERANCE || angle >= 360.0 - ANGLE_TOLERANCE,
+                    horizontal: is_horizontal(angle),
                     angle,
                 }
             })
@@ -293,6 +277,21 @@ fn draws_text(page: &PdfPage<'_>) -> bool {
     false
 }
 
+/// L'angle à l'écran (0 à 360°) d'un caractère dont PDFium donne l'angle `user` en espace
+/// utilisateur, sur une page tournée de `rotate` degrés (`/Rotate`).
+///
+/// `FPDFText_GetCharAngle` mesure atan2(-b, a) de la matrice du caractère, c'est-à-dire dans
+/// le sens **horaire** (un texte qui monte vaut 270°), et `/Rotate` tourne l'affichage dans le
+/// sens horaire lui aussi : les deux s'ajoutent.
+fn screen_angle(user: f32, rotate: u16) -> f32 {
+    (user + f32::from(rotate)).rem_euclid(360.0)
+}
+
+/// Vrai pour un angle à l'écran « horizontal », à [`ANGLE_TOLERANCE`] près.
+fn is_horizontal(angle: f32) -> bool {
+    angle <= ANGLE_TOLERANCE || angle >= 360.0 - ANGLE_TOLERANCE
+}
+
 /// Vrai pour une moitié haute de paire de substitution UTF-16 (`D800`–`DBFF`).
 fn is_high_surrogate(unit: u32) -> bool {
     (0xD800..=0xDBFF).contains(&unit)
@@ -311,13 +310,14 @@ fn is_low_surrogate(unit: u32) -> bool {
 /// `char::from_u32`, d'où un texte, une recherche et une copie amputés. Une paire devient un
 /// seul caractère dont l'emprise est l'**union** des deux rectangles ; une moitié isolée est
 /// écartée (aucun caractère valide) ; toute autre unité passe telle quelle, et celle qui n'est
-/// pas un caractère Unicode est écartée comme avant.
+/// pas un caractère Unicode est écartée comme avant. Chaque caractère rendu porte l'index de
+/// sa première unité dans `units` : l'appelant y retrouve ce qu'il garde à part (l'angle).
 ///
 /// \[Apprentissage\] Un `char` Rust est une *valeur scalaire* Unicode : les points de code
 /// `D800`–`DFFF` en sont exclus, donc `char::from_u32(0xD835)` vaut `None`. Ces points ne
 /// servent qu'à UTF-16, qui écrit un point de code au-delà de `FFFF` en deux unités de 16 bits
 /// (voir `docs/apprentissage/`).
-pub(crate) fn pair_surrogates(units: &[(u32, Rect)]) -> Vec<(char, Rect)> {
+pub(crate) fn pair_surrogates(units: &[(u32, Rect)]) -> Vec<(char, Rect, usize)> {
     let mut out = Vec::with_capacity(units.len());
     let mut i = 0;
     while i < units.len() {
@@ -326,13 +326,13 @@ pub(crate) fn pair_surrogates(units: &[(u32, Rect)]) -> Vec<(char, Rect)> {
             if let Some(&(low, low_rect)) = units.get(i + 1).filter(|u| is_low_surrogate(u.0)) {
                 let code = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
                 if let Some(ch) = char::from_u32(code) {
-                    out.push((ch, union(rect, low_rect)));
+                    out.push((ch, union(rect, low_rect), i));
                 }
                 i += 2;
                 continue;
             }
         } else if let Some(ch) = char::from_u32(unit) {
-            out.push((ch, rect));
+            out.push((ch, rect, i));
         }
         // Moitié isolée (haute sans basse, ou basse seule) : ignorée.
         i += 1;
@@ -600,11 +600,51 @@ mod tests {
             h: 12.0,
         };
         let pair = pair_surrogates(&[(0xD835, r(0.0)), (0xDF0B, r(10.0))]);
-        assert_eq!(pair, vec![('\u{1D70B}', joined)]);
+        assert_eq!(pair, vec![('\u{1D70B}', joined, 0)]);
         let lone = pair_surrogates(&[(0xD835, r(0.0)), (0x41, r(10.0))]);
-        assert_eq!(lone, vec![('A', r(10.0))]);
+        assert_eq!(lone, vec![('A', r(10.0), 1)]);
         let stray = pair_surrogates(&[(0xDF0B, r(0.0)), (0x42, r(10.0)), (0xD835, r(20.0))]);
-        assert_eq!(stray, vec![('B', r(10.0))]);
+        assert_eq!(stray, vec![('B', r(10.0), 1)]);
+    }
+
+    /// Deux moitiés hautes de suite : la première est isolée (écartée), la seconde forme la
+    /// paire avec la basse qui suit ; une moitié haute en fin de texte est écartée. L'index
+    /// rendu est celui de la première unité du caractère (l'appelant y lit l'angle).
+    #[test]
+    fn pair_surrogates_with_two_high_halves_and_a_trailing_one() {
+        let joined = Rect {
+            x: 10.0,
+            y: 0.0,
+            w: 20.0,
+            h: 12.0,
+        };
+        let two_high = pair_surrogates(&[(0xD835, r(0.0)), (0xD835, r(10.0)), (0xDF0B, r(20.0))]);
+        assert_eq!(two_high, vec![('\u{1D70B}', joined, 1)]);
+        let trailing = pair_surrogates(&[(0x41, r(0.0)), (0xD835, r(10.0))]);
+        assert_eq!(trailing, vec![('A', r(0.0), 0)]);
+    }
+
+    /// L'angle d'un caractère se mesure dans le sens horaire (`FPDFText_GetCharAngle`) et
+    /// `/Rotate` tourne l'affichage dans le sens horaire : les deux s'**ajoutent**. Un texte
+    /// qui monte (`0 1 -1 0 Tm`) sur une page `/Rotate 90` se lit de gauche à droite à l'écran.
+    #[test]
+    fn a_rising_text_on_a_page_rotated_by_90_is_horizontal() {
+        let rising = |doc: &Document| -> Vec<(f32, bool)> {
+            let chars = doc.drawn_chars(0).unwrap();
+            chars
+                .iter()
+                .filter(|c| c.ch == 'X')
+                .map(|c| (c.angle, c.horizontal))
+                .collect()
+        };
+        let plain = Document::from_bytes(crate::testing::sidebar_pdf(), None).unwrap();
+        assert_eq!(rising(&plain), vec![(270.0, false)], "monte à l'écran");
+        let mut lo = lopdf::Document::load_mem(&crate::testing::sidebar_pdf()).unwrap();
+        lo.get_dictionary_mut((3, 0)).unwrap().set("Rotate", 90);
+        let mut out = Vec::new();
+        lo.save_to(&mut out).unwrap();
+        let rotated = Document::from_bytes(out, None).unwrap();
+        assert_eq!(rising(&rotated), vec![(0.0, true)], "horizontal à l'écran");
     }
 
     fn drawn(ch: char, x: f32, y: f32) -> DrawnChar {

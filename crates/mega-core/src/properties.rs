@@ -328,9 +328,20 @@ pub(crate) fn stamp_mod_date(doc: &mut lopdf::Document) {
     let now = chrono::Utc::now();
     // §7.9.4 : D:YYYYMMDDHHmmSS suivi du décalage horaire (ici UTC).
     let pdf = now.format("D:%Y%m%d%H%M%S+00'00'").to_string();
-    let id = info_id(doc);
-    if let Ok(info) = doc.get_dictionary_mut(id) {
-        info.set("ModDate", lopdf::Object::string_literal(pdf));
+    // PDF/A-4 (ISO 19005-4) interdit `/Info` (hors `/ModDate` avec `/PieceInfo`) : on ne le
+    // crée pas, et on ne met à jour que celui qui existe déjà (audit E6).
+    let pdfa4 = pdfa_claim_of(doc).is_some_and(|claim| claim.starts_with("PDF/A-4"));
+    let has_info = doc
+        .trailer
+        .get(b"Info")
+        .ok()
+        .and_then(|i| doc.dereference(i).ok())
+        .is_some_and(|(_, o)| o.as_dict().is_ok());
+    if !pdfa4 || has_info {
+        let id = info_id(doc);
+        if let Ok(info) = doc.get_dictionary_mut(id) {
+            info.set("ModDate", lopdf::Object::string_literal(pdf));
+        }
     }
     let xmp = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     edit_xmp(doc, |text| {

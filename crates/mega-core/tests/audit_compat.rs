@@ -23,7 +23,6 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use lopdf::dictionary;
 use lopdf::{Dictionary, Document as Lo, Object, ObjectId};
 use mega_core::Document;
 use mega_core::digital_signature::{SignAppearance, SignOptions, SigningIdentity};
@@ -2634,39 +2633,6 @@ fn l19_corpus_text() {
 
 // --- E20 : remesures demandées par la relecture normative -----------------------------------
 
-/// Une page avec deux objets texte, chacun dans son propre `BDC /MCID`, pour mesurer ce que
-/// `regenerate_content` garde quand l'objet supprimé n'est pas le seul de la page.
-fn two_marked_objects_pdf() -> Vec<u8> {
-    let mut doc = Lo::with_version("1.7");
-    let font = doc.add_object(dictionary! {
-        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
-    });
-    let content = b"/P <</MCID 0>> BDC BT /F1 14 Tf 50 700 Td (Un) Tj ET EMC\n\
-        /P <</MCID 1>> BDC BT /F1 14 Tf 50 650 Td (Deux) Tj ET EMC\n";
-    let stream = doc.add_object(lopdf::Stream::new(dictionary! {}, content.to_vec()));
-    let pages_id = doc.new_object_id();
-    let page = doc.add_object(dictionary! {
-        "Type" => "Page", "Parent" => pages_id,
-        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
-        "Contents" => stream, "StructParents" => 0,
-        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
-    });
-    doc.objects.insert(
-        pages_id,
-        Object::Dictionary(dictionary! {
-            "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
-        }),
-    );
-    let catalog = doc.add_object(dictionary! {
-        "Type" => "Catalog", "Pages" => pages_id,
-        "MarkInfo" => dictionary! { "Marked" => true },
-    });
-    doc.trailer.set("Root", catalog);
-    let mut out = Vec::new();
-    doc.save_to(&mut out).unwrap();
-    out
-}
-
 #[test]
 #[ignore = "banc de mesure, lancer avec --ignored"]
 fn e20_remeasures() {
@@ -2721,7 +2687,7 @@ fn e20_remeasures() {
 
     // E20b : supprimer un objet sur une page qui en a deux, chacun balisé.
     guarded("E20b-delete-one-of-two", || {
-        let input = two_marked_objects_pdf();
+        let input = testing::two_marked_objects_pdf();
         let mut doc = Document::from_bytes(input, None).unwrap();
         apply(
             &mut doc,

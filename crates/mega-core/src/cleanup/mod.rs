@@ -18,6 +18,8 @@ use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use crate::error::{CoreError, CoreResult};
 
+mod mcid;
+
 fn structure(e: impl std::fmt::Display) -> CoreError {
     CoreError::InvalidOperation(format!("nettoyage avant enregistrement : {e}"))
 }
@@ -75,6 +77,10 @@ pub fn before_save(
     // Avant le retrait des liens pendants : un lien retiré ici y perd aussi popup et `/OBJR`.
     neutralize_dead_destinations(doc);
     drop_dangling_annotation_links(doc, &pages)?;
+    // Un objet supprimé ne doit plus être cité par l'arbre de structure (Lot 14, E5).
+    if doc.catalog().is_ok_and(|c| c.has(b"StructTreeRoot")) {
+        mcid::prune_orphan_mcids(doc);
+    }
     dedupe_font_files(doc);
     // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
     crate::properties::stamp_mod_date(doc);

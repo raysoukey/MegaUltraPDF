@@ -636,3 +636,40 @@ fn bookmarks_to_a_deleted_page_lose_their_destination_but_remain() {
         .count();
     assert_eq!(links, 2, "lien vers la page supprimée retiré de /Annots");
 }
+
+/// Entiers cités par le `/K` de chaque élément de structure `/P`, dans l'ordre des objets.
+fn struct_elem_mcids(bytes: &[u8]) -> Vec<Vec<i64>> {
+    let doc = lopdf::Document::load_mem(bytes).unwrap();
+    doc.objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter(|d| d.get(b"Type").and_then(lopdf::Object::as_name).ok() == Some(b"StructElem"))
+        .map(|d| match d.get(b"K") {
+            Ok(lopdf::Object::Integer(n)) => vec![*n],
+            Ok(lopdf::Object::Array(a)) => a.iter().filter_map(|k| k.as_i64().ok()).collect(),
+            _ => vec![],
+        })
+        .collect()
+}
+
+#[test]
+fn deleting_one_of_two_marked_objects_prunes_its_mcid_from_the_structure_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("balise.pdf");
+    let mut doc = Document::from_bytes(mega_core::testing::two_marked_objects_pdf(), None).unwrap();
+    doc.delete_object(0, 0).unwrap();
+    doc.save_as(&path).unwrap();
+    let out = std::fs::read(&path).unwrap();
+    let mut mcids = struct_elem_mcids(&out);
+    mcids.sort();
+    // L'élément du texte supprimé n'a plus de `/K` ; l'autre cite toujours son MCID.
+    assert_eq!(mcids.concat(), vec![1], "mcids restants : {mcids:?}");
+    let reread = lopdf::Document::load_mem(&out).unwrap();
+    let alts = reread
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter(|d| d.has(b"Alt"))
+        .count();
+    assert_eq!(alts, 1, "l'`/Alt` de l'élément vidé est retiré");
+}

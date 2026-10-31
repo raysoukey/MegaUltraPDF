@@ -18,6 +18,62 @@ use crate::engine;
 pub mod fuzz;
 pub mod hostile;
 
+/// Une page avec deux objets texte, chacun dans son propre `BDC /MCID`, et un vrai arbre de
+/// structure (`/StructTreeRoot`, `/ParentTree`, deux éléments `/P` citant les MCID 0 et 1).
+///
+/// Pourquoi : supprimer un des deux objets fait disparaître son `BDC /MCID n … EMC` du
+/// contenu ; l'arbre de structure doit alors cesser de citer ce MCID (Lot 14, audit E5).
+pub fn two_marked_objects_pdf() -> Vec<u8> {
+    use lopdf::{Object, dictionary};
+    let mut doc = lopdf::Document::with_version("1.7");
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+    });
+    let content = b"/P <</MCID 0>> BDC BT /F1 14 Tf 50 700 Td (Un) Tj ET EMC
+        /P <</MCID 1>> BDC BT /F1 14 Tf 50 650 Td (Deux) Tj ET EMC
+";
+    let stream = doc.add_object(lopdf::Stream::new(dictionary! {}, content.to_vec()));
+    let pages_id = doc.new_object_id();
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        "Contents" => stream, "StructParents" => 0,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+        }),
+    );
+    let root_id = doc.new_object_id();
+    let element = |doc: &mut lopdf::Document, mcid: i64, alt: &str| {
+        doc.add_object(dictionary! {
+            "Type" => "StructElem", "S" => "P", "P" => root_id, "Pg" => page,
+            "K" => mcid, "Alt" => Object::string_literal(alt),
+        })
+    };
+    let e0 = element(&mut doc, 0, "Un");
+    let e1 = element(&mut doc, 1, "Deux");
+    doc.objects.insert(
+        root_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "StructTreeRoot", "K" => vec![e0.into(), e1.into()],
+            "ParentTree" => dictionary! {
+                "Nums" => vec![0.into(), Object::Array(vec![e0.into(), e1.into()])],
+            },
+        }),
+    );
+    let catalog = doc.add_object(dictionary! {
+        "Type" => "Catalog", "Pages" => pages_id, "StructTreeRoot" => root_id,
+        "MarkInfo" => dictionary! { "Marked" => true },
+    });
+    doc.trailer.set("Root", catalog);
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("écriture en mémoire");
+    out
+}
+
 /// Un PDF sans page, dont la seule information est le titre dans `/Info`.
 ///
 /// \[Apprentissage\] Un fichier PDF est une suite d'objets numérotés (`1 0 obj … endobj`),

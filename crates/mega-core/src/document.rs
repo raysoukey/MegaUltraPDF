@@ -61,6 +61,15 @@ pub struct Document {
     /// chargement incorpore une copie entière de la police, on la réutilise donc tant que
     /// le document PDFium n'est pas remplacé (voir [`Document::replace_inner`]).
     unicode_font: Option<pdfium_render::prelude::PdfFontToken>,
+    /// Le document courant lu par `lopdf` pour le repli de la couche de texte
+    /// ([`Document::tounicode_fallback`]), chargé au premier besoin puis gardé : sans lui,
+    /// chaque page d'un long document relirait tout le fichier. `Some(None)` : `lopdf` n'a pas
+    /// su le lire. Vidé par toute modification ([`Document::clear_lopdf_cache`]).
+    ///
+    /// \[Apprentissage\] **`OnceLock`** se remplit une seule fois à travers une référence
+    /// partagée (`&self`), comme l'instance PDFium globale (`engine.rs`) ; le vider demande
+    /// `&mut self` (`take`), ce qui garantit que personne ne lit le cache à ce moment-là.
+    pub(crate) lopdf_cache: std::sync::OnceLock<Option<lopdf::Document>>,
 }
 
 impl std::fmt::Debug for Document {
@@ -134,6 +143,7 @@ impl Document {
             needs_cleanup: false,
             last_redaction: None,
             unicode_font: None,
+            lopdf_cache: std::sync::OnceLock::new(),
         })
     }
 
@@ -217,6 +227,13 @@ impl Document {
     /// après les gardes de refus (`ensure_cleanable`, validation préalable), jamais avant.
     pub(crate) fn mark_changed(&mut self) {
         self.changed = true;
+        self.clear_lopdf_cache();
+    }
+
+    /// Oublie la lecture `lopdf` gardée pour le repli de la couche de texte : le document
+    /// vient de changer (ou va changer), elle ne le décrit plus.
+    pub(crate) fn clear_lopdf_cache(&mut self) {
+        self.lopdf_cache.take();
     }
 
     /// Refuse une opération qui supprime ou remplace du contenu si le nettoyage à
@@ -276,6 +293,7 @@ impl Document {
         self.inner = Some(inner);
         // Le jeton de police désignait l'ancien document : il ne vaut plus rien.
         self.unicode_font = None;
+        self.clear_lopdf_cache();
     }
 
     /// Jeton de la police Unicode incorporée dans le document PDFium courant, chargée au
@@ -312,6 +330,8 @@ impl Document {
     /// Accès mutable au document PDFium sous-jacent, réservé aux autres modules du crate.
     #[allow(clippy::expect_used)]
     pub(crate) fn inner_mut(&mut self) -> &mut PdfDocument<'static> {
+        // Un accès mutable annonce une modification : la lecture `lopdf` gardée est périmée.
+        self.lopdf_cache.take();
         self.inner
             .as_mut()
             .expect("le document PDFium n'est libéré que dans Drop")

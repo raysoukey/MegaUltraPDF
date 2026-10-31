@@ -570,3 +570,26 @@ fn opentype_cff_cid_corpus_file_has_text() {
         "{r:?}"
     );
 }
+
+/// Le repli place les caractères en espace **affiché** comme PDFium : sur une page tournée
+/// (`/Rotate` 90, 180, 270), la boîte du repli (CID 0xA911, que PDFium ne lit pas) est celle
+/// que PDFium donne pour la même police quand il la lit (CID 1).
+#[test]
+fn opentype_cff_cid_fallback_matches_pdfium_on_rotated_pages() {
+    use mega_core::testing::opentype_cff_cid_pdf_with;
+    for rotate in [0, 90, 180, 270] {
+        let boxes = |cid| {
+            Document::from_bytes(opentype_cff_cid_pdf_with(cid, rotate), None)
+                .unwrap()
+                .text_boxes(0)
+                .unwrap()
+        };
+        let (fallback, pdfium) = (boxes(0xA911), boxes(1));
+        assert_eq!(fallback.len(), 1, "{rotate} : {fallback:?}");
+        assert_eq!(pdfium.len(), 1, "{rotate} : {pdfium:?}");
+        let (a, b) = (fallback[0].rect, pdfium[0].rect);
+        for (x, y) in [(a.x, b.x), (a.y, b.y), (a.w, b.w), (a.h, b.h)] {
+            assert!((x - y).abs() < 0.5, "{rotate} : {a:?} contre {b:?}");
+        }
+    }
+}

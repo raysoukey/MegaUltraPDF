@@ -2020,12 +2020,13 @@ const CFF_CID: u16 = 0xA911;
 /// glyphe, et la police n'en a que deux) ; l'objet texte n'a alors aucune largeur et sa couche
 /// de texte reste vide (audit L2). Le texte doit pourtant s'extraire par la `/ToUnicode`.
 pub fn opentype_cff_cid_pdf() -> Vec<u8> {
-    cff_cid_pdf(CFF_CID)
+    opentype_cff_cid_pdf_with(CFF_CID, 0)
 }
 
-/// [`opentype_cff_cid_pdf`] avec le CID `cid` pour le glyphe 1 (contrôle : avec `cid` = 1, le
-/// CID et le numéro de glyphe coïncident).
-fn cff_cid_pdf(cid: u16) -> Vec<u8> {
+/// [`opentype_cff_cid_pdf`] avec le CID `cid` pour le glyphe 1 et la rotation `rotate`
+/// (`/Rotate`). Contrôle : avec `cid` = 1, le CID et le numéro de glyphe coïncident, PDFium
+/// lit le texte lui-même ; on compare ainsi le repli à PDFium sur la même géométrie.
+pub fn opentype_cff_cid_pdf_with(cid: u16, rotate: i64) -> Vec<u8> {
     use lopdf::{Dictionary, Object, Stream};
     let base = blank_pdf(200.0, 200.0);
     let mut doc = lopdf::Document::load_mem(&base).expect("squelette lisible");
@@ -2095,6 +2096,7 @@ fn cff_cid_pdf(cid: u16) -> Vec<u8> {
     let page_id = *doc.get_pages().get(&1).expect("une page");
     let page = doc.get_dictionary_mut(page_id).expect("page");
     page.set("Contents", Object::Reference(content));
+    page.set("Rotate", Object::Integer(rotate));
     page.set(
         "Resources",
         Object::Dictionary(Dictionary::from_iter(vec![(

@@ -25,7 +25,11 @@
 //!   les codages à longueur variable ne sont pas suivis ;
 //! - rien n'est écarté pour invisibilité (rognage, mode de rendu 3 ou 7), comme dans PDFium ;
 //! - bornes : [`MAX_CHARS`] caractères, [`MAX_FORM_DEPTH`] niveaux de formulaires,
-//!   [`MAX_OPERATIONS`] opérateurs lus, [`MAX_ENTRIES`] entrées par `/ToUnicode` ou `/W`.
+//!   [`MAX_OPERATIONS`] opérateurs lus, [`MAX_ENTRIES`] entrées par `/ToUnicode` ou `/W`,
+//!   [`MAX_ARRAY_ITEMS`] destinations par tableau de `bfrange`, [`MAX_FONT_LOADS`] polices,
+//!   [`MAX_SAVED_STATES`] niveaux de `q`, et [`MAX_DECODED_BYTES`] décompressés en tout
+//!   (`/ToUnicode` et formulaires) : au-delà, la lecture s'arrête et rend ce qu'elle a. Une
+//!   `/ToUnicode` partagée par plusieurs polices n'est lue qu'une fois.
 //!
 //! \[Apprentissage\] **Pile explicite au lieu de récursion** : un formulaire XObject peut en
 //! appeler un autre, et un fichier hostile peut en enchaîner des milliers. Plutôt qu'une
@@ -55,9 +59,17 @@ pub(super) const MAX_FORM_DEPTH: usize = 8;
 pub(super) const MAX_OPERATIONS: usize = 1_000_000;
 /// Nombre maximal d'entrées lues dans une `/ToUnicode` ou un tableau `/W`.
 pub(super) const MAX_ENTRIES: usize = 100_000;
-/// Nombre maximal de polices **directes** (dictionnaire écrit dans les ressources, sans
-/// référence, donc sans cache) analysées pour une page.
-const MAX_FONT_LOADS: usize = 256;
+/// Nombre maximal de destinations lues dans un tableau de `bfrange` (`<lo> <hi> [ … ]`).
+pub(super) const MAX_ARRAY_ITEMS: usize = 4_096;
+/// Nombre maximal de polices analysées pour une page (par référence ou directes) : au-delà,
+/// une police inconnue ne donne aucun caractère.
+pub(super) const MAX_FONT_LOADS: usize = 256;
+/// Profondeur maximale de la pile `q` : un `q` plus profond est ignoré (avec son `Q`).
+pub(super) const MAX_SAVED_STATES: usize = 64;
+/// Octets décompressés au plus pour une page, `/ToUnicode` et formulaires XObject compris :
+/// mille polices qui désignent chacune une « bombe de décompression » ne bloquent pas le
+/// programme (ADR-0017).
+pub(super) const MAX_DECODED_BYTES: usize = 64 * 1024 * 1024;
 
 /// Un caractère retrouvé par le repli.
 #[derive(Debug, Clone, PartialEq)]
@@ -266,7 +278,11 @@ impl ToUnicode {
                     }
                 }
                 Token::Hex(bytes) => match array.as_mut() {
-                    Some(items) => items.push(utf16_text(&utf16_units(&bytes))),
+                    Some(items) => {
+                        if items.len() < MAX_ARRAY_ITEMS {
+                            items.push(utf16_text(&utf16_units(&bytes)));
+                        }
+                    }
                     None => operands.push(Operand::Hex(bytes)),
                 },
                 Token::Keyword(word) => {
@@ -383,8 +399,8 @@ impl Widths {
 
 /// Ce que le repli sait d'une police de la page.
 struct Font {
-    /// Sa `/ToUnicode`, s'il y en a une.
-    to_unicode: Option<ToUnicode>,
+    /// Sa `/ToUnicode`, s'il y en a une (partagée avec les polices qui citent le même flux).
+    to_unicode: Option<Rc<ToUnicode>>,
     /// Codes sur deux octets (police composite) plutôt qu'un.
     two_bytes: bool,
     /// Ses chasses.
@@ -473,13 +489,10 @@ fn simple_widths(doc: &LoDocument, font: &Dictionary, descriptor: Option<&Dictio
     widths
 }
 
-/// Ce que le repli retient de la police `font` (dictionnaire `/Font`).
-fn load_font(doc: &LoDocument, font: &Dictionary) -> Font {
+/// Ce que le repli retient de la police `font` (dictionnaire `/Font`), sa `/ToUnicode` déjà
+/// lue (voir `Walker::cmap_of`).
+fn load_font(doc: &LoDocument, font: &Dictionary, to_unicode: Option<Rc<ToUnicode>>) -> Font {
     let subtype = entry(doc, font, b"Subtype").and_then(|o| o.as_name().ok());
-    let to_unicode = entry(doc, font, b"ToUnicode")
-        .and_then(|o| o.as_stream().ok())
-        .and_then(crate::crypt::stream_bytes)
-        .map(|data| ToUnicode::parse(&data));
     let composite = subtype == Some(b"Type0".as_slice());
     let descendant = composite
         .then(|| entry(doc, font, b"DescendantFonts"))
@@ -524,10 +537,17 @@ fn load_font(doc: &LoDocument, font: &Dictionary) -> Font {
     };
     let ascent = metric(b"Ascent").map_or(0.8, |a| a.clamp(0.5, 1.0));
     let descent = metric(b"Descent").map_or(-0.2, |d| d.clamp(-0.3, 0.0));
+    // `Identity-H` et `Identity-V` lisent toujours deux octets, quoi que dise la `/ToUnicode` ;
+    // pour un autre CMap, on suit l'espace de codes qu'elle déclare.
+    let identity = matches!(
+        entry(doc, font, b"Encoding").and_then(|o| o.as_name().ok()),
+        Some(b"Identity-H" | b"Identity-V")
+    );
     let two_bytes = composite
-        && to_unicode
-            .as_ref()
-            .is_none_or(|map| map.code_len != Some(1));
+        && (identity
+            || to_unicode
+                .as_ref()
+                .is_none_or(|map| map.code_len != Some(1)));
     Font {
         to_unicode,
         two_bytes,
@@ -570,8 +590,18 @@ struct Frame {
     /// Le formulaire lu (`None` pour la page) : un formulaire déjà sur la pile n'y entre pas
     /// une seconde fois (cycle).
     form: Option<ObjectId>,
-    /// État graphique à rendre en sortant du formulaire, et hauteur de la pile `q` d'alors.
-    saved: Option<(GraphicsState, usize)>,
+    /// Ce qu'il faut rendre en sortant du formulaire (`None` pour la page).
+    saved: Option<Saved>,
+}
+
+/// L'état de l'appelant d'un formulaire XObject, rendu à la sortie du formulaire.
+struct Saved {
+    /// État graphique.
+    state: GraphicsState,
+    /// Hauteur de la pile `q`.
+    depth: usize,
+    /// Nombre de `q` ignorés (pile pleine) en attente de leur `Q`.
+    ignored: usize,
 }
 
 /// Le lecteur de contenu.
@@ -581,13 +611,19 @@ struct Walker<'a> {
     fonts: Vec<Font>,
     /// Police analysée par objet de police.
     font_ids: BTreeMap<ObjectId, usize>,
-    /// Polices directes analysées (bornées par [`MAX_FONT_LOADS`]).
-    direct_loads: usize,
+    /// `/ToUnicode` déjà lues, par flux (`None` : illisible).
+    cmaps: BTreeMap<ObjectId, Option<Rc<ToUnicode>>>,
     /// Opérateurs des formulaires déjà décodés.
     forms: BTreeMap<ObjectId, Rc<Vec<Operation>>>,
+    /// Octets décompressés qu'il reste le droit de produire.
+    budget: usize,
+    /// Vrai quand le budget d'octets est épuisé : la lecture s'arrête.
+    exhausted: bool,
     state: GraphicsState,
     /// Pile des états sauvés par `q`.
     saved: Vec<GraphicsState>,
+    /// `q` ignorés parce que la pile était pleine : leurs `Q` sont ignorés aussi.
+    ignored: usize,
     /// Matrice de texte (`Tm`) et de début de ligne (`Tlm`).
     tm: Matrix,
     tlm: Matrix,
@@ -608,13 +644,15 @@ fn operand(op: &Operation, n: usize) -> Option<f32> {
 }
 
 impl<'a> Walker<'a> {
-    fn new(doc: &'a LoDocument) -> Self {
+    fn new(doc: &'a LoDocument, budget: usize) -> Self {
         Walker {
             doc,
             fonts: Vec::new(),
             font_ids: BTreeMap::new(),
-            direct_loads: 0,
+            cmaps: BTreeMap::new(),
             forms: BTreeMap::new(),
+            budget,
+            exhausted: false,
             state: GraphicsState {
                 ctm: IDENTITY,
                 font: None,
@@ -626,6 +664,7 @@ impl<'a> Walker<'a> {
                 rise: 0.0,
             },
             saved: Vec::new(),
+            ignored: 0,
             tm: IDENTITY,
             tlm: IDENTITY,
             out: Vec::new(),
@@ -641,19 +680,50 @@ impl<'a> Walker<'a> {
         if let Some(index) = id.and_then(|id| self.font_ids.get(&id)) {
             return Some(*index);
         }
-        if id.is_none() {
-            if self.direct_loads >= MAX_FONT_LOADS {
-                return None;
-            }
-            self.direct_loads += 1;
+        if self.fonts.len() >= MAX_FONT_LOADS {
+            return None;
         }
-        let font = load_font(doc, object.as_dict().ok()?);
+        let dict = object.as_dict().ok()?;
+        let to_unicode = self.cmap_of(dict);
+        let font = load_font(doc, dict, to_unicode);
         self.fonts.push(font);
         let index = self.fonts.len() - 1;
         if let Some(id) = id {
             self.font_ids.insert(id, index);
         }
         Some(index)
+    }
+
+    /// Les octets décodés de `stream`, décomptés du budget ; `None` (et lecture arrêtée) si
+    /// le budget ne suffit pas.
+    fn decode(&mut self, stream: &lopdf::Stream) -> Option<Vec<u8>> {
+        if self.exhausted {
+            return None;
+        }
+        let Some(data) = crate::crypt::stream_bytes_within(stream, self.budget) else {
+            self.exhausted = true;
+            return None;
+        };
+        self.budget = self.budget.saturating_sub(data.len());
+        Some(data)
+    }
+
+    /// La `/ToUnicode` de la police `font`, lue une seule fois par flux.
+    fn cmap_of(&mut self, font: &Dictionary) -> Option<Rc<ToUnicode>> {
+        let doc = self.doc;
+        let (id, object) = doc.dereference(font.get(b"ToUnicode").ok()?).ok()?;
+        if let Some(cached) = id.and_then(|id| self.cmaps.get(&id)) {
+            return cached.clone();
+        }
+        let parsed = object
+            .as_stream()
+            .ok()
+            .and_then(|stream| self.decode(stream))
+            .map(|data| Rc::new(ToUnicode::parse(&data)));
+        if let Some(id) = id {
+            self.cmaps.insert(id, parsed.clone());
+        }
+        parsed
     }
 
     /// Passe à la ligne suivante (`T*`).
@@ -763,7 +833,7 @@ impl<'a> Walker<'a> {
         let ops = match self.forms.get(&id) {
             Some(ops) => Rc::clone(ops),
             None => {
-                let data = crate::crypt::stream_bytes(stream)?;
+                let data = self.decode(stream)?;
                 let ops = Rc::new(Content::decode(&data).ok()?.operations);
                 self.forms.insert(id, Rc::clone(&ops));
                 ops
@@ -782,7 +852,11 @@ impl<'a> Walker<'a> {
                 <[f32; 6]>::try_from(values.as_slice()).ok()
             })
             .unwrap_or(IDENTITY);
-        let saved = (self.state.clone(), self.saved.len());
+        let saved = Saved {
+            state: self.state.clone(),
+            depth: self.saved.len(),
+            ignored: self.ignored,
+        };
         self.state.ctm = multiply(&matrix, &self.state.ctm);
         Some(Frame {
             ops,
@@ -793,14 +867,24 @@ impl<'a> Walker<'a> {
         })
     }
 
-    /// Applique un opérateur ; rend le cadre d'un formulaire où entrer.
-    fn step(&mut self, frames: &[Frame], op: &Operation, base: usize) -> Option<Frame> {
+    /// Applique un opérateur ; rend le cadre d'un formulaire où entrer. `base` : hauteur de la
+    /// pile `q` et nombre de `q` ignorés à l'entrée du flux courant.
+    fn step(&mut self, frames: &[Frame], op: &Operation, base: (usize, usize)) -> Option<Frame> {
         let state = &mut self.state;
         match op.operator.as_str() {
-            "q" => self.saved.push(state.clone()),
+            "q" => {
+                if self.saved.len() < MAX_SAVED_STATES {
+                    self.saved.push(state.clone());
+                } else {
+                    self.ignored += 1;
+                }
+            }
             "Q" => {
-                // Un `Q` en trop dans un formulaire ne rend pas l'état de son appelant.
-                if self.saved.len() > base
+                // Le `Q` d'un `q` ignoré est ignoré ; un `Q` en trop dans un formulaire ne
+                // rend pas l'état de son appelant.
+                if self.ignored > base.1 {
+                    self.ignored -= 1;
+                } else if self.saved.len() > base.0
                     && let Some(previous) = self.saved.pop()
                 {
                     self.state = previous;
@@ -895,17 +979,23 @@ impl<'a> Walker<'a> {
 /// Les caractères que dessine la page `page_id`, traduits par les `/ToUnicode` de ses polices,
 /// dans l'ordre de dessin. Un contenu illisible donne ce qu'on a pu en lire.
 pub(super) fn page_chars(doc: &LoDocument, page_id: ObjectId) -> Vec<FoundChar> {
+    walk(doc, page_id, MAX_DECODED_BYTES).out
+}
+
+/// La lecture de [`page_chars`], avec un budget de `budget` octets décompressés ; rend le
+/// lecteur pour que les tests examinent ses caches.
+fn walk(doc: &LoDocument, page_id: ObjectId, budget: usize) -> Walker<'_> {
+    let mut walker = Walker::new(doc, budget);
     let Ok(page) = doc.get_dictionary(page_id) else {
-        return Vec::new();
+        return walker;
     };
     let resources = Rc::new(crate::overlay::inherited_resources(doc, page));
     let Some(content) = crate::crypt::page_content(doc, page_id)
         .ok()
         .and_then(|data| Content::decode(&data).ok())
     else {
-        return Vec::new();
+        return walker;
     };
-    let mut walker = Walker::new(doc);
     let mut frames = vec![Frame {
         ops: Rc::new(content.operations),
         next: 0,
@@ -914,7 +1004,7 @@ pub(super) fn page_chars(doc: &LoDocument, page_id: ObjectId) -> Vec<FoundChar> 
         saved: None,
     }];
     let mut budget = MAX_OPERATIONS;
-    while budget > 0 && walker.out.len() < MAX_CHARS {
+    while budget > 0 && walker.out.len() < MAX_CHARS && !walker.exhausted {
         let Some(frame) = frames.last_mut() else {
             break;
         };
@@ -922,28 +1012,32 @@ pub(super) fn page_chars(doc: &LoDocument, page_id: ObjectId) -> Vec<FoundChar> 
         let Some(op) = ops.get(frame.next) else {
             // Fin du flux : on sort du formulaire et l'appelant retrouve son état.
             if let Some(Frame {
-                saved: Some((state, depth)),
-                ..
+                saved: Some(saved), ..
             }) = frames.pop()
             {
-                walker.state = state;
-                walker.saved.truncate(depth);
+                walker.state = saved.state;
+                walker.saved.truncate(saved.depth);
+                walker.ignored = saved.ignored;
             }
             continue;
         };
         frame.next += 1;
         budget -= 1;
-        let base = frame.saved.as_ref().map_or(0, |(_, depth)| *depth);
+        let base = frame
+            .saved
+            .as_ref()
+            .map_or((0, 0), |saved| (saved.depth, saved.ignored));
         if let Some(form) = walker.step(&frames, op, base) {
             frames.push(form);
         }
     }
-    walker.out
+    walker
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::dictionary;
 
     #[test]
     fn bfchar_and_bfrange_are_read() {
@@ -998,7 +1092,7 @@ mod tests {
     /// deux fois, qui s'appelle lui-même (cycle) : police simple, `/ToUnicode` d'un octet
     /// (code 1 → « A », 2 → « B », 3 → « C »), chasse 600.
     fn walked_page(page_content: &str, form_content: &str) -> Vec<FoundChar> {
-        use lopdf::{Stream, dictionary};
+        use lopdf::Stream;
         let mut doc = LoDocument::with_version("1.7");
         let cmap = b"1 begincodespacerange <00> <FF> endcodespacerange\n\
             1 beginbfrange <01> <03> <0041> endbfrange";
@@ -1069,6 +1163,192 @@ mod tests {
         assert!(walked_page("0 0 10 10 re f", "").is_empty());
         assert!(walked_page("BT /F9 10 Tf <01> Tj ET", "").is_empty());
         assert!(walked_page("BT <01> Tj ET Q Q Q /Nope Do", "").is_empty());
+    }
+
+    /// La `/ToUnicode` « A, B, C » des codes 1 à 3, sur un octet.
+    fn abc_cmap(doc: &mut LoDocument) -> ObjectId {
+        let cmap = b"1 begincodespacerange <00> <FF> endcodespacerange\n\
+            1 beginbfrange <01> <03> <0041> endbfrange";
+        doc.add_object(lopdf::Stream::new(dictionary! {}, cmap.to_vec()))
+    }
+
+    /// Une police simple de chasse 600 (codes 1 à 3) qui cite la `/ToUnicode` `cmap`.
+    fn simple_font(doc: &mut LoDocument, cmap: ObjectId) -> ObjectId {
+        doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "FirstChar" => 1,
+            "Widths" => vec![600.into(), 600.into(), 600.into()],
+            "ToUnicode" => cmap,
+        })
+    }
+
+    /// Une page de 200 × 200 qui dessine `content` avec les polices `fonts`.
+    fn page_with(doc: &mut LoDocument, fonts: Dictionary, content: &str) -> ObjectId {
+        use lopdf::Stream;
+        let content = doc.add_object(Stream::new(dictionary! {}, content.as_bytes().to_vec()));
+        doc.add_object(dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+            "Contents" => content,
+            "Resources" => dictionary! { "Font" => fonts },
+        })
+    }
+
+    /// Une page qui dessine `content` avec la police simple « A, B, C » nommée `F1`.
+    fn abc_page(content: &str) -> (LoDocument, ObjectId) {
+        let mut doc = LoDocument::with_version("1.7");
+        let cmap = abc_cmap(&mut doc);
+        let font = simple_font(&mut doc, cmap);
+        let page = page_with(&mut doc, dictionary! { "F1" => font }, content);
+        (doc, page)
+    }
+
+    /// Les caractères trouvés, avec l'origine de leur boîte.
+    fn found(chars: &[FoundChar]) -> Vec<(char, f32, f32)> {
+        chars.iter().map(|c| (c.ch, c.rect.x, c.rect.y)).collect()
+    }
+
+    #[test]
+    fn a_shared_to_unicode_is_parsed_once() {
+        let mut doc = LoDocument::with_version("1.7");
+        let cmap = abc_cmap(&mut doc);
+        let (f1, f2) = (simple_font(&mut doc, cmap), simple_font(&mut doc, cmap));
+        let page = page_with(
+            &mut doc,
+            dictionary! { "F1" => f1, "F2" => f2 },
+            "BT /F1 10 Tf <01> Tj /F2 10 Tf <02> Tj ET",
+        );
+        let walker = walk(&doc, page, MAX_DECODED_BYTES);
+        assert_eq!(walker.fonts.len(), 2);
+        assert_eq!(walker.cmaps.len(), 1);
+        let shared: Vec<&Rc<ToUnicode>> = walker
+            .fonts
+            .iter()
+            .filter_map(|f| f.to_unicode.as_ref())
+            .collect();
+        assert!(shared.len() == 2 && Rc::ptr_eq(shared[0], shared[1]));
+        let text: String = walker.out.iter().map(|c| c.ch).collect();
+        assert_eq!(text, "AB");
+    }
+
+    #[test]
+    fn the_number_of_fonts_is_capped() {
+        let mut doc = LoDocument::with_version("1.7");
+        let cmap = abc_cmap(&mut doc);
+        let mut fonts = Dictionary::new();
+        let mut content = String::from("BT ");
+        for i in 0..MAX_FONT_LOADS + 50 {
+            fonts.set(format!("F{i}"), simple_font(&mut doc, cmap));
+            content.push_str(&format!("/F{i} 10 Tf <01> Tj "));
+        }
+        content.push_str("ET");
+        let page = page_with(&mut doc, fonts, &content);
+        let walker = walk(&doc, page, MAX_DECODED_BYTES);
+        assert_eq!(walker.fonts.len(), MAX_FONT_LOADS);
+        assert_eq!(walker.out.len(), MAX_FONT_LOADS);
+    }
+
+    #[test]
+    fn the_byte_budget_stops_the_walk() {
+        let (doc, page) = abc_page("BT /F1 10 Tf <01> Tj ET");
+        let walker = walk(&doc, page, 10);
+        assert!(walker.exhausted && walker.out.is_empty());
+        let walker = walk(&doc, page, 1_000);
+        assert!(!walker.exhausted && walker.out.len() == 1);
+        assert!(walker.budget < 1_000);
+    }
+
+    #[test]
+    fn identity_h_reads_two_bytes_whatever_the_codespace() {
+        use lopdf::Stream;
+        let mut doc = LoDocument::with_version("1.7");
+        let cmap = b"1 begincodespacerange <00> <FF> endcodespacerange\n\
+            1 beginbfchar <0102> <9664> endbfchar";
+        let cmap = doc.add_object(Stream::new(dictionary! {}, cmap.to_vec()));
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type0",
+            "BaseFont" => "X",
+            "Encoding" => "Identity-H",
+            "DescendantFonts" => vec![Object::Dictionary(dictionary! {
+                "Type" => "Font",
+                "Subtype" => "CIDFontType0",
+                "BaseFont" => "X",
+            })],
+            "ToUnicode" => cmap,
+        });
+        let page = page_with(
+            &mut doc,
+            dictionary! { "F1" => font },
+            "BT /F1 10 Tf <0102> Tj ET",
+        );
+        let chars = page_chars(&doc, page);
+        assert_eq!(chars.len(), 1);
+        assert_eq!(chars[0].ch, '除');
+        assert!((chars[0].rect.w - 10.0).abs() < 0.01, "{:?}", chars[0].rect);
+    }
+
+    #[test]
+    fn line_operators_move_to_the_next_line() {
+        // `TL` 12 : `T*` descend de 12 ; `TD` descend de 20 et fixe `TL` à 20 ; l'apostrophe
+        // et le guillemet passent à la ligne avant d'écrire (le guillemet règle aussi `Tw`, `Tc`).
+        let content = "BT /F1 10 Tf 0 100 Td 12 TL <01> Tj T* <02> Tj 0 -20 TD <03> Tj \
+                       <01> ' 3 4 <02> \" ET";
+        let (doc, page) = abc_page(content);
+        let chars = found(&page_chars(&doc, page));
+        // Boîte : du bas du cadratin (origine − 0,2 × 10) ; x à l'origine de la ligne.
+        let expected = [
+            ('A', 100.0),
+            ('B', 88.0),
+            ('C', 68.0),
+            ('A', 48.0),
+            ('B', 28.0),
+        ];
+        assert_eq!(chars.len(), expected.len(), "{chars:?}");
+        for ((ch, x, y), (want, baseline)) in chars.iter().zip(expected) {
+            assert_eq!(*ch, want);
+            assert!(
+                x.abs() < 0.01 && (y - (baseline - 2.0)).abs() < 0.01,
+                "{chars:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_too_deep_q_is_ignored_with_its_q() {
+        // Pile pleine (64 `q`), une translation, puis six `q` ignorés et leurs six `Q` : la
+        // translation tient encore pour « A » ; les 64 `Q` suivants l'annulent pour « B ».
+        let content = format!(
+            "{} 1 0 0 1 10 0 cm {} {} BT /F1 10 Tf <01> Tj ET {} BT /F1 10 Tf <02> Tj ET",
+            "q ".repeat(MAX_SAVED_STATES),
+            "q ".repeat(6),
+            "Q ".repeat(6),
+            "Q ".repeat(MAX_SAVED_STATES),
+        );
+        let (doc, page) = abc_page(&content);
+        let walker = walk(&doc, page, MAX_DECODED_BYTES);
+        let chars = found(&walker.out);
+        assert_eq!(chars.len(), 2, "{chars:?}");
+        assert!(
+            (chars[0].1 - 10.0).abs() < 0.01 && chars[1].1.abs() < 0.01,
+            "{chars:?}"
+        );
+        assert!(walker.saved.is_empty() && walker.ignored == 0);
+    }
+
+    #[test]
+    fn bfrange_arrays_are_capped() {
+        let mut cmap = b"1 beginbfrange <0000> <FFFF> [".to_vec();
+        for _ in 0..MAX_ARRAY_ITEMS + 10 {
+            cmap.extend_from_slice(b"<0041> ");
+        }
+        cmap.extend_from_slice(b"] endbfrange");
+        let map = ToUnicode::parse(&cmap);
+        let last = u32::try_from(MAX_ARRAY_ITEMS).unwrap();
+        assert_eq!(map.lookup(last - 1).as_deref(), Some("A"));
+        assert_eq!(map.lookup(last), None);
     }
 
     #[test]

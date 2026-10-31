@@ -595,7 +595,13 @@ impl Document {
             self.changed = changed_before;
             return Err(e);
         }
-        if !command.changed_document(self) {
+        // Par prudence, même si la commande a déjà appelé `mark_changed` : la lecture `lopdf`
+        // gardée pour la couche de texte ne décrit plus le document.
+        self.clear_lopdf_cache();
+        let changed_document = command.changed_document(self);
+        // `changed_document` a pu remplir ce cache alors que `changed` était encore faux.
+        self.clear_lopdf_cache();
+        if !changed_document {
             // Rien n'a changé (aucun mot reconnu, par exemple) : pas d'étape d'historique.
             self.changed = changed_before;
             return Ok(());
@@ -817,6 +823,7 @@ impl Document {
         self.file_bytes = bytes;
         self.changed = false;
         self.needs_cleanup = false;
+        self.clear_lopdf_cache();
     }
 
     /// Le document réécrit tel que « Enregistrer » l'écrirait (sans l'écrire) : PDFium, puis

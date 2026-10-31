@@ -440,6 +440,24 @@ mod tests {
     }
 
     #[test]
+    fn a_non_contiguous_selection_crossing_parents_moves_as_one_block() {
+        let mut doc = two_level();
+        // Pages 1 (5, sous A) et 3 (7, sous B) à la fin : après la page 4 (8), dans B.
+        reorder_kids(&mut doc, &[0, 2], 2).unwrap();
+        assert_eq!(order(&doc), [6, 8, 5, 7]);
+        assert_eq!(count(&doc, 2), 4, "racine");
+        assert_eq!(count(&doc, 3), 1);
+        assert_eq!(count(&doc, 4), 3);
+        assert_eq!(parent(&doc, 5), (4, 0));
+        assert_eq!(parent(&doc, 7), (4, 0));
+        // Seule la page qui change de parent reçoit les attributs de A.
+        let from_a = doc.get_dictionary((5, 0)).unwrap();
+        assert_eq!(from_a.get(b"Rotate").unwrap().as_i64().unwrap(), 90);
+        assert!(from_a.has(b"MediaBox"));
+        assert!(!doc.get_dictionary((7, 0)).unwrap().has(b"Rotate"));
+    }
+
+    #[test]
     fn an_emptied_intermediate_node_is_unhooked() {
         let mut doc = two_level();
         reorder_kids(&mut doc, &[0, 1], 2).unwrap();

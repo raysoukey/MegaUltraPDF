@@ -332,6 +332,47 @@ fn page_annots(doc: &Document, page_id: ObjectId) -> Option<(Option<ObjectId>, V
     }
 }
 
+/// Ne garde, dans le `/Annots` de la page, que les annotations pour lesquelles `keep` est vrai
+/// (un élément qui n'est pas un dictionnaire lisible est gardé) ; le tableau, direct ou
+/// indirect, n'est réécrit que s'il a changé.
+///
+/// \[Apprentissage\] `keep` reçoit le document en **lecture** : la fermeture ne peut pas
+/// capturer `doc`, que cette fonction emprunte déjà en écriture.
+fn retain_annots(
+    doc: &mut Document,
+    page_id: ObjectId,
+    mut keep: impl FnMut(&Document, &Dictionary) -> bool,
+) -> CoreResult<()> {
+    let Some((array_id, items)) = page_annots(doc, page_id) else {
+        return Ok(());
+    };
+    let kept: Vec<Object> = items
+        .iter()
+        .filter(|item| {
+            let dict = match item {
+                Object::Reference(id) => doc.get_dictionary(*id).ok(),
+                Object::Dictionary(dict) => Some(dict),
+                _ => None,
+            };
+            dict.is_none_or(|d| keep(doc, d))
+        })
+        .cloned()
+        .collect();
+    if kept.len() == items.len() {
+        return Ok(());
+    }
+    match array_id {
+        Some(id) => {
+            doc.objects.insert(id, Object::Array(kept));
+        }
+        None => doc
+            .get_dictionary_mut(page_id)
+            .map_err(structure)?
+            .set("Annots", Object::Array(kept)),
+    }
+    Ok(())
+}
+
 /// Donne à chaque annotation de la page qui n'en a pas un `/NM` (nom unique sur la page)
 /// et un `/P` (sa page) : clés facultatives que PDFium n'écrit pas, mais dont se servent les
 /// lecteurs qui synchronisent, fusionnent ou répondent à des commentaires (§12.5.2, B3).
@@ -417,72 +458,25 @@ fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> Cor
     //    n'est plus listée : le groupe forme une seule annotation, ils partent avec elle.
     let primaries = listed(doc);
     for page_id in pages {
-        let Some((array_id, items)) = page_annots(doc, *page_id) else {
-            continue;
-        };
-        let orphan_member = |item: &Object| {
-            let dict = match item {
-                Object::Reference(id) => doc.get_dictionary(*id).ok(),
-                Object::Dictionary(dict) => Some(dict),
-                _ => None,
-            };
-            dict.is_some_and(|d| {
-                d.get(b"RT").and_then(Object::as_name).ok() == Some(b"Group".as_slice())
-                    && d.get(b"IRT")
-                        .and_then(Object::as_reference)
-                        .is_ok_and(|primary| !primaries.contains(&primary))
-            })
-        };
-        let kept: Vec<Object> = items
-            .iter()
-            .filter(|i| !orphan_member(i))
-            .cloned()
-            .collect();
-        if kept.len() == items.len() {
-            continue;
-        }
-        match array_id {
-            Some(id) => {
-                doc.objects.insert(id, Object::Array(kept));
-            }
-            None => doc
-                .get_dictionary_mut(*page_id)
-                .map_err(structure)?
-                .set("Annots", Object::Array(kept)),
-        }
+        retain_annots(doc, *page_id, |_, d| {
+            let orphan_member = d.get(b"RT").and_then(Object::as_name).ok()
+                == Some(b"Group".as_slice())
+                && d.get(b"IRT")
+                    .and_then(Object::as_reference)
+                    .is_ok_and(|primary| !primaries.contains(&primary));
+            !orphan_member
+        })?;
     }
     let before = listed(doc);
     // 1. Popups dont le parent n'est plus listé : retirés de `/Annots`.
     for page_id in pages {
-        let Some((array_id, items)) = page_annots(doc, *page_id) else {
-            continue;
-        };
-        let orphan = |item: &Object| {
-            let dict = match item {
-                Object::Reference(id) => doc.get_dictionary(*id).ok(),
-                Object::Dictionary(dict) => Some(dict),
-                _ => None,
-            };
-            dict.is_some_and(|d| {
-                subtype(d) == b"Popup"
-                    && d.get(b"Parent")
-                        .and_then(Object::as_reference)
-                        .is_ok_and(|parent| !before.contains(&parent))
-            })
-        };
-        let kept: Vec<Object> = items.iter().filter(|i| !orphan(i)).cloned().collect();
-        if kept.len() == items.len() {
-            continue;
-        }
-        match array_id {
-            Some(id) => {
-                doc.objects.insert(id, Object::Array(kept));
-            }
-            None => doc
-                .get_dictionary_mut(*page_id)
-                .map_err(structure)?
-                .set("Annots", Object::Array(kept)),
-        }
+        retain_annots(doc, *page_id, |_, d| {
+            let orphan = subtype(d) == b"Popup"
+                && d.get(b"Parent")
+                    .and_then(Object::as_reference)
+                    .is_ok_and(|parent| !before.contains(&parent));
+            !orphan
+        })?;
     }
     // 2. Annotations qui ne sont plus listées nulle part.
     let alive = listed(doc);
@@ -585,27 +579,9 @@ pub(crate) fn neutralize_dead_destinations(doc: &mut Document) {
     }
     // Liens des pages vivantes.
     for page_id in &live {
-        let Some((array_id, items)) = page_annots(doc, *page_id) else {
-            continue;
-        };
-        let kept: Vec<Object> = items
-            .iter()
-            .filter(|item| !dead.link(doc, item))
-            .cloned()
-            .collect();
-        if kept.len() == items.len() {
-            continue;
-        }
-        match array_id {
-            Some(id) => {
-                doc.objects.insert(id, Object::Array(kept));
-            }
-            None => {
-                if let Ok(page) = doc.get_dictionary_mut(*page_id) {
-                    page.set("Annots", Object::Array(kept));
-                }
-            }
-        }
+        // Ne peut échouer : la page vivante a déjà été lue par `get_pages`. Une erreur ne
+        // laisserait que le lien, sans rien casser.
+        let _ = retain_annots(doc, *page_id, |doc, d| !dead.link(doc, d));
     }
     // Action d'ouverture.
     let open_action_dead = doc
@@ -655,18 +631,11 @@ impl Dead<'_> {
             && action.get(b"D").is_ok_and(|d| self.dest(doc, d))
     }
 
-    /// Vrai si `item` (élément de `/Annots`) est un lien vers une page morte.
-    fn link(&self, doc: &Document, item: &Object) -> bool {
-        let dict = match item {
-            Object::Reference(id) => doc.get_dictionary(*id).ok(),
-            Object::Dictionary(dict) => Some(dict),
-            _ => None,
-        };
-        dict.is_some_and(|d| {
-            subtype(d) == b"Link"
-                && (d.get(b"Dest").is_ok_and(|dest| self.dest(doc, dest))
-                    || d.get(b"A").is_ok_and(|a| self.goto(doc, a)))
-        })
+    /// Vrai si l'annotation `d` est un lien vers une page morte.
+    fn link(&self, doc: &Document, d: &Dictionary) -> bool {
+        subtype(d) == b"Link"
+            && (d.get(b"Dest").is_ok_and(|dest| self.dest(doc, dest))
+                || d.get(b"A").is_ok_and(|a| self.goto(doc, a)))
     }
 }
 

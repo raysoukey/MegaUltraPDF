@@ -109,8 +109,19 @@ impl Document {
     /// réordonne donc l'arbre des pages avec `lopdf` (`reorder::reorder_kids`) : la page reste
     /// le même objet. Le document est déchiffré puis rechiffré à l'identique
     /// (`crypt::LopdfSession`) et rechargé dans PDFium.
+    ///
+    /// Tout est vérifié et calculé **avant** de marquer le document modifié : un déplacement
+    /// refusé laisse `changed` faux, sinon l'enregistrement suivant réécrirait le fichier (et
+    /// romprait une signature).
     pub fn move_pages(&mut self, pages: &[u16], to: u16) -> CoreResult<()> {
+        let bytes = self.reordered_bytes(pages, to)?;
         self.mark_changed();
+        self.reload_from_bytes(bytes)
+    }
+
+    /// Octets du document une fois les pages déplacées (voir [`Document::move_pages`]), sans
+    /// toucher au document.
+    fn reordered_bytes(&self, pages: &[u16], to: u16) -> CoreResult<Vec<u8>> {
         let count = {
             let _guard = engine::guard();
             let moved = self.unique_indices_unlocked(pages)?;
@@ -133,8 +144,7 @@ impl Document {
             ));
         }
         reorder::reorder_kids(&mut session.doc, pages, to)?;
-        let bytes = session.finish()?;
-        self.reload_from_bytes(bytes)
+        session.finish()
     }
 
     /// Nouveau document composé des pages `pages` (dans l'ordre donné) ; l'original est intact.

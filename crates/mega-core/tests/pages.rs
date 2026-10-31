@@ -514,3 +514,21 @@ fn moving_a_page_in_an_aes256_document_keeps_the_password() {
         Err(CoreError::PasswordRequired)
     ));
 }
+
+#[test]
+fn a_refused_move_leaves_the_document_unchanged() {
+    // Un déplacement refusé ne doit pas marquer le document modifié : l'enregistrement
+    // réécrirait sinon le fichier (et romprait une signature).
+    let dir = tempfile::tempdir().unwrap();
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/simple.pdf");
+    let input = std::fs::read(source).unwrap();
+    let mut doc = Document::open(source, None).unwrap();
+    let count = doc.page_count();
+    assert!(matches!(
+        doc.move_pages(&[0], count),
+        Err(CoreError::PageOutOfRange { .. })
+    ));
+    let path = dir.path().join("intact.pdf");
+    doc.save_as(&path).unwrap();
+    assert!(std::fs::read(&path).unwrap() == input, "octets identiques");
+}

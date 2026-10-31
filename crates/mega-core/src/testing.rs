@@ -1234,6 +1234,43 @@ pub fn inherited_media_box_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Quatre pages (« Page 1 » à « Page 4 », Helvetica) rangées dans un arbre à **deux niveaux**
+/// dont les nœuds intermédiaires portent des attributs hérités différents (§7.7.3.4) : sert à
+/// vérifier qu'un déplacement d'un nœud à l'autre (`move_pages`, audit E4) ne change ni la
+/// taille ni l'orientation des pages.
+///
+/// - racine `/Pages` (2) : `/Resources` (police `/F1`) pour toutes les pages ;
+/// - premier nœud (3), pages 1 et 2 : `/Rotate 90` et `/MediaBox [0 0 400 600]` ;
+/// - second nœud (4), pages 3 et 4 : `/CropBox [20 20 575 822]` ; ces pages ont leur propre
+///   `/MediaBox [0 0 595 842]`.
+pub fn two_level_pages_pdf() -> Vec<u8> {
+    let content = |n: u8| {
+        let text = format!("BT /F1 24 Tf 72 300 Td (Page {n}) Tj ET");
+        format!("<< /Length {} >>\nstream\n{text}\nendstream", text.len())
+    };
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 4 /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        "<< /Type /Pages /Parent 2 0 R /Kids [6 0 R 7 0 R] /Count 2 /Rotate 90 \
+         /MediaBox [0 0 400 600] >>"
+            .to_string(),
+        "<< /Type /Pages /Parent 2 0 R /Kids [8 0 R 9 0 R] /Count 2 /CropBox [20 20 575 822] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+        "<< /Type /Page /Parent 3 0 R /Contents 10 0 R >>".to_string(),
+        "<< /Type /Page /Parent 3 0 R /Contents 11 0 R >>".to_string(),
+        "<< /Type /Page /Parent 4 0 R /MediaBox [0 0 595 842] /Contents 12 0 R >>".to_string(),
+        "<< /Type /Page /Parent 4 0 R /MediaBox [0 0 595 842] /Contents 13 0 R >>".to_string(),
+        content(1),
+        content(2),
+        content(3),
+        content(4),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Une page dont le texte est **dessiné dans le désordre** (correctif 0.12.2), comme dans les
 /// PDF réels où la sélection sautait : lignes d'un paragraphe dessinées 3, 1, 2 ; mot en gras
 /// dessiné à la fin du flux au milieu de sa ligne ; liste « libellé : valeur » de 5 lignes dont

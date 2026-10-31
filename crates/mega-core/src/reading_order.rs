@@ -109,7 +109,13 @@ pub fn word_gaps(line: &[usize], rects: &[Rect], chars: &[char]) -> Vec<usize> {
     // d'un caractère. Les emprises de PDFium sont celles de la boîte de la police : dans certaines
     // polices arabes elles sont près de trois fois plus hautes que larges (fichier du corpus
     // `ArabicCIDTrueType.pdf`), et un quart de leur hauteur dépasserait l'espace entre deux mots.
-    let em = median(|r| r.h).min(1.25 * median(|r| r.w));
+    // Des largeurs médianes nulles ne disent rien du corps : on garde alors la hauteur.
+    let (height, width) = (median(|r| r.h), median(|r| r.w));
+    let em = if width > 0.0 {
+        height.min(1.25 * width)
+    } else {
+        height
+    };
     let threshold = 0.25 * em;
     // Les positions de `line`, de gauche à droite à l'écran.
     let mut visual: Vec<usize> = (0..line.len()).collect();
@@ -640,6 +646,51 @@ mod tests {
         let chars = ['ب', 'ا', 'ك', 'ت', ' '];
         let line = [3, 2, 4, 1, 0];
         assert!(word_gaps(&line, &with_space, &chars).is_empty());
+    }
+
+    /// Une ligne de glyphes hauts et étroits (boîte de police arabe : 54 × 15) dont le blanc
+    /// entre deux mots vaut 5 pt, posée de gauche à droite à l'écran.
+    fn tall_line(chars: &[char]) -> (Vec<Rect>, Vec<usize>) {
+        // Blanc de 5 pt avant le troisième glyphe.
+        let rects: Vec<Rect> = (0..chars.len())
+            .map(|i| Rect {
+                x: i as f32 * 15.0 + if i >= 2 { 5.0 } else { 0.0 },
+                y: 700.0,
+                w: 15.0,
+                h: 54.0,
+            })
+            .collect();
+        // Ordre logique d'une ligne de droite à gauche.
+        (rects, (0..chars.len()).rev().collect())
+    }
+
+    #[test]
+    fn word_gaps_caps_the_em_by_the_glyph_width() {
+        // 0,25 × 54 = 13,5 > 5 : sans le plafond, le blanc passerait inaperçu.
+        let chars = ['ب', 'ا', 'ك', 'ت'];
+        let (rects, line) = tall_line(&chars);
+        assert_eq!(word_gaps(&line, &rects, &chars), vec![1]);
+    }
+
+    #[test]
+    fn word_gaps_ignores_left_to_right_lines() {
+        let chars = ['a', 'b', 'c', 'd'];
+        let (rects, _) = tall_line(&chars);
+        assert!(word_gaps(&[0, 1, 2, 3], &rects, &chars).is_empty());
+    }
+
+    #[test]
+    fn word_gaps_ignores_hairline_gaps_of_zero_width_glyphs() {
+        let chars = ['ب', 'ا', 'ك', 'ت'];
+        let rects: Vec<Rect> = (0..4)
+            .map(|i| Rect {
+                x: i as f32 * 0.5,
+                y: 700.0,
+                w: 0.0,
+                h: 12.0,
+            })
+            .collect();
+        assert!(word_gaps(&[3, 2, 1, 0], &rects, &chars).is_empty());
     }
 
     /// Largeur et hauteur des caractères des tests (Helvetica 10 pt : environ 6 × 12).

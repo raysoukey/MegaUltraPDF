@@ -1,9 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { pickPdfFiles, pickSavePath } from '$lib/api';
   import { rotatedSize } from '$lib/logic/geometry';
   import { clickSelection, moveTarget, shiftAfterInsert, slotAtY } from '$lib/logic/pageselection';
-  import { isDrag } from '$lib/logic/reorder';
+  import { edgeScroll, isDrag } from '$lib/logic/reorder';
   import { pageUrl, renderScale } from '$lib/pageUrl';
   import { screen } from '$lib/state/screen.svelte';
   import {
@@ -149,21 +150,34 @@
   // ---- Glisser pour réordonner (événements pointeur) ----
   // Le glisser-déposer HTML5 ne fonctionne pas sous Windows : Tauri intercepte le
   // glisser-déposer natif de la fenêtre (dépôt de fichiers). Voir `logic/reorder.ts`.
+  // Après l'appui, mouvements et relâchement s'écoutent sur la **fenêtre** : la vignette de
+  // départ peut sortir de la liste virtualisée (démontée) pendant le défilement, et le
+  // relâchement peut avoir lieu n'importe où (relecture de la PR C du Lot 13).
   function onPointerDown(e: PointerEvent, i: number) {
-    // Un nouvel appui annule un « clic à ignorer » resté en suspens.
+    // Un nouvel appui annule un « clic à ignorer » et un glisser restés en suspens.
     swallowClick = false;
+    stopListening();
+    endDrag();
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
     press = { index: i, x: e.clientX, y: e.clientY };
-    // Les mouvements suivants arrivent à cette vignette même hors d'elle. (Un événement
-    // fabriqué par script n'a pas de pointeur actif : la capture échoue, sans gravité.)
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch {
-      // sans capture, les mouvements arrivent à la vignette survolée
-    }
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', cancelDrag);
+    window.addEventListener('keydown', onDragKey);
+  }
+  function stopListening() {
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', cancelDrag);
+    window.removeEventListener('keydown', onDragKey);
   }
   function onPointerMove(e: PointerEvent) {
     if (!press) return;
+    // Bouton relâché hors de la fenêtre (le `pointerup` s'est perdu) : glisser abandonné.
+    if (e.buttons === 0) {
+      cancelDrag();
+      return;
+    }
     if (!dragging) {
       if (!isDrag(press.x, press.y, e.clientX, e.clientY)) return;
       dragging = true;
@@ -172,17 +186,30 @@
         setSelectedPages(doc, [press.index]);
       }
     }
-    const top = list?.firstElementChild?.getBoundingClientRect().top ?? 0;
-    dropSlot = slotAtY(
-      e.clientY - top,
-      tops,
-      tops.map((_, i) => heightFor(i)),
-    );
+    if (!list) return;
+    const area = list.getBoundingClientRect();
+    // Près d'un bord, la liste défile : on atteint une page lointaine en glissant.
+    list.scrollTop += edgeScroll(e.clientY, area.top, area.bottom);
+    // Hors de la liste, aucun emplacement : relâcher là ne déplace rien.
+    const inside =
+      e.clientX >= area.left &&
+      e.clientX <= area.right &&
+      e.clientY >= area.top &&
+      e.clientY <= area.bottom;
+    const top = list.firstElementChild?.getBoundingClientRect().top ?? 0;
+    dropSlot = inside
+      ? slotAtY(
+          e.clientY - top,
+          tops,
+          tops.map((_, i) => heightFor(i)),
+        )
+      : null;
   }
   function onPointerUp() {
     const slot = dropSlot;
     const moved = dragging;
     press = null;
+    stopListening();
     endDrag();
     if (!moved) return;
     // Le `click` qui suit un glisser arrive dans la même tâche que `pointerup` : on l'ignore,
@@ -202,14 +229,25 @@
         );
     });
   }
-  function onPointerCancel() {
+  /** Échap pendant un glisser : abandon, rien ne bouge. */
+  function onDragKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && dragging) {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelDrag();
+    }
+  }
+  function cancelDrag() {
     press = null;
+    stopListening();
     endDrag();
   }
   function endDrag() {
     dragging = false;
     dropSlot = null;
   }
+  // Composant démonté au milieu d'un glisser (onglet fermé) : plus d'écoute sur la fenêtre.
+  onDestroy(stopListening);
 </script>
 
 <div class="panel">
@@ -271,9 +309,6 @@
           draggable="false"
           onclick={(e) => onClick(e, i)}
           onpointerdown={(e) => onPointerDown(e, i)}
-          onpointermove={onPointerMove}
-          onpointerup={onPointerUp}
-          onpointercancel={onPointerCancel}
         >
           <img
             src={pageUrl(

@@ -26,5 +26,42 @@
   },
   {
     "shot": "01-apres-glisser.png"
+  },
+  {
+    "eval": "(async () => { window.__o0 = await Promise.all([0, 1, 2].map((page) => window.__TAURI_INTERNALS__.invoke('page_text', { id: 1, page }))).then((t) => t.map((s) => s.trim()).join(' | ')); return window.__o0; })()",
+    "label": "ordre des pages avant les cas limites"
+  },
+  {
+    "eval": "(() => { const th = document.querySelectorAll('.thumb'); const r = th[0].getBoundingClientRect(); const x = r.left + 10, y = r.top + r.height / 2; const ev = (el, type, px, py, buttons) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons, clientX: px, clientY: py })); const undo = () => document.querySelector('button[aria-label^=\"Annuler\"]').getAttribute('aria-label'); ev(th[0], 'pointerdown', x, y, 1); ev(th[0], 'pointermove', x, y + 20, 1); ev(document.body, 'pointermove', x + 600, y + 40, 1); const ind = document.querySelector('.drop-indicator') !== null; ev(document.body, 'pointerup', x + 600, y + 40, 0); return 'indicateur hors liste : ' + ind; })()",
+    "label": "glisser puis relâcher sur la page (hors de la liste)"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "(async () => { const o = await Promise.all([0, 1, 2].map((page) => window.__TAURI_INTERNALS__.invoke('page_text', { id: 1, page }))).then((t) => t.map((s) => s.trim()).join(' | ')); return (o === window.__o0) || 'ERREUR ' + window.__o0 + ' → ' + o; })()",
+    "label": "relâcher hors de la liste ne déplace rien"
+  },
+  {
+    "eval": "(() => { const th = document.querySelectorAll('.thumb'); const r = th[0].getBoundingClientRect(); const x = r.left + 10, y = r.top + r.height / 2; const ev = (el, type, px, py, buttons) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons, clientX: px, clientY: py })); const undo = () => document.querySelector('button[aria-label^=\"Annuler\"]').getAttribute('aria-label'); ev(th[0], 'pointerdown', x, y, 1); ev(th[0], 'pointermove', x, y + 20, 1); ev(th[1], 'pointermove', x, th[1].getBoundingClientRect().bottom - 5, 1); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); const ind = document.querySelector('.drop-indicator') !== null; ev(th[1], 'pointerup', x, th[1].getBoundingClientRect().bottom - 5, 0); return 'indicateur après Échap : ' + ind; })()",
+    "label": "glisser puis Échap"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "(async () => { const o = await Promise.all([0, 1, 2].map((page) => window.__TAURI_INTERNALS__.invoke('page_text', { id: 1, page }))).then((t) => t.map((s) => s.trim()).join(' | ')); return (o === window.__o0 && !document.querySelector('.drop-indicator')) || 'ERREUR ' + window.__o0 + ' → ' + o; })()",
+    "label": "Échap annule le glisser"
+  },
+  {
+    "eval": "(() => { const th = document.querySelectorAll('.thumb'); const r = th[0].getBoundingClientRect(); const x = r.left + 10, y = r.top + r.height / 2; const ev = (el, type, px, py, buttons) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons, clientX: px, clientY: py })); const undo = () => document.querySelector('button[aria-label^=\"Annuler\"]').getAttribute('aria-label'); ev(th[0], 'pointerdown', x, y, 1); ev(th[0], 'pointermove', x, y + 20, 1); ev(document.body, 'pointermove', x, y + 60, 0); const t1 = th[1].getBoundingClientRect(); ev(th[1], 'pointerdown', t1.left + 10, t1.top + 20, 1); ev(th[1], 'pointerup', t1.left + 10, t1.top + 20, 0); th[1].click(); return document.querySelector('.drop-indicator') === null; })()",
+    "label": "relâchement perdu (bouton levé hors de la fenêtre), puis simple clic"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "assert": "(async () => { const o = await Promise.all([0, 1, 2].map((page) => window.__TAURI_INTERNALS__.invoke('page_text', { id: 1, page }))).then((t) => t.map((s) => s.trim()).join(' | ')); return (o === window.__o0) || 'ERREUR ' + window.__o0 + ' → ' + o; })()",
+    "label": "un glisser abandonné ne transforme pas le clic suivant en déplacement"
   }
 ]

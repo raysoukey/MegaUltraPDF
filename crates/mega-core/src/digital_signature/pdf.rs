@@ -337,10 +337,16 @@ fn check_one(
             return info;
         }
     };
-    // Document certifié sans modification permise (`/DocMDP /P 1`) : toute révision ajoutée
+    // Ce qui suit la seconde plage signée, examiné une fois : rien que des blancs PDF (la
+    // signature couvre tout le fichier), ou une vraie révision ajoutée (un `startxref` : toute
+    // mise à jour incrémentale se termine par lui, §7.5.6). Des octets parasites (bourrage NUL,
+    // déchets après `%%EOF`) ne sont ni l'un ni l'autre.
+    let tail = &bytes[b + c..];
+    let tail_is_blank = tail.iter().all(|byte| is_pdf_whitespace(*byte));
+    let later_revision = !tail_is_blank && tail.windows(9).any(|w| w == b"startxref");
+    // Document certifié sans modification permise (`/DocMDP /P 1`) : une révision ajoutée
     // après la signature viole la certification, quel que soit le reste du verdict.
-    if certified_without_changes(doc, value) && !bytes[b + c..].iter().all(u8::is_ascii_whitespace)
-    {
+    if certified_without_changes(doc, value) && later_revision {
         info.status = SignatureStatus::Invalid(SigIssue::CertifiedThenModified);
         return info;
     }
@@ -379,8 +385,15 @@ fn check_one(
     }
     info.status = check.status;
     // Couvre tout le fichier si rien ne suit la seconde plage, sinon des blancs seulement.
-    info.covers_whole_document = bytes[b + c..].iter().all(u8::is_ascii_whitespace);
+    info.covers_whole_document = tail_is_blank;
     info
+}
+
+/// Blanc au sens PDF (ISO 32000-1, §7.2.2, tableau 1) : NUL, tabulation, fin de ligne, saut
+/// de page, retour chariot, espace. `u8::is_ascii_whitespace` ignore NUL, qu'un transfert
+/// ajoute parfois en bourrage après `%%EOF`.
+fn is_pdf_whitespace(byte: u8) -> bool {
+    matches!(byte, 0x00 | b'\t' | b'\n' | 0x0C | b'\r' | b' ')
 }
 
 /// Les signatures de ce fichier PDF, vérifiées (aucune : liste vide). Un PDF chiffré par mot

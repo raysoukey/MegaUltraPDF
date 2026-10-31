@@ -1338,19 +1338,28 @@ pub fn certified_pdf(p: i64) -> Vec<u8> {
 /// Pourquoi : mesurer comment le vérificateur classe chaque format (`adbe.pkcs7.sha1`,
 /// `ETSI.RFC3161`…) sans fabriquer de vraie signature.
 pub fn sig_subfilter_pdf(sub_filter: &str) -> Vec<u8> {
-    signature_field_pdf(sub_filter, "")
+    signature_field_pdf(sub_filter, "", 128)
 }
 
-/// Un document **certifié** (`/DocMDP /P 1` : aucune modification permise) puis modifié par une
-/// révision incrémentale (un nouveau `/Info`) : la signature ne couvre plus tout le fichier.
+/// Un champ de signature **certifiant** (`/DocMDP` dans `/Reference`, niveau `p` : 1 aucune modification permise, 2
+/// formulaires et signatures, 3 aussi les annotations). La signature est un espace réservé
+/// (zéros) assez grand pour une vraie signature CMS RSA, que les tests calculent sur le
+/// `/ByteRange` (déjà cohérent).
 ///
-/// Pourquoi : une certification violée ne doit pas être rapportée « intègre » (audit E14).
-/// La signature est factice mais son `/ByteRange` est cohérent ; le verdict de certification
-/// ne dépend pas du CMS.
-pub fn certified_then_modified_pdf() -> Vec<u8> {
-    let reference = "/Reference [<< /Type /SigRef /TransformMethod /DocMDP \
-                     /TransformParams << /Type /TransformParams /P 1 /V /1.2 >> >>]";
-    let mut bytes = signature_field_pdf("adbe.pkcs7.detached", reference);
+/// Pourquoi : distinguer une vraie révision ajoutée après la certification (verdict
+/// `CertifiedThenModified`) d'octets parasites sans révision (bourrage NUL, déchets après
+/// `%%EOF`), qui ne modifient pas le document (revue de la partie C du Lot 14).
+pub fn certified_field_pdf(p: u8) -> Vec<u8> {
+    let reference = format!(
+        "/Reference [<< /Type /SigRef /TransformMethod /DocMDP \
+         /TransformParams << /Type /TransformParams /P {p} /V /1.2 >> >>]"
+    );
+    signature_field_pdf("adbe.pkcs7.detached", &reference, 16_384)
+}
+
+/// `bytes` suivis d'une révision incrémentale (un nouveau `/Info`, objet 7 de
+/// [`certified_field_pdf`]) : une vraie modification après la signature.
+pub fn append_revision(mut bytes: Vec<u8>) -> Vec<u8> {
     // Ancienne table : le nombre qui suit le dernier `startxref`.
     let marker = b"startxref\n";
     let at = bytes
@@ -1375,10 +1384,20 @@ pub fn certified_then_modified_pdf() -> Vec<u8> {
     bytes
 }
 
-/// Le PDF à un champ de signature commun à [`sig_subfilter_pdf`] et
-/// [`certified_then_modified_pdf`] ; `extra` s'ajoute au dictionnaire `/Sig`.
-fn signature_field_pdf(sub_filter: &str, extra: &str) -> Vec<u8> {
-    let zeros = "0".repeat(128);
+/// Un document **certifié** (`/DocMDP /P 1` : aucune modification permise) puis modifié par une
+/// révision incrémentale (un nouveau `/Info`) : la signature ne couvre plus tout le fichier.
+///
+/// Pourquoi : une certification violée ne doit pas être rapportée « intègre » (audit E14).
+/// La signature est factice mais son `/ByteRange` est cohérent ; le verdict de certification
+/// ne dépend pas du CMS.
+pub fn certified_then_modified_pdf() -> Vec<u8> {
+    append_revision(certified_field_pdf(1))
+}
+
+/// Le PDF à un champ de signature commun à [`sig_subfilter_pdf`] et [`certified_field_pdf`] ;
+/// `extra` s'ajoute au dictionnaire `/Sig`, `/Contents` réserve `hex_digits` chiffres.
+fn signature_field_pdf(sub_filter: &str, extra: &str, hex_digits: usize) -> Vec<u8> {
+    let zeros = "0".repeat(hex_digits);
     let content = "0 0 1 rg 10 10 50 50 re f";
     let objects = vec![
         "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] /SigFlags 3 >> >>"

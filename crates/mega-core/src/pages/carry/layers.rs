@@ -36,6 +36,9 @@ fn filtered_order(
     else {
         return Vec::new();
     };
+    // [Apprentissage] Pile de `&mut` : chaque emprunt dépilé est consommé, et les sous-listes
+    // empilées sont des parties disjointes de la liste qu'il désignait (voir
+    // `carry::visit_references`).
     let mut stack: Vec<(&mut Vec<Object>, usize)> = vec![(&mut order, 0)];
     while let Some((items, depth)) = stack.pop() {
         items.retain_mut(|item| match item {

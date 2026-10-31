@@ -261,6 +261,8 @@ pub fn merge(docs: &[&Document]) -> CoreResult<Vec<u8>> {
         .collect();
     let carried = with_catalogs(copied, &sources)?;
     // Le plus récent des en-têtes sources : la fusion ne doit pas rabaisser la version.
+    // [Apprentissage] `filter_map` écarte les sources sans version connue (`None`) ; `max` d'un
+    // itérateur rend lui-même une `Option`, `None` s'il ne reste aucune version.
     let version = docs.iter().filter_map(|d| d.file_version()).max();
     let deleted = docs.iter().any(|d| d.needs_cleanup);
     crate::cleanup::before_save(&carried, None, version)?.into_checked(deleted, "fusion refusée")

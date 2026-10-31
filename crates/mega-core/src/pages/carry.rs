@@ -132,6 +132,9 @@ fn rewrite_references(
     cache: &mut HashMap<ObjectId, ObjectId>,
     pending: &mut Vec<(ObjectId, ObjectId)>,
 ) -> Object {
+    // [Apprentissage] Cette fermeture **capture** `dst`, `cache` et `pending` et les modifie à
+    // chaque appel : elle est `FnMut` (et non `Fn`), ce que `visit_references` accepte (voir
+    // `docs/apprentissage/concepts/iterateurs-et-fermetures.md`).
     visit_references(&mut object, |reference| {
         if let Object::Reference(id) = reference {
             let id = *id;
@@ -171,6 +174,9 @@ fn reference_in_target(
 /// Appelle `f` sur chaque référence contenue dans `object`, à toute profondeur (pile
 /// explicite, voir l'en-tête du module).
 fn visit_references(object: &mut Object, mut f: impl FnMut(&mut Object)) {
+    // [Apprentissage] Une pile de `&mut` compile parce que chaque emprunt dépilé est
+    // **consommé** : on empile des emprunts de ses enfants, des parties disjointes de ce qu'il
+    // désigne, et lui-même n'est plus utilisé. Deux `&mut` vivants ne visent jamais le même objet.
     let mut stack: Vec<&mut Object> = vec![object];
     while let Some(current) = stack.pop() {
         match current {
@@ -290,6 +296,10 @@ fn is_annotation(dict: &Dictionary) -> bool {
 
 /// Empile les valeurs de même clé de `a` (source) et `b` (copie), sauf les clés que PDFium ne
 /// renumérote pas.
+///
+/// \[Apprentissage\] La même durée de vie `'a` pour `a`, `b` et le contenu de `stack` : les
+/// valeurs empilées sont des emprunts dans les deux dictionnaires, qui doivent donc vivre au
+/// moins aussi longtemps que la pile.
 fn push_pairs<'a>(a: &'a Dictionary, b: &'a Dictionary, stack: &mut Vec<(&'a Object, &'a Object)>) {
     for (key, value) in a.iter() {
         if NOT_RENUMBERED.contains(&key.as_slice()) {
@@ -533,6 +543,7 @@ pub(crate) fn tree_entries(doc: &LoDocument, root: &Object, leaf: &[u8]) -> Vec<
             continue;
         };
         if let Ok(items) = dict.get(leaf).and_then(Object::as_array) {
+            // Paires `[clé valeur]` : même idiome que `cleanup::filter_name_pairs`.
             let (pairs, _odd) = items.as_chunks::<2>();
             for [key, value] in pairs {
                 entries.push((key.clone(), value.clone()));

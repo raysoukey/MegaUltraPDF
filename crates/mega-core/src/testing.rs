@@ -1722,10 +1722,12 @@ pub fn scanned_pdf() -> Vec<u8> {
 }
 
 /// Une page avec une note (`secret` dans son `/Contents` et dans un `/StructElem`), un
-/// popup, une réponse `/IRT`, et un `/Encrypt` dont les filtres sont `Identity` : PDFium
-/// l'ouvre, mais `lopdf` ne le relit pas (`crypt::check_crypt_filters`), donc le nettoyage
-/// d'enregistrement ne peut pas s'y appliquer. Sert à prouver qu'une suppression y est
-/// refusée plutôt que de laisser le texte supprimé dans le fichier (audit E1).
+/// popup, une réponse `/IRT`, et un `/Encrypt` dont les filtres sont `Identity` (rien n'est
+/// chiffré en dehors des pièces jointes). PDFium l'ouvre ; depuis le Lot 14, `lopdf` le relit
+/// par la session passe-plat (`crypt::LopdfSession`), donc le nettoyage s'y applique et une
+/// suppression y est permise : sert à prouver que le texte supprimé n'y survit pas et que le
+/// `/Encrypt` d'origine est gardé (audit E1). Sa variante à filtre inconnu (`tests/cleanup.rs`)
+/// est, elle, refusée.
 pub fn identity_encrypted_note_pdf(secret: &str) -> Vec<u8> {
     let content = "BT /F1 24 Tf 72 400 Td (Visible) Tj ET";
     let objects = [

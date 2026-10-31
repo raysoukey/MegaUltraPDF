@@ -29,7 +29,7 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 /// Pourquoi : quand `lopdf` ne relit pas le fichier, `before_save` rend les octets de PDFium
 /// tels quels, orphelins compris ; l'appelant qui vient de supprimer quelque chose doit le
 /// savoir pour refuser d'écrire un fichier où la suppression survivrait (audit E1). Les
-/// appelants du crate passent par [`Saved::into_checked`], qui fait cette vérification.
+/// appelants du crate passent par `Saved::into_checked`, qui fait cette vérification.
 ///
 /// \[Apprentissage\] `#[must_use]` : le compilateur avertit si une valeur de ce type est
 /// ignorée (calculée puis jetée sans être lue), ce qui serait ici un nettoyage oublié.
@@ -57,7 +57,9 @@ impl Saved {
 
 /// Octets prêts à écrire : notes sans apparence imposée, `/InkList` sur les formes, objets
 /// orphelins élagués et renumérotés. Un document chiffré (ouvert avec `password`) est nettoyé
-/// en clair puis **rechiffré à l'identique** (`crypt::LopdfSession`, Lot 10).
+/// en clair puis **rechiffré à l'identique** (`crypt::LopdfSession`, Lot 10). Un document
+/// à filtres `Identity` est relu en **passe-plat** (rien à déchiffrer) : élagué, mais **pas
+/// renuméroté**, car le numéro d'un objet entre dans la clé de ses octets chiffrés (Lot 14).
 ///
 /// `min_version` est la version d'en-tête du document d'origine : PDFium ne sait écrire que
 /// 1.0 à 1.7 (un `%PDF-2.0` ressort en `%PDF-1.0`), et l'en-tête écrit est le plus grand de
@@ -79,7 +81,9 @@ pub fn before_save(
     };
     let keeps_numbers = session.keeps_object_numbers();
     let doc = &mut session.doc;
-    // [Apprentissage] Les tuples se comparent champ par champ : (2, 0) > (1, 7), d'où `max`.
+    // [Apprentissage] `Option` est ordonnée : `None` est plus petit que tout `Some(_)`, et deux
+    // `Some` se comparent par leur contenu. `max` garde donc la version connue, ou la plus
+    // récente des deux (comparaison des tuples : voir `crypt::raise_header_version`).
     let written = crate::crypt::header_version(bytes).max(min_version);
     if let Some((major, minor)) = written {
         doc.version = format!("{major}.{minor}");
@@ -573,6 +577,13 @@ const MAX_DEPTH: usize = crate::outline::MAX_OUTLINE_DEPTH;
 ///
 /// Pourquoi : un autre lecteur suivrait ces références vers un objet nul, et un objet encore
 /// cité échapperait à l'élagage (`prune`) qui suit.
+///
+/// Critère d'une page morte : l'objet visé n'est pas une page de l'arbre que lit `lopdf`
+/// (objet absent, objet qui n'est pas un dictionnaire de page, ou page détachée de l'arbre).
+/// Ce critère suppose que `lopdf` voit les mêmes pages que PDFium : les octets nettoyés sont
+/// ceux que PDFium vient d'écrire, et `move_pages` refuse déjà un document où les deux comptes
+/// diffèrent. `reload_if_sane` vérifie ensuite que la réécriture garde le nombre de pages lu par
+/// `lopdf`, mais un désaccord entre les deux bibliothèques n'est pas mesuré ici.
 pub(crate) fn neutralize_dead_destinations(doc: &mut Document) {
     let live: BTreeSet<ObjectId> = doc.get_pages().into_values().collect();
     if live.is_empty() {
@@ -620,6 +631,10 @@ pub(crate) fn neutralize_dead_destinations(doc: &mut Document) {
 }
 
 /// Ce qui est mort : toute page hors de `live`, tout nom de `names`.
+///
+/// \[Apprentissage\] **Durée de vie nommée** : `Dead<'a>` ne possède pas ses ensembles, il les
+/// emprunte. `'a` dit au compilateur qu'une valeur `Dead` ne doit pas vivre plus longtemps que
+/// les ensembles qu'elle cite (voir `docs/apprentissage/concepts/ownership-et-emprunts.md`).
 struct Dead<'a> {
     live: &'a BTreeSet<ObjectId>,
     names: &'a BTreeSet<Vec<u8>>,
@@ -848,6 +863,8 @@ fn filter_name_pairs(
     kept: &mut BTreeSet<Vec<u8>>,
 ) -> Option<Vec<Object>> {
     let items = node.get(b"Names").and_then(Object::as_array).ok()?;
+    // [Apprentissage] `as_chunks::<2>()` découpe la tranche en tableaux `[T; 2]` (et rend à part
+    // un éventuel élément impair) : `for [key, value] in pairs` les déstructure sans index.
     let (pairs, _odd) = items.as_chunks::<2>();
     let mut out = Vec::with_capacity(items.len());
     let mut changed = false;

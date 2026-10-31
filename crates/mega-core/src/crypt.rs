@@ -253,9 +253,11 @@ fn hide_encrypt_entry(bytes: &[u8]) -> Option<Vec<u8>> {
     renamed.then_some(out)
 }
 
-/// Un document `lopdf` déchiffré le temps d'une passe, à rechiffrer à l'identique.
+/// Un document `lopdf` le temps d'une passe : déchiffré puis rechiffré à l'identique, ou, pour
+/// des filtres `Identity`, relu en **passe-plat** (ni déchiffré ni rechiffré, jamais renuméroté).
 pub(crate) struct LopdfSession {
-    /// Le document, objets en clair.
+    /// Le document, objets en clair (en passe-plat : tels que lus, seules les pièces jointes
+    /// restant chiffrées).
     pub(crate) doc: LoDocument,
     /// L'état de chiffrement d'origine (`None` : document non chiffré).
     state: Option<EncryptionState>,
@@ -314,8 +316,9 @@ impl LopdfSession {
 
     /// Session d'un fichier `/StmF /StrF Identity` : relu sans déchiffrement (la première
     /// lecture a déjà authentifié le mot de passe), avec `/Encrypt` remis dans la remorque pour
-    /// que l'élagage et la renumérotation le gardent ; `/ID` n'est pas touché. `finish` n'a
-    /// rien à rechiffrer : ce qui est chiffré (les pièces jointes) n'a jamais été lu en clair.
+    /// que l'élagage le garde ; `/ID` n'est pas touché, et les objets ne doivent pas être
+    /// renumérotés (`keeps_object_numbers`). `finish` n'a rien à rechiffrer : ce qui est
+    /// chiffré (les pièces jointes) n'a jamais été lu en clair.
     fn passthrough(state: &EncryptionState, bytes: &[u8], repair: bool) -> CoreResult<Self> {
         let hidden = hide_encrypt_entry(bytes).ok_or_else(refuse)?;
         let loaded = if repair {

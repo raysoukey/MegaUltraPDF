@@ -583,8 +583,10 @@ fn removing_operations_set_needs_cleanup_on_a_normal_file() {
     assert!(doc.needs_cleanup(), "set_object_text");
 }
 
+/// Le passe-plat `Identity` et un fichier ordinaire se nettoient ; un filtre inconnu de lopdf,
+/// non.
 #[test]
-fn can_clean_distinguishes_identity_filters_from_plain_files() {
+fn can_clean_accepts_identity_pass_through_and_plain_files_but_not_unknown_filters() {
     assert!(mega_core::cleanup::can_clean(
         &identity_encrypted_note_pdf("x"),
         None

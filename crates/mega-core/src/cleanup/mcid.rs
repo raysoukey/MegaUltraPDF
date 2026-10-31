@@ -273,8 +273,8 @@ fn null_parent_tree_entries(
             continue;
         };
         if let Ok(Object::Array(nums)) = node.get_mut(b"Nums") {
-            for pair in nums.chunks_mut(2) {
-                let [key, value] = pair else { continue };
+            // Paires `[clé valeur]` : même idiome que `cleanup::filter_name_pairs`.
+            for [key, value] in nums.as_chunks_mut::<2>().0 {
                 let Some(indices) = key.as_i64().ok().and_then(|k| by_key.get(&k)) else {
                     continue;
                 };

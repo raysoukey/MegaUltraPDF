@@ -111,7 +111,7 @@ pub(crate) fn before_save_with(
     let doc = &mut session.doc;
     // [Apprentissage] `Option` est ordonnée : `None` est plus petit que tout `Some(_)`, et deux
     // `Some` se comparent par leur contenu. `max` garde donc la version connue, ou la plus
-    // récente des deux (comparaison des tuples : voir `crypt::raise_header_version`).
+    // récente des deux (comparaison des tuples : voir `crypt::parse_version`).
     let written = crate::crypt::header_version(bytes).max(min_version);
     if let Some((major, minor)) = written {
         doc.version = format!("{major}.{minor}");

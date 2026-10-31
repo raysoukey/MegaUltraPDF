@@ -379,9 +379,19 @@ impl LopdfSession {
 pub(crate) fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
     let head = &bytes[..bytes.len().min(1024)];
     let start = head.windows(5).position(|w| w == b"%PDF-")? + 5;
-    let digits = head.get(start..start + 3)?;
-    match digits {
-        [major @ b'0'..=b'9', b'.', minor @ b'0'..=b'9'] => Some((major - b'0', minor - b'0')),
+    parse_version(head.get(start..)?)
+}
+
+/// `M.m…` → `(M, m)` : les deux chiffres d'une version PDF (chiffres uniques, comme le sont
+/// toutes les versions PDF ; ce qui suit est ignoré). Sert à l'en-tête (`%PDF-1.7`), au
+/// `/Version` du catalogue (un nom, `/1.7`) et à la version d'un document `lopdf` (`"1.7"`) :
+/// un seul analyseur pour les trois.
+///
+/// \[Apprentissage\] Les tuples se comparent champ par champ : `(1, 4) < (1, 7) < (2, 0)` ;
+/// le couple dit ce que l'on compare, là où une chaîne comparerait des caractères.
+pub(crate) fn parse_version(text: &[u8]) -> Option<(u8, u8)> {
+    match text {
+        [major @ b'0'..=b'9', b'.', minor @ b'0'..=b'9', ..] => Some((major - b'0', minor - b'0')),
         _ => None,
     }
 }
@@ -392,7 +402,7 @@ pub(crate) fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
 pub(crate) fn raise_header_version(bytes: &[u8], min_version: Option<(u8, u8)>) -> Vec<u8> {
     let mut out = bytes.to_vec();
     if let (Some(min), Some(current)) = (min_version, header_version(bytes))
-        // [Apprentissage] Les tuples se comparent champ par champ : (2, 0) > (1, 7).
+        // Comparaison de tuples, champ par champ (voir `parse_version`).
         && min > current
         // Une composante à deux chiffres ne tient pas dans un octet `M` ou `n`.
         && min.0 <= 9

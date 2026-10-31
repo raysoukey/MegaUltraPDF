@@ -593,16 +593,6 @@ fn push_to_array(
     Ok(())
 }
 
-/// `M.m` → `(M, m)` (chiffres uniques, comme le sont toutes les versions PDF).
-fn parse_version(text: &[u8]) -> Option<(u8, u8)> {
-    match text {
-        [major, b'.', minor, ..] if major.is_ascii_digit() && minor.is_ascii_digit() => {
-            Some((major - b'0', minor - b'0'))
-        }
-        _ => None,
-    }
-}
-
 /// Position unique de `needle` dans `haystack` à partir de `from` ; `None` si absente ou
 /// présente plusieurs fois (un espace réservé ambigu ne doit jamais être réécrit).
 fn find_unique(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -651,7 +641,7 @@ pub(crate) fn sign_bytes(
         .ok()
         .and_then(|c| c.get(b"Version").ok())
         .and_then(|v| v.as_name().ok())
-        .and_then(parse_version);
+        .and_then(crate::crypt::parse_version);
     // L'en-tête peut suivre des octets parasites (§7.5.2, note) : `crypt::header_version` le
     // cherche dans les 1024 premiers octets.
     let effective_version = crate::crypt::header_version(base).max(catalog_version);

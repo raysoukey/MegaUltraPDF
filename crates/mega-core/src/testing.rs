@@ -2295,3 +2295,59 @@ fn cid_keyed_otf(cid: u16) -> Vec<u8> {
     out.extend(data);
     out
 }
+
+/// Une page portant des annotations de sous-types que nous ne créons pas, chacune dans un
+/// rectangle disjoint : `Polygon`, `FreeText` (avec `/DA`, sans `/AP`), `Square` sans `/AP`,
+/// `Link` nommé, `FileAttachment` (fichier `piece.txt` contenant « contenu »), `Text` avec
+/// son `Popup`.
+///
+/// Pourquoi : un fichier venu d'un autre logiciel ne ressemble jamais à ce que nous écrivons ;
+/// ce PDF sert au banc de compatibilité et aux tests qui vérifient que ces annotations sont
+/// lues sans être abîmées (audit L11, L15).
+pub fn third_party_annots_pdf() -> Vec<u8> {
+    let stream = |dict: &str, content: &str| {
+        format!(
+            "<< {dict} /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+    };
+    let objects: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Names << /Dests << /Names [(chap) [3 0 R /Fit]] >> >> \
+         /AcroForm << /Fields [] /DR << /Font << /Helv 4 0 R >> >> /DA (/Helv 0 Tf 0 g) >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Resources << /Font << /Helv 4 0 R >> >> \
+         /Contents 12 0 R /Annots [5 0 R 6 0 R 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+        // 5 Polygon
+        "<< /Type /Annot /Subtype /Polygon /Rect [50 400 150 480] /Vertices [50 400 150 400 100 480] \
+         /C [1 0 0] /BS << /W 2 >> /Contents (Polygone) /P 3 0 R >>"
+            .to_string(),
+        // 6 FreeText sans /AP
+        "<< /Type /Annot /Subtype /FreeText /Rect [200 400 350 440] /DA (/Helv 12 Tf 0 g) \
+         /Contents (Texte libre tiers) /C [1 1 0.8] /P 3 0 R >>"
+            .to_string(),
+        // 7 Square sans /AP
+        "<< /Type /Annot /Subtype /Square /Rect [50 250 150 350] /C [0 0 1] /IC [1 1 0] /BS << /W 3 >> \
+         /Contents (Carre) /P 3 0 R >>"
+            .to_string(),
+        // 8 Link nommé
+        "<< /Type /Annot /Subtype /Link /Rect [200 250 350 300] /Border [0 0 0] /Dest (chap) /P 3 0 R >>"
+            .to_string(),
+        // 9 FileAttachment
+        "<< /Type /Annot /Subtype /FileAttachment /Rect [400 400 420 420] /Name /PushPin \
+         /FS << /Type /Filespec /F (piece.txt) /UF (piece.txt) /EF << /F 13 0 R >> >> /Contents (PJ) /P 3 0 R >>"
+            .to_string(),
+        // 10 Text + Popup
+        "<< /Type /Annot /Subtype /Text /Rect [400 250 420 270] /Contents (Note tierce) /T (Tiers) \
+         /Popup 11 0 R /Open true /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Popup /Rect [300 100 450 200] /Parent 10 0 R /Open true /P 3 0 R >>"
+            .to_string(),
+        stream("", "BT /Helv 10 Tf 20 20 Td (fond) Tj ET"),
+        stream("/Type /EmbeddedFile", "contenu"),
+    ];
+    assemble_pdf(&objects, "<< >>")
+}

@@ -2,7 +2,8 @@
 //! Pièces jointes : liste, extraction, ajout, suppression.
 
 use mega_core::edit::EditCommand;
-use mega_core::testing::{attachments_pdf, sample_pdf};
+use mega_core::security::{Permissions, Protection};
+use mega_core::testing::{attachments_pdf, sample_pdf, third_party_annots_pdf};
 use mega_core::{CoreError, Document};
 
 fn with_attachments() -> Document {
@@ -114,4 +115,55 @@ fn attachment_too_big_or_missing_is_refused() {
         Err(CoreError::InvalidOperation(_))
     ));
     assert_eq!(doc.attachments().unwrap().len(), 2, "rien n'a changé");
+}
+
+/// Audit L11 : une annotation `FileAttachment` est une pièce jointe de page.
+#[test]
+fn file_attachment_annotations_are_listed_with_their_page_and_extracted() {
+    let doc = Document::from_bytes(third_party_annots_pdf(), None).unwrap();
+    let list = doc.attachments().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].index, 0);
+    assert_eq!(list[0].name, "piece.txt");
+    assert_eq!(list[0].size, 7);
+    assert_eq!(list[0].page, Some(0));
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("piece.txt");
+    doc.save_attachment(0, &out).unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"contenu");
+}
+
+#[test]
+fn file_attachment_in_a_password_protected_document_is_extracted() {
+    let mut doc = Document::from_bytes(third_party_annots_pdf(), None).unwrap();
+    doc.protect(&Protection {
+        user_password: "ouvre".to_string(),
+        owner_password: "maitre".to_string(),
+        permissions: Permissions {
+            print: true,
+            copy: true,
+            modify: true,
+            annotate: true,
+        },
+    })
+    .unwrap();
+    let protected = doc.to_bytes().unwrap();
+    let reopened = Document::from_bytes(protected, Some("ouvre")).unwrap();
+    let list = reopened.attachments().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].page, Some(0));
+    assert_eq!(list[0].size, 7);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("p.txt");
+    reopened.save_attachment(0, &out).unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"contenu");
+}
+
+/// Supprimer une pièce jointe de page supprime son annotation.
+#[test]
+fn deleting_a_page_attachment_removes_its_annotation() {
+    let mut doc = Document::from_bytes(third_party_annots_pdf(), None).unwrap();
+    doc.delete_attachment(0).unwrap();
+    assert!(doc.attachments().unwrap().is_empty());
+    assert_eq!(doc.annotations(0).unwrap().len(), 5);
 }

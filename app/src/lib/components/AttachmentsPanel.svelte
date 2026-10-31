@@ -26,7 +26,9 @@
       {#each list as a (a.index)}
         <li>
           <span class="name" title={a.name}>{a.name}</span>
-          <span class="muted">{t.bytes(a.size)}</span>
+          <span class="muted"
+            >{t.bytes(a.size)}{a.page !== null ? ` ${t.attachmentOnPage(a.page + 1)}` : ''}</span
+          >
           <span class="buttons">
             <button
               type="button"

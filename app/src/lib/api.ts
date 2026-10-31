@@ -177,6 +177,8 @@ export interface Attachment {
   index: number;
   name: string;
   size: number;
+  /** Page (à partir de 0) de l'annotation qui porte le fichier ; `null` pour un fichier du document. */
+  page: number | null;
 }
 
 /** Résultat d'une comparaison : image PNG et compteurs. */

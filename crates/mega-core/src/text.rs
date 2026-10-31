@@ -194,6 +194,28 @@ impl Document {
         Ok((chars, false))
     }
 
+    /// Le document **courant** lu avec `lopdf`, gardé (`Document::lopdf_cache`) jusqu'à la
+    /// prochaine modification : un long document ne se relit pas à chaque page. `None` si
+    /// `lopdf` ne sait pas le lire.
+    ///
+    /// Les octets lus sont ceux du fichier tant que rien n'a changé, sinon une sérialisation
+    /// par PDFium (après un caviardage, on doit voir la page caviardée, pas l'originale).
+    pub(crate) fn lopdf_view(&self) -> Option<&lopdf::Document> {
+        if self.lopdf_cache.get().is_none() {
+            // [Apprentissage] `Cow` (« copie à l'écriture ») : soit un emprunt des octets du
+            // fichier, soit des octets fraîchement produits, sans copier les premiers.
+            let bytes: Cow<'_, [u8]> = if self.changed {
+                Cow::Owned(self.to_bytes().ok()?)
+            } else {
+                Cow::Borrowed(&self.file_bytes)
+            };
+            let loaded = crate::crypt::load_limited(&bytes, self.password()).ok();
+            // Déjà rempli entre-temps ? Impossible ici (`&self` sur un seul fil), et sans gravité.
+            let _ = self.lopdf_cache.set(loaded);
+        }
+        self.lopdf_cache.get().and_then(Option::as_ref)
+    }
+
     /// Repli de la couche de texte (audit L2) : les caractères de la page `index` retrouvés
     /// par les `/ToUnicode` de ses polices, lues avec `lopdf` (module `tounicode`, limites
     /// dans sa documentation), en espace affiché et dans l'ordre de dessin.
@@ -211,19 +233,7 @@ impl Document {
     pub(crate) fn tounicode_fallback(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
         let frame = self.page_frame(index)?;
         let page_count = usize::from(self.page_count());
-        if self.lopdf_cache.get().is_none() {
-            // [Apprentissage] `Cow` (« copie à l'écriture ») : soit un emprunt des octets du
-            // fichier, soit des octets fraîchement produits, sans copier les premiers.
-            let bytes: Cow<'_, [u8]> = if self.changed {
-                Cow::Owned(self.to_bytes()?)
-            } else {
-                Cow::Borrowed(&self.file_bytes)
-            };
-            let loaded = crate::crypt::load_limited(&bytes, self.password()).ok();
-            // Déjà rempli entre-temps ? Impossible ici (`&self` sur un seul fil), et sans gravité.
-            let _ = self.lopdf_cache.set(loaded);
-        }
-        let Some(Some(doc)) = self.lopdf_cache.get() else {
+        let Some(doc) = self.lopdf_view() else {
             return Ok(Vec::new());
         };
         let pages = doc.get_pages();

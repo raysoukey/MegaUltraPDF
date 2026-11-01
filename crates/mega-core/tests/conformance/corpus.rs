@@ -492,3 +492,39 @@ fn rewriting_repairs_damaged_corpus_files() {
             .join("\n")
     );
 }
+
+/// Expérience L19 du banc de l'audit : le texte extrait de trois fichiers réels que la mesure
+/// a trouvés justes, gardé contre une régression (sauté sans `MEGA_CORPUS`) :
+/// - CJK sans police incorporée : « 喘 » est extrait (PDFium trouve la police du système ou
+///   suit la `/ToUnicode`) ;
+/// - article imprimé par Edge (Chromium) : le banc y cherchait « ﬁ » et ne l'a pas trouvé, à
+///   juste titre (sa `/ToUnicode` n'a aucune ligature) ; on garde que « officia » sort en
+///   lettres ordinaires et qu'aucun caractère de présentation U+FB00 à U+FB06 n'apparaît ;
+/// - chiffrement AES-256 R6, mot de passe utilisateur `view` : « Potato ».
+#[test]
+fn corpus_text_samples_are_extracted() {
+    let Some(root) = crate::env_path("MEGA_CORPUS") else {
+        eprintln!("MEGA_CORPUS absent : échantillons de texte du corpus sautés");
+        return;
+    };
+    for (file, password, page, sample) in [
+        ("polices/perf_text_cjk_nonembedded.pdf", None, 0, "喘"),
+        ("local/edge-article.pdf", None, 2, "officia"),
+        (
+            "chiffrement/enc-R6-U-view-O-master.pdf",
+            Some("view"),
+            0,
+            "Potato",
+        ),
+    ] {
+        let doc = Document::open(root.join(file), password).unwrap();
+        let text = doc.page_text(page).unwrap();
+        assert!(text.contains(sample), "{file} : « {sample} » absent");
+        assert!(
+            !text.chars().any(|c| ('\u{FB00}'..='\u{FB06}').contains(&c)),
+            "{file} : ligature de présentation dans le texte"
+        );
+        let hits = doc.search_page(page, sample, &Default::default()).unwrap();
+        assert!(!hits.is_empty(), "{file} : recherche de « {sample} »");
+    }
+}

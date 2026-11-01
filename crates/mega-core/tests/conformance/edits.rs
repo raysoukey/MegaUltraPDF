@@ -520,6 +520,14 @@ fn encrypted_cases() -> Vec<Case> {
             None,
             rotate_watermark_note(),
         ),
+        // Expérience E9 du banc de l'audit : le caviardage réécrit le contenu de la page, puis
+        // le fichier est rechiffré.
+        with(
+            "chiffré (ouverture) : caviardage",
+            "encrypted.pdf",
+            Some("secret"),
+            vec![json!({"kind": "redact", "page": 0, "rect": rect(60.0, 740.0, 300.0, 60.0)})],
+        ),
         with(
             "protection retirée (ouverture)",
             "encrypted.pdf",

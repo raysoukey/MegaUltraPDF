@@ -229,7 +229,10 @@ fn recount(doc: &mut LoDocument) -> CoreResult<()> {
 /// Les arguments et l'arbre sont vérifiés avant toute modification ; une erreur plus tardive
 /// (structure que la lecture tolérait) peut laisser `doc` modifié en partie : l'appelant
 /// travaille sur une copie qu'il abandonne alors.
-pub(crate) fn reorder_kids(doc: &mut LoDocument, pages: &[u16], to: u16) -> CoreResult<()> {
+///
+/// Rend `false` si l'ordre ne change pas (rien n'a été touché) : l'appelant ne marque alors pas
+/// le document modifié (un fichier signé ne serait pas réécrit pour un déplacement nul).
+pub(crate) fn reorder_kids(doc: &mut LoDocument, pages: &[u16], to: u16) -> CoreResult<bool> {
     let tree = read_tree(doc)?;
     // Notre lecture et celle de lopdf (comparée à PDFium par l'appelant) doivent voir les
     // mêmes pages, sinon les index ne désigneraient pas les mêmes.
@@ -271,13 +274,13 @@ pub(crate) fn reorder_kids(doc: &mut LoDocument, pages: &[u16], to: u16) -> Core
     };
     // Toutes les pages déplacées : l'ordre ne change pas.
     let Some(&(anchor, new_parent)) = anchor else {
-        return Ok(());
+        return Ok(false);
     };
     // Ordre inchangé (la sélection est déjà à sa place) : rien à écrire.
     let mut order: Vec<ObjectId> = remaining.iter().map(|(p, _)| *p).collect();
     order.splice(to..to, moving.iter().map(|(p, _)| *p));
     if order.iter().eq(tree.pages.iter().map(|(p, _)| p)) {
-        return Ok(());
+        return Ok(false);
     }
 
     // 1. Attributs hérités figés sur les pages qui changent de parent, avant de les détacher.
@@ -307,7 +310,22 @@ pub(crate) fn reorder_kids(doc: &mut LoDocument, pages: &[u16], to: u16) -> Core
     }
     // 4. Nœuds vidés décrochés (l'élagage de l'enregistrement les retire), puis recomptage.
     unhook_empty_nodes(doc, &tree, &emptied);
-    recount(doc)
+    recount(doc)?;
+    Ok(true)
+}
+
+/// Vrai si déplacer `pages` vers l'index `to` (compté une fois ces pages retirées, comme pour
+/// [`reorder_kids`]) change l'ordre des pages. L'ordre reste le même exactement quand les pages
+/// choisies forment déjà le bloc `to..to + n` : retirées puis remises à `to`, elles reprennent
+/// leur place. Fonction pure (aucun document) : l'historique s'en sert pour ne pas ajouter
+/// d'étape après un déplacement nul.
+pub(crate) fn changes_order(pages: &[u16], to: u16) -> bool {
+    // [Apprentissage] `Iterator::eq` compare deux itérateurs élément par élément : ici les
+    // pages choisies (triées, sans doublon) et le bloc d'index qu'elles occuperaient.
+    let moved: BTreeSet<usize> = pages.iter().map(|&p| usize::from(p)).collect();
+    let start = usize::from(to);
+    let end = start + moved.len();
+    !moved.into_iter().eq(start..end)
 }
 
 #[cfg(test)]
@@ -480,8 +498,29 @@ mod tests {
         for (pages, to) in [(vec![0, 1, 2, 3], 0), (vec![1], 1), (vec![0, 1], 0)] {
             let mut doc = two_level();
             let before = doc.objects.clone();
-            reorder_kids(&mut doc, &pages, to).unwrap();
+            assert!(
+                !reorder_kids(&mut doc, &pages, to).unwrap(),
+                "{pages:?} → {to}"
+            );
             assert_eq!(doc.objects, before, "{pages:?} → {to}");
+            assert!(!changes_order(&pages, to), "{pages:?} → {to}");
+        }
+    }
+
+    #[test]
+    fn changes_order_agrees_with_reorder_kids() {
+        let cases: [(&[u16], u16); 6] = [
+            (&[0], 2),
+            (&[2], 0),
+            (&[0, 2], 1),
+            (&[1, 2], 1),
+            (&[2, 1], 1),
+            (&[1, 1], 0),
+        ];
+        for (pages, to) in cases {
+            let mut doc = two_level();
+            let changed = reorder_kids(&mut doc, pages, to).unwrap();
+            assert_eq!(changes_order(pages, to), changed, "{pages:?} → {to}");
         }
     }
 

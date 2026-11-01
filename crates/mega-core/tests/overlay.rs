@@ -973,3 +973,46 @@ fn a_refused_crop_leaves_every_page_untouched() {
         assert!(saved_bytes(&mut doc) == source, "{what} : octets d'origine");
     }
 }
+
+/// Relecture finale du Lot 14 (M5) : dans un document chiffré à mot de passe d'ouverture, la
+/// `/MediaBox` héritée se lit aussi (lecture `lopdf` avec le mot de passe du document).
+#[test]
+fn inherited_media_box_is_read_in_a_password_protected_document() {
+    let mut doc =
+        Document::from_bytes(mega_core::testing::inherited_media_box_pdf(), None).unwrap();
+    doc.protect(&mega_core::Protection {
+        user_password: "ouvre".to_string(),
+        owner_password: "maitre".to_string(),
+        permissions: mega_core::Permissions {
+            print: true,
+            copy: true,
+            modify: true,
+            annotate: true,
+        },
+    })
+    .unwrap();
+    let protected = doc.to_bytes().unwrap();
+    let mut doc = Document::from_bytes(protected, Some("ouvre")).unwrap();
+    doc.crop_pages(&CropSpec {
+        margins: [10.0, 10.0, 10.0, 10.0],
+        pages: None,
+    })
+    .unwrap();
+    let saved = lopdf::Document::load_mem_with_options(
+        &doc.to_bytes().unwrap(),
+        lopdf::LoadOptions::with_password("ouvre"),
+    )
+    .unwrap();
+    let page = *saved.get_pages().get(&1).unwrap();
+    let crop: Vec<f32> = saved
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"CropBox")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_float().unwrap())
+        .collect();
+    assert_eq!(crop, vec![110.0, 110.0, 490.0, 690.0]);
+}

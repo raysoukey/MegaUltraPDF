@@ -848,3 +848,22 @@ fn deleted_note_does_not_survive_in_an_identity_file_with_a_user_password() {
             .all(|a| a.contents.as_deref() != Some("SECRET-I3U"))
     );
 }
+
+/// Relecture finale du Lot 14 (M4) : la vérification `into_checked` est offerte hors du crate,
+/// seule voie prévue pour écrire les octets de `before_save`.
+#[test]
+fn into_checked_is_the_public_way_to_write_cleaned_bytes() {
+    let input = uncleanable_note_pdf("x");
+    let saved = mega_core::cleanup::before_save(&input, None, None).unwrap();
+    assert!(
+        saved
+            .clone()
+            .into_checked(true, "écriture refusée")
+            .is_err(),
+        "repli après une suppression : refus"
+    );
+    assert_eq!(
+        saved.into_checked(false, "écriture refusée").unwrap(),
+        input
+    );
+}

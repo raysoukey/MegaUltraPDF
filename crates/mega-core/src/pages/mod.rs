@@ -21,6 +21,8 @@ use crate::pagespec::PageSpec;
 mod carry;
 mod reorder;
 
+pub(crate) use reorder::changes_order;
+
 impl Document {
     /// Rotation **enregistrée** dans le fichier pour la page `index` (distincte de la
     /// rotation d'affichage choisie par l'utilisateur).
@@ -113,15 +115,20 @@ impl Document {
     /// Tout est vérifié et calculé **avant** de marquer le document modifié : un déplacement
     /// refusé laisse `changed` faux, sinon l'enregistrement suivant réécrirait le fichier (et
     /// romprait une signature).
+    ///
+    /// Un déplacement sans effet (la sélection est déjà à sa place) ne touche à rien et laisse
+    /// le document non modifié.
     pub fn move_pages(&mut self, pages: &[u16], to: u16) -> CoreResult<()> {
-        let bytes = self.reordered_bytes(pages, to)?;
+        let Some(bytes) = self.reordered_bytes(pages, to)? else {
+            return Ok(());
+        };
         self.mark_changed();
         self.reload_from_bytes(bytes)
     }
 
     /// Octets du document une fois les pages déplacées (voir [`Document::move_pages`]), sans
-    /// toucher au document.
-    fn reordered_bytes(&self, pages: &[u16], to: u16) -> CoreResult<Vec<u8>> {
+    /// toucher au document ; `None` si l'ordre ne change pas.
+    fn reordered_bytes(&self, pages: &[u16], to: u16) -> CoreResult<Option<Vec<u8>>> {
         let count = {
             let _guard = engine::guard();
             let moved = self.unique_indices_unlocked(pages)?;
@@ -143,8 +150,10 @@ impl Document {
                 "déplacement impossible : lopdf ne voit pas les mêmes pages que PDFium".to_string(),
             ));
         }
-        reorder::reorder_kids(&mut session.doc, pages, to)?;
-        session.finish()
+        if !reorder::reorder_kids(&mut session.doc, pages, to)? {
+            return Ok(None);
+        }
+        session.finish().map(Some)
     }
 
     /// Nouveau document composé des pages `pages` (dans l'ordre donné) ; l'original est intact.

@@ -651,3 +651,13 @@ fn flatten_sets_needs_cleanup() {
     doc.flatten_all().unwrap();
     assert!(doc.needs_cleanup());
 }
+
+/// Relecture finale du Lot 14 (M1) : écrire une valeur remplace l'apparence du champ, dont
+/// l'ancien `/AP` (l'ancienne valeur dessinée) devient orphelin, comme pour `set_object_text`.
+#[test]
+fn set_field_value_sets_needs_cleanup() {
+    let mut doc = form();
+    assert!(!doc.needs_cleanup());
+    doc.set_field_value(0, 0, &text("Dupont")).unwrap();
+    assert!(doc.needs_cleanup());
+}

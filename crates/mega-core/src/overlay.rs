@@ -345,9 +345,11 @@ impl Document {
         }
         let pages = self.target_pages(&c.pages)?;
         // PDFium ne lit que la `/MediaBox` propre à la page : l'héritée vient de `lopdf`,
-        // lue avant la phase PDFium (le verrou n'est pas réentrant).
+        // lue avant la phase PDFium (le verrou n'est pas réentrant), avec le mot de passe du
+        // document (sans lui, lopdf ne déchiffre pas un fichier à mot de passe d'ouverture).
         let inherited: BTreeMap<u16, Rect> = {
-            let doc = crate::crypt::load_limited(&self.to_bytes()?, None).map_err(structure)?;
+            let doc = crate::crypt::load_limited(&self.to_bytes()?, self.password())
+                .map_err(structure)?;
             let ids = doc.get_pages();
             pages
                 .iter()

@@ -162,7 +162,6 @@ impl Document {
     /// `/NeedAppearances true`), puis le document est **rechargé** dans PDFium, qui régénère
     /// les apparences.
     pub fn set_field_value(&mut self, page: u16, index: u16, value: &FieldValue) -> CoreResult<()> {
-        self.mark_changed();
         let patch = {
             let _guard = engine::guard();
             let pdf_page = self
@@ -233,6 +232,11 @@ impl Document {
                 _ => return Err(invalid("valeur incompatible avec ce champ")),
             }
         };
+        // L'ancienne apparence du champ (l'ancienne valeur dessinée) devient orpheline quand
+        // PDFium régénère la nouvelle : seul le nettoyage la retire du fichier, comme pour
+        // `set_object_text`. Garde après la validation, avant de marquer le document modifié.
+        self.ensure_cleanable()?;
+        self.mark_changed();
         let bytes = self.to_bytes()?;
         let patched = write::patch_field(
             &bytes,

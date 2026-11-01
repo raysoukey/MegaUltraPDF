@@ -456,6 +456,8 @@ impl Command for EditCommand {
             // (elle n'en avait pas, sinon l'OCR aurait été refusé).
             #[cfg(feature = "ocr")]
             EditCommand::OcrPage { page, .. } => doc.page_has_text(*page).unwrap_or(true),
+            // Un déplacement nul (la sélection est déjà à sa place) ne touche à rien.
+            EditCommand::MovePages { pages, to } => crate::pages::changes_order(pages, *to),
             _ => true,
         }
     }

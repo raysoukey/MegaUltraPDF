@@ -414,3 +414,11 @@ Ce qui reste :
 - Mémoriser `ensure_cleanable` (une lecture `lopdf` par édition gardée).
 - Signatures certifiées : `/Perms`, `/DocMDP` à `P = 2` ou `3`, révisions de type DSS (avis
   `pdf-expert` à prendre).
+- Trois gardes encore posées avant leur validation : `add_attachment`, `optimize` et
+  `delete_annotation` appellent `mark_changed()` avant de refuser (sans effet par l'interface,
+  où `apply` rétablit le drapeau ; seul un appel direct du CLI qui échoue en est touché, et il
+  n'enregistre pas ensuite).
+- Tests : le générateur `identity_encrypted_note_with_user_password_pdf` n'écrit ni `/ID` dans
+  la remorque ni `/Length` dans `/Encrypt` (qpdf avertit, R6 n'en dépend pas) ; le test du corpus
+  sur `navigation/encrypted-attachment.pdf` vérifie le nom de la pièce jointe conservée, pas que
+  ses octets chiffrés sont recopiés à l'identique (vérifié à la main avec qpdf).

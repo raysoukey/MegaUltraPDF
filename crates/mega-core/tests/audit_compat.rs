@@ -567,20 +567,6 @@ fn deep_pages_pdf(depth: usize) -> Vec<u8> {
     assemble("1.7", &objects, "")
 }
 
-fn user_unit_pdf() -> Vec<u8> {
-    let objects: Vec<Vec<u8>> = vec![
-        s("<< /Type /Catalog /Pages 2 0 R >>"),
-        s("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-        s(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /UserUnit 10 /Contents 4 0 R \
-           /Resources << /Font << /F1 5 0 R >> >> >>",
-        ),
-        stream("", b"BT /F1 12 Tf 10 50 Td (UU) Tj ET"),
-        s("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
-    ];
-    assemble("1.7", &objects, "")
-}
-
 fn dejavu() -> Vec<u8> {
     std::fs::read(format!(
         "{}/assets/fonts/DejaVuSans.ttf",
@@ -660,91 +646,6 @@ fn fonts_pdf(kind: &str) -> Vec<u8> {
         }
     }
     assemble("1.7", &objects, "")
-}
-
-/// Annotations tierces de sous-types que nous ne créons pas, chacune dans un rectangle
-/// disjoint ; `with_annots = false` donne la même page sans `/Annots` (témoin du rendu).
-fn third_party_annots_pdf(with_annots: bool) -> Vec<u8> {
-    let annots = if with_annots {
-        " /Annots [5 0 R 6 0 R 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R]"
-    } else {
-        ""
-    };
-    let objects: Vec<Vec<u8>> = vec![
-        s(
-            "<< /Type /Catalog /Pages 2 0 R /Names << /Dests << /Names [(chap) [3 0 R /Fit]] >> >> \
-           /AcroForm << /Fields [] /DR << /Font << /Helv 4 0 R >> >> /DA (/Helv 0 Tf 0 g) >> >>",
-        ),
-        s("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-        s(&format!(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Resources << /Font << /Helv 4 0 R >> >> \
-             /Contents 12 0 R{annots} >>"
-        )),
-        s("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
-        // 5 Polygon
-        s(
-            "<< /Type /Annot /Subtype /Polygon /Rect [50 400 150 480] /Vertices [50 400 150 400 100 480] \
-           /C [1 0 0] /BS << /W 2 >> /Contents (Polygone) /P 3 0 R >>",
-        ),
-        // 6 FreeText sans /AP
-        s(
-            "<< /Type /Annot /Subtype /FreeText /Rect [200 400 350 440] /DA (/Helv 12 Tf 0 g) \
-           /Contents (Texte libre tiers) /C [1 1 0.8] /P 3 0 R >>",
-        ),
-        // 7 Square sans /AP
-        s(
-            "<< /Type /Annot /Subtype /Square /Rect [50 250 150 350] /C [0 0 1] /IC [1 1 0] /BS << /W 3 >> \
-           /Contents (Carre) /P 3 0 R >>",
-        ),
-        // 8 Link nommé
-        s(
-            "<< /Type /Annot /Subtype /Link /Rect [200 250 350 300] /Border [0 0 0] /Dest (chap) /P 3 0 R >>",
-        ),
-        // 9 FileAttachment
-        s(
-            "<< /Type /Annot /Subtype /FileAttachment /Rect [400 400 420 420] /Name /PushPin \
-           /FS << /Type /Filespec /F (piece.txt) /UF (piece.txt) /EF << /F 13 0 R >> >> /Contents (PJ) /P 3 0 R >>",
-        ),
-        // 10 Text + Popup
-        s(
-            "<< /Type /Annot /Subtype /Text /Rect [400 250 420 270] /Contents (Note tierce) /T (Tiers) \
-           /Popup 11 0 R /Open true /P 3 0 R >>",
-        ),
-        s(
-            "<< /Type /Annot /Subtype /Popup /Rect [300 100 450 200] /Parent 10 0 R /Open true /P 3 0 R >>",
-        ),
-        stream("", b"BT /Helv 10 Tf 20 20 Td (fond) Tj ET"),
-        stream("/Type /EmbeddedFile", b"contenu"),
-    ];
-    assemble("1.7", &objects, "")
-}
-
-/// `kind` : `xmp-only`, `pdfdoc-e9`, `pdfdoc-80-a0`, `utf8-raw`.
-fn metadata_variant_pdf(kind: &str) -> Vec<u8> {
-    match kind {
-        "xmp-only" => {
-            let mut doc = lo(&testing::xmp_pdf());
-            doc.trailer.remove(b"Info");
-            let mut out = Vec::new();
-            doc.save_to(&mut out).unwrap();
-            out
-        }
-        _ => {
-            let title: Vec<u8> = match kind {
-                "pdfdoc-e9" => b"Caf\xE9".to_vec(),
-                "pdfdoc-80-a0" => b"\x80 \xA0".to_vec(),
-                _ => "Café".as_bytes().to_vec(),
-            };
-            let mut doc = lo(&fixture_bytes("simple.pdf"));
-            let info_id = doc.trailer.get(b"Info").unwrap().as_reference().unwrap();
-            doc.get_dictionary_mut(info_id)
-                .unwrap()
-                .set("Title", Object::String(title, lopdf::StringFormat::Literal));
-            let mut out = Vec::new();
-            doc.save_to(&mut out).unwrap();
-            out
-        }
-    }
 }
 
 /// Un champ de signature dont le `/SubFilter` est `subfilter`, avec un `/ByteRange` cohérent
@@ -2156,7 +2057,7 @@ fn l11_deep_page_tree_and_inheritance() {
 #[ignore = "banc de mesure, lancer avec --ignored"]
 fn l12_user_unit() {
     guarded("L12", || {
-        let doc = Document::from_bytes(user_unit_pdf(), None).unwrap();
+        let doc = Document::from_bytes(testing::user_unit_pdf(), None).unwrap();
         verdict(
             "L12",
             "taille rapportée (/MediaBox 100 pt, /UserUnit 10)",
@@ -2280,8 +2181,15 @@ fn l14_fonts_text_extraction() {
 #[ignore = "banc de mesure, lancer avec --ignored"]
 fn l15_third_party_annotations() {
     guarded("L15", || {
-        let with = third_party_annots_pdf(true);
-        let without = third_party_annots_pdf(false);
+        let with = testing::third_party_annots_pdf();
+        // Témoin : la même page sans `/Annots`.
+        let mut witness_doc = lo(&with);
+        witness_doc
+            .get_dictionary_mut((3, 0))
+            .unwrap()
+            .remove(b"Annots");
+        let mut without = Vec::new();
+        witness_doc.save_to(&mut without).unwrap();
         save("L15-entree", &with);
         let doc = Document::from_bytes(with.clone(), None).unwrap();
         let witness = Document::from_bytes(without, None).unwrap();
@@ -2442,7 +2350,7 @@ fn l17_metadata_decoding() {
     ] {
         let id = format!("L17-{kind}");
         guarded(&id, || {
-            let bytes = metadata_variant_pdf(kind);
+            let bytes = testing::metadata_variant_pdf(kind);
             let doc = Document::from_bytes(bytes, None).unwrap();
             let props = doc.properties().unwrap();
             verdict(

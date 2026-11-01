@@ -90,10 +90,18 @@ pub(crate) fn page_content(doc: &LoDocument, page_id: ObjectId) -> lopdf::Result
 /// Octets décodés d'un flux, ou ses octets bruts s'il n'est pas compressé (ou si son filtre
 /// est inconnu) ; `None` s'il dépasserait [`MAX_DECOMPRESSED`] une fois décompressé.
 pub(crate) fn stream_bytes(stream: &Stream) -> Option<Vec<u8>> {
-    match stream.decompressed_content_with_limit(MAX_DECOMPRESSED) {
-        Ok(data) => Some(data),
+    stream_bytes_within(stream, MAX_DECOMPRESSED)
+}
+
+/// Comme [`stream_bytes`], avec un plafond `limit` choisi par l'appelant (au plus
+/// [`MAX_DECOMPRESSED`]) : une lecture qui décode beaucoup de flux tient ainsi un budget
+/// global (repli de la couche de texte). `None` si le flux dépasserait ce plafond.
+pub(crate) fn stream_bytes_within(stream: &Stream, limit: usize) -> Option<Vec<u8>> {
+    let limit = limit.min(MAX_DECOMPRESSED);
+    match stream.decompressed_content_with_limit(limit) {
+        Ok(data) => (data.len() <= limit).then_some(data),
         Err(lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded { .. })) => None,
-        Err(_) => Some(stream.content.clone()),
+        Err(_) => (stream.content.len() <= limit).then(|| stream.content.clone()),
     }
 }
 

@@ -15,6 +15,7 @@ use crate::document::Document;
 use crate::edit::write_atomically;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
+use crate::properties::decode_text_string;
 
 /// Taille maximale d'une pièce jointe ajoutée (octets).
 pub const MAX_ATTACHMENT_BYTES: u64 = 100 * 1024 * 1024;
@@ -29,8 +30,24 @@ pub struct Attachment {
     /// Nom de fichier déclaré dans le PDF, nettoyé (dernier composant, sans caractère de
     /// contrôle ni d'inversion bidi, au plus 255 caractères) : voir `display_name`.
     pub name: String,
-    /// Taille des données, en octets.
+    /// Taille des données, en octets. Pour une pièce jointe de page sans `/Params /Size`,
+    /// la taille du flux tel qu'il est stocké (comprimé, le cas échéant) : la liste ne
+    /// décompresse rien.
     pub size: u64,
+    /// Page (à partir de 0) dont l'annotation `FileAttachment` porte ce fichier ; `None`
+    /// pour un fichier joint au document (`/Names /EmbeddedFiles`).
+    pub page: Option<u16>,
+}
+
+/// Une pièce jointe de page, lue avec `lopdf` : où elle est et ce qu'elle contient.
+struct PageAttachment {
+    page: u16,
+    /// Index de l'annotation dans le `/Annots` brut de la page.
+    annot_index: u16,
+    name: String,
+    size: u64,
+    /// Numéro du flux `/EF /F`, pour l'extraire sans reparcourir le document.
+    stream: lopdf::ObjectId,
 }
 
 fn invalid(msg: String) -> CoreError {
@@ -79,35 +96,127 @@ pub(crate) fn unique_name(wanted: &str, existing: &[String]) -> String {
 }
 
 impl Document {
-    /// Les pièces jointes, dans l'ordre de PDFium (au plus [`MAX_ATTACHMENTS`]).
+    /// Les pièces jointes : d'abord celles du document (`/EmbeddedFiles`, dans l'ordre de
+    /// PDFium), puis celles que portent les annotations `FileAttachment` de chaque page
+    /// (audit L11), au plus [`MAX_ATTACHMENTS`] en tout.
     pub fn attachments(&self) -> CoreResult<Vec<Attachment>> {
+        let mut list: Vec<Attachment> = {
+            let _guard = engine::guard();
+            self.inner()
+                .attachments()
+                .iter()
+                .take(usize::from(MAX_ATTACHMENTS))
+                .enumerate()
+                .map(|(i, a)| Attachment {
+                    index: i as u16,
+                    name: display_name(&a.name()),
+                    size: a.len() as u64,
+                    page: None,
+                })
+                .collect()
+        };
+        let room = usize::from(MAX_ATTACHMENTS) - list.len();
+        for entry in self.page_attachments(room) {
+            list.push(Attachment {
+                index: list.len() as u16,
+                name: entry.name,
+                size: entry.size,
+                page: Some(entry.page),
+            });
+        }
+        Ok(list)
+    }
+
+    /// Nombre de fichiers joints au document (hors annotations), plafonné.
+    fn embedded_count(&self) -> usize {
         let _guard = engine::guard();
-        Ok(self
-            .inner()
-            .attachments()
-            .iter()
-            .take(usize::from(MAX_ATTACHMENTS))
-            .enumerate()
-            .map(|(i, a)| Attachment {
-                index: i as u16,
-                name: display_name(&a.name()),
-                size: a.len() as u64,
-            })
-            .collect())
+        self.inner().attachments().len().min(MAX_ATTACHMENTS).into()
+    }
+
+    /// Les `FileAttachment` des pages, au plus `limit`, dans l'ordre des pages puis de
+    /// `/Annots`. Lecture `lopdf` (PDFium ne les expose pas) ; un document que `lopdf` ne lit
+    /// pas, ou dont l'arbre de pages ne compte pas comme PDFium, n'en donne aucune.
+    fn page_attachments(&self, limit: usize) -> Vec<PageAttachment> {
+        let mut found = Vec::new();
+        if limit == 0 {
+            return found;
+        }
+        let Some(doc) = self.lopdf_view() else {
+            return found;
+        };
+        let pages = doc.get_pages();
+        if pages.len() != usize::from(self.page_count()) {
+            return found;
+        }
+        for (number, page_id) in pages {
+            let Some(annots) = doc
+                .get_dictionary(page_id)
+                .ok()
+                .and_then(|p| p.get(b"Annots").ok())
+                .and_then(|o| doc.dereference(o).ok())
+                .and_then(|(_, o)| o.as_array().ok())
+            else {
+                continue;
+            };
+            for (i, item) in annots
+                .iter()
+                .take(crate::annotations::MAX_ANNOTATIONS_PER_PAGE)
+                .enumerate()
+            {
+                let Some(dict) = doc
+                    .dereference(item)
+                    .ok()
+                    .and_then(|(_, o)| o.as_dict().ok())
+                else {
+                    continue;
+                };
+                if dict.get(b"Subtype").and_then(|s| s.as_name()).ok() != Some(b"FileAttachment") {
+                    continue;
+                }
+                let Some((name, size, stream)) = file_attachment(doc, dict) else {
+                    continue;
+                };
+                // Numéros de page à partir de 1 ; `from_bytes` refuse plus de 65 535 pages, la
+                // conversion ne peut donc échouer que sur un arbre de pages aberrant.
+                let (Some(page), Ok(annot_index)) = (
+                    number.checked_sub(1).and_then(|n| u16::try_from(n).ok()),
+                    u16::try_from(i),
+                ) else {
+                    continue;
+                };
+                found.push(PageAttachment {
+                    page,
+                    annot_index,
+                    name,
+                    size,
+                    stream,
+                });
+                if found.len() >= limit {
+                    return found;
+                }
+            }
+        }
+        found
     }
 
     /// Écrit les octets de la pièce jointe `index` dans `path` (écriture atomique).
     pub fn save_attachment(&self, index: u16, path: &Path) -> CoreResult<()> {
-        let bytes = {
+        let embedded = self.embedded_count();
+        let bytes = if usize::from(index) < embedded {
             let _guard = engine::guard();
-            let attachments = self.inner().attachments();
-            if index >= attachments.len() {
-                return Err(invalid(format!(
-                    "pièce jointe {index} introuvable (le document en a {})",
-                    attachments.len()
-                )));
-            }
-            attachments.get(index)?.save_to_bytes()?
+            self.inner().attachments().get(index)?.save_to_bytes()?
+        } else {
+            let wanted = usize::from(index) - embedded;
+            let entry = self
+                .page_attachments(wanted + 1)
+                .into_iter()
+                .nth(wanted)
+                .ok_or_else(|| not_found(index, embedded))?;
+            self.lopdf_view()
+                .and_then(|doc| doc.get_object(entry.stream).ok())
+                .and_then(|o| o.as_stream().ok())
+                .and_then(crate::crypt::stream_bytes)
+                .ok_or_else(|| invalid("pièce jointe illisible ou trop volumineuse".to_string()))?
         };
         write_atomically(path, &bytes)
     }
@@ -142,22 +251,88 @@ impl Document {
         Ok(())
     }
 
-    /// Supprime la pièce jointe `index`.
+    /// Supprime la pièce jointe `index` ; pour une pièce jointe de page, c'est son
+    /// annotation qui disparaît.
     pub fn delete_attachment(&mut self, index: u16) -> CoreResult<()> {
         // Le flux du fichier joint deviendrait orphelin : seul le nettoyage le retire.
         self.ensure_cleanable()?;
+        let embedded = self.embedded_count();
+        if usize::from(index) >= embedded {
+            let wanted = usize::from(index) - embedded;
+            let entry = self
+                .page_attachments(wanted + 1)
+                .into_iter()
+                .nth(wanted)
+                .ok_or_else(|| not_found(index, embedded))?;
+            // `lopdf` et PDFium doivent désigner la même annotation : on vérifie le type avant
+            // de supprimer (une entrée nulle ou une sérialisation divergente décalerait l'index).
+            let is_attachment = {
+                let _guard = engine::guard();
+                let page_index = self.checked_index_unlocked(entry.page)?;
+                let page = self.inner().pages().get(page_index)?;
+                let annotations = page.annotations();
+                usize::from(entry.annot_index) < annotations.len()
+                    && annotations
+                        .get(usize::from(entry.annot_index))
+                        .is_ok_and(|a| {
+                            a.annotation_type()
+                                == pdfium_render::prelude::PdfPageAnnotationType::FileAttachment
+                        })
+            };
+            if !is_attachment {
+                return Err(invalid(
+                    "pièce jointe de page introuvable à cet index".to_string(),
+                ));
+            }
+            return self.delete_annotation(entry.page, entry.annot_index);
+        }
         self.mark_changed();
         let _guard = engine::guard();
-        let attachments = self.inner_mut().attachments_mut();
-        if index >= attachments.len() {
-            return Err(invalid(format!(
-                "pièce jointe {index} introuvable (le document en a {})",
-                attachments.len()
-            )));
-        }
-        attachments.delete_at_index(index)?;
+        self.inner_mut().attachments_mut().delete_at_index(index)?;
         Ok(())
     }
+}
+
+fn not_found(index: u16, embedded: usize) -> CoreError {
+    invalid(format!(
+        "pièce jointe {index} introuvable (le document en a au moins {embedded})"
+    ))
+}
+
+/// Nom nettoyé, taille et flux d'une annotation `FileAttachment` (`/FS` : nom `/UF` puis
+/// `/F`, données `/EF /F`). `None` si la spécification n'a pas de flux lisible.
+fn file_attachment(
+    doc: &lopdf::Document,
+    annot: &lopdf::Dictionary,
+) -> Option<(String, u64, lopdf::ObjectId)> {
+    let (_, fs) = doc.dereference(annot.get(b"FS").ok()?).ok()?;
+    let fs = fs.as_dict().ok()?;
+    let raw_name = ["UF", "F"].iter().find_map(|key| {
+        let (_, value) = doc.dereference(fs.get(key.as_bytes()).ok()?).ok()?;
+        value.as_str().ok().map(decode_text_string)
+    });
+    let (_, ef) = doc.dereference(fs.get(b"EF").ok()?).ok()?;
+    let ef = ef.as_dict().ok()?;
+    let stream_id = ["F", "UF"]
+        .iter()
+        .find_map(|key| ef.get(key.as_bytes()).ok()?.as_reference().ok())?;
+    let stream = doc.get_object(stream_id).ok()?.as_stream().ok()?;
+    let declared = stream
+        .dict
+        .get(b"Params")
+        .ok()
+        .and_then(|p| doc.dereference(p).ok())
+        .and_then(|(_, p)| p.as_dict().ok())
+        .and_then(|p| p.get(b"Size").ok())
+        .and_then(|s| s.as_i64().ok())
+        .and_then(|s| u64::try_from(s).ok())
+        // Une taille déclarée absurde (donnée non fiable) ne s'affiche pas telle quelle.
+        .filter(|s| *s <= 256 * 1024 * 1024);
+    // Sans taille déclarée, la longueur **brute** du flux (comprimée, le cas échéant) : lister
+    // les pièces jointes ne décompresse pas chacune d'elles (une « bombe » ne se déplie qu'à
+    // l'enregistrement, plafonné par `stream_bytes`).
+    let size = declared.unwrap_or(stream.content.len() as u64);
+    Some((display_name(&raw_name.unwrap_or_default()), size, stream_id))
 }
 
 #[cfg(test)]

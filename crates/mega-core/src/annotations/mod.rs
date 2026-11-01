@@ -408,6 +408,9 @@ impl Document {
             .iter()
             .take(MAX_ANNOTATIONS_PER_PAGE)
             .enumerate()
+            // Un `Popup` n'est que la fenêtre d'une note : on ne le liste pas, mais l'index
+            // des autres reste celui de `/Annots` (toutes les commandes s'en servent).
+            .filter(|(_, ann)| ann.annotation_type() != PdfPageAnnotationType::Popup)
             .map(|(i, ann)| read_annotation(i as u16, &ann).map(|a| to_displayed(a, &frame)))
             .collect()
     }
@@ -451,6 +454,9 @@ impl Document {
                 ann.set_creator(a.trim())?;
             }
             return Ok(index);
+        }
+        if !current.editable {
+            return Err(invalid("cette annotation ne peut pas être modifiée"));
         }
         let mut new = current
             .to_new()
@@ -690,6 +696,9 @@ impl Document {
         }
         if current.kind.is_text_markup() {
             return Err(invalid("un marquage de texte ne se déplace pas"));
+        }
+        if !current.editable {
+            return Err(invalid("cette annotation ne peut pas être déplacée"));
         }
         let mut new = current
             .to_new()
@@ -958,6 +967,9 @@ fn read_annotation(index: u16, ann: &PdfPageAnnotation) -> CoreResult<Annotation
         geometry: inspected.geometry,
         editable: false,
     };
-    annotation.editable = annotation.to_new().is_some();
+    // Un `FreeText` tiers (avec son `/DA`) serait recréé en tampon : type et `/DA` perdus.
+    // Il se montre comme un texte mais reste en lecture seule (audit L11).
+    annotation.editable =
+        annotation.to_new().is_some() && ann.annotation_type() != PdfPageAnnotationType::FreeText;
     Ok(annotation)
 }

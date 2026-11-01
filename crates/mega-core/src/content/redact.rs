@@ -105,8 +105,12 @@ impl Document {
             }
         };
         // Tous les caractères que PDFium voit sous la zone, y compris ceux sans emprise que la
-        // couche texte écarte (comportement d'avant le correctif 0.12.2). Limite : un texte à
-        // l'échelle nulle (`0 Tz`) n'apparaît pas du tout dans la couche de PDFium.
+        // couche texte écarte (comportement d'avant le correctif 0.12.2). Si PDFium n'en voit
+        // aucun sur une page qui porte un objet texte, ce sont ceux du repli `/ToUnicode`
+        // (audit L2), lus sur la page caviardée. Limites : un texte à l'échelle nulle (`0 Tz`)
+        // n'apparaît pas dans la couche de PDFium ; le repli ne joue pas si la page a
+        // d'autres caractères que PDFium voit ; et si `lopdf` ne sait pas lire le document,
+        // le repli ne rend rien : le contrôle laisse alors passer (il échoue « ouvert »).
         let remaining = self
             .drawn_chars(page)?
             .into_iter()

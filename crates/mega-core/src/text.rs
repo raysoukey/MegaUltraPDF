@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Couche de texte d'une page (caractères positionnés) et recherche.
+//!
+//! Les caractères viennent de PDFium ; quand PDFium n'en expose **aucun** sur une page qui
+//! porte un objet texte, le sous-module `tounicode` les retrouve par les `/ToUnicode` des
+//! polices (audit L2 : police CID CFF en OpenType dont PDFium ne trouve pas les glyphes).
 
+use pdfium_render::prelude::{PdfPage, PdfPageObject, PdfPageObjectsCommon};
 use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
 use crate::engine;
 use crate::error::CoreResult;
 use crate::geometry::Rect;
+
+mod tounicode;
 
 /// Un caractère de la page avec son rectangle (points PDF, origine bas-gauche).
 ///
@@ -101,42 +108,110 @@ impl Document {
     /// représente (voir [`with_word_spaces`]). Le contrôle après caviardage, lui, garde
     /// `drawn_chars` : une espace reconstituée n'est pas du texte du fichier.
     pub(crate) fn reading_chars(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
-        Ok(with_word_spaces(self.drawn_chars(index)?))
+        let mut drawn = with_word_spaces(self.drawn_chars(index)?);
+        add_rtl_word_spaces(&mut drawn);
+        Ok(drawn)
     }
 
     /// Les caractères de la page dans l'ordre où le fichier les dessine, en espace affiché.
     /// Seuls les sauts de ligne ajoutés par PDFium (`\r`, `\n`) sont écartés : un caractère
     /// sans largeur reste là (le contrôle après caviardage doit le voir, même invisible).
+    ///
+    /// Si PDFium n'expose aucun caractère alors que la page porte un objet texte, les
+    /// caractères viennent du repli [`Document::tounicode_fallback`] (audit L2). Le contrôle
+    /// après caviardage en profite : un texte que PDFium ne voit pas, mais que les autres
+    /// lecteurs extraient, compte aussi comme du texte resté sous la zone.
     pub(crate) fn drawn_chars(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
+        let (chars, fallback) = self.pdfium_chars(index)?;
+        if fallback {
+            return self.tounicode_fallback(index);
+        }
+        Ok(chars)
+    }
+
+    /// Les caractères qu'expose PDFium (voir [`Document::drawn_chars`]), et vrai s'il faut
+    /// recourir au repli : aucun caractère, mais un objet texte sur la page.
+    fn pdfium_chars(&self, index: u16) -> CoreResult<(Vec<DrawnChar>, bool)> {
         let _guard = engine::guard();
         let page = self
             .inner()
             .pages()
             .get(self.checked_index_unlocked(index)?)?;
         let text = page.text()?;
+        if text.len() <= 0 {
+            return Ok((Vec::new(), draws_text(&page)));
+        }
         let frame = crate::geometry::frame_of(&page);
-        let mut chars = Vec::with_capacity(text.len().max(0) as usize);
+        // Les unités UTF-16 que PDFium rend, avec leur emprise, et à part leur angle à l'écran.
+        // Une unité sans emprise est ignorée.
+        let capacity = usize::try_from(text.len()).unwrap_or(0);
+        let mut units: Vec<(u32, Rect)> = Vec::with_capacity(capacity);
+        let mut angles: Vec<f32> = Vec::with_capacity(capacity);
         for c in text.chars().iter() {
-            // Un caractère sans valeur Unicode (glyphe de contrôle) ou sans emprise est ignoré.
-            let (Some(ch), Ok(bounds)) = (c.unicode_char(), c.loose_bounds()) else {
+            let Ok(bounds) = c.loose_bounds() else {
                 continue;
             };
-            if ch == '\r' || ch == '\n' {
-                continue;
-            }
-            // PDFium mesure l'angle dans l'espace utilisateur, sens trigonométrique ; `/Rotate`
-            // tourne l'affichage dans le sens horaire.
-            let angle =
-                (c.angle_degrees().unwrap_or(0.0) - f32::from(frame.rotate)).rem_euclid(360.0);
-            let horizontal = angle <= ANGLE_TOLERANCE || angle >= 360.0 - ANGLE_TOLERANCE;
-            chars.push(DrawnChar {
-                ch,
-                rect: frame.from_user_space(Rect::from_pdf(bounds)),
-                horizontal,
-                angle,
-            });
+            units.push((
+                c.unicode_value(),
+                frame.from_user_space(Rect::from_pdf(bounds)),
+            ));
+            angles.push(screen_angle(c.angle_degrees().unwrap_or(0.0), frame.rotate));
         }
-        Ok(chars)
+        // Une paire de substitution (deux unités) donne un seul caractère, à l'angle de sa
+        // première unité. Un caractère sans valeur Unicode (glyphe de contrôle) est ignoré, ainsi
+        // que les sauts de ligne ajoutés par PDFium.
+        let chars = pair_surrogates(&units)
+            .into_iter()
+            .filter(|(ch, _, _)| *ch != '\r' && *ch != '\n')
+            .map(|(ch, rect, first)| {
+                let angle = angles[first];
+                DrawnChar {
+                    ch,
+                    rect,
+                    horizontal: is_horizontal(angle),
+                    angle,
+                }
+            })
+            .collect();
+        Ok((chars, false))
+    }
+
+    /// Repli de la couche de texte (audit L2) : les caractères de la page `index` retrouvés
+    /// par les `/ToUnicode` de ses polices, lues avec `lopdf` (module `tounicode`, limites
+    /// dans sa documentation), en espace affiché et dans l'ordre de dessin. Le document lu est
+    /// le document **courant**, gardé par [`Document::lopdf_view`] (qui prend le jeton PDFium :
+    /// jamais sous `engine::guard()`).
+    ///
+    /// Un fichier que `lopdf` ne sait pas lire ne donne aucun caractère : c'est un repli, il
+    /// n'ajoute pas de cas d'erreur. De même si `lopdf` et PDFium ne comptent pas le même
+    /// nombre de pages (arbre de pages abîmé) : les numéros ne désigneraient peut-être pas la
+    /// même page, on ne devine pas.
+    pub(crate) fn tounicode_fallback(&self, index: u16) -> CoreResult<Vec<DrawnChar>> {
+        let frame = self.page_frame(index)?;
+        let page_count = usize::from(self.page_count());
+        let Some(doc) = self.lopdf_view() else {
+            return Ok(Vec::new());
+        };
+        let pages = doc.get_pages();
+        if pages.len() != page_count {
+            return Ok(Vec::new());
+        }
+        let Some(&page_id) = pages.get(&(u32::from(index) + 1)) else {
+            return Ok(Vec::new());
+        };
+        Ok(tounicode::page_chars(doc, page_id)
+            .into_iter()
+            .filter(|c| c.ch != '\r' && c.ch != '\n')
+            .map(|c| {
+                let angle = screen_angle(c.angle, frame.rotate);
+                DrawnChar {
+                    ch: c.ch,
+                    rect: frame.from_user_space(c.rect),
+                    horizontal: is_horizontal(angle),
+                    angle,
+                }
+            })
+            .collect())
     }
 
     /// Cherche `query` dans la page `index`. Une requête vide ne trouve rien.
@@ -160,6 +235,120 @@ impl Document {
             .into_iter()
             .map(|rects| SearchHit { page: index, rects })
             .collect())
+    }
+}
+
+/// Nombre maximal d'objets examinés par [`draws_text`] à l'intérieur des formulaires.
+const MAX_FORM_OBJECTS: usize = 10_000;
+
+/// Vrai si la page porte un objet texte, à son niveau ou dans un formulaire XObject (jusqu'à
+/// `tounicode::MAX_FORM_DEPTH` niveaux) : sans objet texte, inutile de relire le fichier avec
+/// `lopdf` (une page numérisée n'a que des images). Au-delà de [`MAX_FORM_OBJECTS`] objets,
+/// on répond oui par prudence : le repli, lui, est borné.
+fn draws_text(page: &PdfPage<'_>) -> bool {
+    // Pile explicite (pas de récursion) : formulaires à examiner, avec leur profondeur.
+    let mut pending: Vec<(PdfPageObject<'_>, usize)> = Vec::new();
+    for object in page.objects().iter() {
+        match object {
+            PdfPageObject::Text(_) => return true,
+            PdfPageObject::XObjectForm(_) => pending.push((object, 1)),
+            _ => {}
+        }
+    }
+    let mut examined = 0usize;
+    while let Some((object, depth)) = pending.pop() {
+        let PdfPageObject::XObjectForm(form) = &object else {
+            continue;
+        };
+        for i in 0..form.len() {
+            examined += 1;
+            if examined > MAX_FORM_OBJECTS {
+                return true;
+            }
+            match form.get(i) {
+                Ok(PdfPageObject::Text(_)) => return true,
+                Ok(child @ PdfPageObject::XObjectForm(_)) if depth < tounicode::MAX_FORM_DEPTH => {
+                    pending.push((child, depth + 1));
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// L'angle à l'écran (0 à 360°) d'un caractère dont PDFium donne l'angle `user` en espace
+/// utilisateur, sur une page tournée de `rotate` degrés (`/Rotate`).
+///
+/// `FPDFText_GetCharAngle` mesure atan2(-b, a) de la matrice du caractère, c'est-à-dire dans
+/// le sens **horaire** (un texte qui monte vaut 270°), et `/Rotate` tourne l'affichage dans le
+/// sens horaire lui aussi : les deux s'ajoutent.
+fn screen_angle(user: f32, rotate: u16) -> f32 {
+    (user + f32::from(rotate)).rem_euclid(360.0)
+}
+
+/// Vrai pour un angle à l'écran « horizontal », à [`ANGLE_TOLERANCE`] près.
+fn is_horizontal(angle: f32) -> bool {
+    angle <= ANGLE_TOLERANCE || angle >= 360.0 - ANGLE_TOLERANCE
+}
+
+/// Vrai pour une moitié haute de paire de substitution UTF-16 (`D800`–`DBFF`).
+fn is_high_surrogate(unit: u32) -> bool {
+    (0xD800..=0xDBFF).contains(&unit)
+}
+
+/// Vrai pour une moitié basse de paire de substitution UTF-16 (`DC00`–`DFFF`).
+fn is_low_surrogate(unit: u32) -> bool {
+    (0xDC00..=0xDFFF).contains(&unit)
+}
+
+/// Recompose les caractères à partir des unités UTF-16 que rend PDFium (audit L1).
+///
+/// Sous Windows, PDFium donne un caractère hors du plan multilingue de base (emoji, lettres
+/// mathématiques `𝜋`, idéogrammes de l'extension B) en **deux** unités : une moitié haute
+/// (`D800`–`DBFF`) puis une moitié basse (`DC00`–`DFFF`). Chacune est jetée par
+/// `char::from_u32`, d'où un texte, une recherche et une copie amputés. Une paire devient un
+/// seul caractère dont l'emprise est l'**union** des deux rectangles ; une moitié isolée est
+/// écartée (aucun caractère valide) ; toute autre unité passe telle quelle, et celle qui n'est
+/// pas un caractère Unicode est écartée comme avant. Chaque caractère rendu porte l'index de
+/// sa première unité dans `units` : l'appelant y retrouve ce qu'il garde à part (l'angle).
+///
+/// \[Apprentissage\] Un `char` Rust est une *valeur scalaire* Unicode : les points de code
+/// `D800`–`DFFF` en sont exclus, donc `char::from_u32(0xD835)` vaut `None`. Ces points ne
+/// servent qu'à UTF-16, qui écrit un point de code au-delà de `FFFF` en deux unités de 16 bits
+/// (voir `docs/apprentissage/`).
+pub(crate) fn pair_surrogates(units: &[(u32, Rect)]) -> Vec<(char, Rect, usize)> {
+    let mut out = Vec::with_capacity(units.len());
+    let mut i = 0;
+    while i < units.len() {
+        let (unit, rect) = units[i];
+        if is_high_surrogate(unit) {
+            if let Some(&(low, low_rect)) = units.get(i + 1).filter(|u| is_low_surrogate(u.0)) {
+                let code = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+                if let Some(ch) = char::from_u32(code) {
+                    out.push((ch, union(rect, low_rect), i));
+                }
+                i += 2;
+                continue;
+            }
+        } else if let Some(ch) = char::from_u32(unit) {
+            out.push((ch, rect, i));
+        }
+        // Moitié isolée (haute sans basse, ou basse seule) : ignorée.
+        i += 1;
+    }
+    out
+}
+
+/// Plus petit rectangle qui contient `a` et `b`.
+fn union(a: Rect, b: Rect) -> Rect {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    Rect {
+        x,
+        y,
+        w: (a.x + a.w).max(b.x + b.w) - x,
+        h: (a.y + a.h).max(b.y + b.h) - y,
     }
 }
 
@@ -197,6 +386,56 @@ fn with_word_spaces(mut chars: Vec<DrawnChar>) -> Vec<DrawnChar> {
         chars[i].horizontal = true;
     }
     chars
+}
+
+/// Ajoute une espace entre les mots d'une ligne de droite à gauche qui n'en a aucune (audit du
+/// Lot 14, L3) : PDFium ne déduit les espaces des blancs que pour l'écriture de gauche à
+/// droite, et poppler, MuPDF et pdf.js séparent les mots. `reading_order::word_gaps` décide où ;
+/// l'espace reçoit l'emprise du blanc et est **ajoutée en fin de liste** : l'ordre de lecture
+/// est recalculé par la géométrie, elle retrouve donc sa place entre les deux mots.
+///
+/// \[Apprentissage\] On collecte d'abord les ajouts (emprunt partagé de `drawn`), puis on les
+/// pousse : on ne peut pas modifier un `Vec` pendant qu'on le parcourt.
+fn add_rtl_word_spaces(drawn: &mut Vec<DrawnChar>) {
+    let chars: Vec<char> = drawn.iter().map(|d| d.ch).collect();
+    let rects: Vec<Rect> = drawn
+        .iter()
+        .map(|d| {
+            if d.horizontal {
+                d.rect
+            } else {
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                }
+            }
+        })
+        .collect();
+    let mut spaces = Vec::new();
+    for line in crate::reading_order::layout_chars(&rects, &chars)
+        .iter()
+        .flatten()
+    {
+        for i in crate::reading_order::word_gaps(line, &rects, &chars) {
+            let (a, b) = (&rects[line[i]], &rects[line[i + 1]]);
+            let (left, right) = if a.x <= b.x { (a, b) } else { (b, a) };
+            let x = left.x + left.w;
+            spaces.push(DrawnChar {
+                ch: ' ',
+                rect: Rect {
+                    x,
+                    y: left.y.min(right.y),
+                    w: right.x - x,
+                    h: left.h.max(right.h),
+                },
+                horizontal: true,
+                angle: 0.0,
+            });
+        }
+    }
+    drawn.extend(spaces);
 }
 
 /// Un caractère du texte cherché, et la boîte d'où il vient (`None` : espace ajoutée entre
@@ -342,6 +581,71 @@ fn page_blocks(drawn: &[DrawnChar]) -> Vec<crate::reading_order::Block> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn r(x: f32) -> Rect {
+        Rect {
+            x,
+            y: 0.0,
+            w: 10.0,
+            h: 12.0,
+        }
+    }
+
+    #[test]
+    fn pair_surrogates_recomposes_a_pair_and_drops_a_lone_half() {
+        let joined = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 20.0,
+            h: 12.0,
+        };
+        let pair = pair_surrogates(&[(0xD835, r(0.0)), (0xDF0B, r(10.0))]);
+        assert_eq!(pair, vec![('\u{1D70B}', joined, 0)]);
+        let lone = pair_surrogates(&[(0xD835, r(0.0)), (0x41, r(10.0))]);
+        assert_eq!(lone, vec![('A', r(10.0), 1)]);
+        let stray = pair_surrogates(&[(0xDF0B, r(0.0)), (0x42, r(10.0)), (0xD835, r(20.0))]);
+        assert_eq!(stray, vec![('B', r(10.0), 1)]);
+    }
+
+    /// Deux moitiés hautes de suite : la première est isolée (écartée), la seconde forme la
+    /// paire avec la basse qui suit ; une moitié haute en fin de texte est écartée. L'index
+    /// rendu est celui de la première unité du caractère (l'appelant y lit l'angle).
+    #[test]
+    fn pair_surrogates_with_two_high_halves_and_a_trailing_one() {
+        let joined = Rect {
+            x: 10.0,
+            y: 0.0,
+            w: 20.0,
+            h: 12.0,
+        };
+        let two_high = pair_surrogates(&[(0xD835, r(0.0)), (0xD835, r(10.0)), (0xDF0B, r(20.0))]);
+        assert_eq!(two_high, vec![('\u{1D70B}', joined, 1)]);
+        let trailing = pair_surrogates(&[(0x41, r(0.0)), (0xD835, r(10.0))]);
+        assert_eq!(trailing, vec![('A', r(0.0), 0)]);
+    }
+
+    /// L'angle d'un caractère se mesure dans le sens horaire (`FPDFText_GetCharAngle`) et
+    /// `/Rotate` tourne l'affichage dans le sens horaire : les deux s'**ajoutent**. Un texte
+    /// qui monte (`0 1 -1 0 Tm`) sur une page `/Rotate 90` se lit de gauche à droite à l'écran.
+    #[test]
+    fn a_rising_text_on_a_page_rotated_by_90_is_horizontal() {
+        let rising = |doc: &Document| -> Vec<(f32, bool)> {
+            let chars = doc.drawn_chars(0).unwrap();
+            chars
+                .iter()
+                .filter(|c| c.ch == 'X')
+                .map(|c| (c.angle, c.horizontal))
+                .collect()
+        };
+        let plain = Document::from_bytes(crate::testing::sidebar_pdf(), None).unwrap();
+        assert_eq!(rising(&plain), vec![(270.0, false)], "monte à l'écran");
+        let mut lo = lopdf::Document::load_mem(&crate::testing::sidebar_pdf()).unwrap();
+        lo.get_dictionary_mut((3, 0)).unwrap().set("Rotate", 90);
+        let mut out = Vec::new();
+        lo.save_to(&mut out).unwrap();
+        let rotated = Document::from_bytes(out, None).unwrap();
+        assert_eq!(rising(&rotated), vec![(0.0, true)], "horizontal à l'écran");
+    }
 
     fn drawn(ch: char, x: f32, y: f32) -> DrawnChar {
         DrawnChar {

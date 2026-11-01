@@ -463,3 +463,155 @@ fn kerned_words_keep_their_spaces() {
     assert_eq!(find("hello", true), 1);
     assert_eq!(find("world foo", true), 1);
 }
+
+/// Audit L1 : un caractère hors du plan multilingue de base (`𝜋`, U+1D70B) arrive de PDFium en
+/// deux unités UTF-16 ; il doit être recomposé, donc copié, exporté et trouvé.
+#[test]
+fn astral_characters_are_extracted_searchable_and_copied() {
+    let doc = Document::from_bytes(mega_core::testing::astral_text_pdf(), None).unwrap();
+    assert!(doc.page_text(0).unwrap().contains('\u{1D70B}'));
+    let hits = doc
+        .search_page(0, "\u{1D70B}", &Default::default())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        doc.text_boxes(0)
+            .unwrap()
+            .iter()
+            .all(|b| !(0xD800..=0xDFFF).contains(&(b.ch as u32)))
+    );
+}
+
+/// Même contrôle sur de vrais fichiers, si `MEGA_CORPUS` désigne `fixtures/corpus`.
+#[test]
+fn astral_characters_in_the_corpus() {
+    let Ok(dir) = std::env::var("MEGA_CORPUS") else {
+        return;
+    };
+    for (file, expected) in [
+        ("local/edge-article.pdf", '\u{1F600}'),
+        ("producteurs/bug1937438_from_word.pdf", '\u{1D70B}'),
+    ] {
+        let doc = Document::open(format!("{dir}/{file}"), None).unwrap();
+        let mut text = String::new();
+        for i in 0..doc.page_count() {
+            text.push_str(&doc.page_text(i).unwrap());
+            assert!(
+                doc.text_boxes(i)
+                    .unwrap()
+                    .iter()
+                    .all(|b| !(0xD800..=0xDFFF).contains(&(b.ch as u32)))
+            );
+        }
+        assert!(text.contains(expected), "{file}");
+    }
+}
+
+/// Audit L3 : deux mots arabes séparés par un simple déplacement (aucun glyphe espace) sont
+/// séparés par une espace dans la copie, l'export et la recherche.
+#[test]
+fn arabic_words_are_separated_by_spaces() {
+    let doc = Document::from_bytes(mega_core::testing::rtl_gaps_pdf(), None).unwrap();
+    let text = doc.page_text(0).unwrap();
+    assert_eq!(text.trim(), "جميل كتاب", "{text:?}");
+    let hits = doc.search_page(0, "كتاب", &Default::default()).unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+/// Même contrôle sur un vrai fichier arabe, si `MEGA_CORPUS` désigne `fixtures/corpus`.
+#[test]
+fn arabic_corpus_file_has_word_spaces() {
+    let Ok(dir) = std::env::var("MEGA_CORPUS") else {
+        return;
+    };
+    let doc = Document::open(format!("{dir}/polices/ArabicCIDTrueType.pdf"), None).unwrap();
+    let text = doc.page_text(0).unwrap();
+    // Quatre lignes de trois mots : deux espaces par ligne.
+    assert!(text.matches(' ').count() >= 8, "{text:?}");
+    let hits = doc.search_page(0, "الخطوط", &Default::default()).unwrap();
+    assert!(hits.len() >= 4, "{} occurrences", hits.len());
+}
+
+/// Audit L2 : une police CID CFF enveloppée en OpenType dont le CID n'est pas le numéro de
+/// glyphe ; PDFium ne trouve pas le glyphe et n'expose aucun caractère. Le texte s'extrait
+/// quand même par la `/ToUnicode` de la police, avec une emprise à l'endroit du glyphe
+/// (`BT /F1 24 Tf 50 100 Td <A911> Tj ET`, chasse 1000).
+#[test]
+fn opentype_cff_cid_text_is_extracted() {
+    let doc = Document::from_bytes(mega_core::testing::opentype_cff_cid_pdf(), None).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().trim(), "除");
+    let boxes = doc.text_boxes(0).unwrap();
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    let r = boxes[0].rect;
+    assert!(
+        (r.x - 50.0).abs() < 0.5 && (r.w - 24.0).abs() < 0.5,
+        "{r:?}"
+    );
+    assert!(r.y <= 100.0 && r.y + r.h >= 115.0, "{r:?}");
+    let hits = doc.search_page(0, "除", &Default::default()).unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+/// Même contrôle sur le fichier du corpus (Noto Sans TC), si `MEGA_CORPUS` désigne
+/// `fixtures/corpus`.
+#[test]
+fn opentype_cff_cid_corpus_file_has_text() {
+    let Ok(dir) = std::env::var("MEGA_CORPUS") else {
+        return;
+    };
+    let doc = Document::open(format!("{dir}/polices/Embedded_font.pdf"), None).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().trim(), "除");
+    let boxes = doc.text_boxes(0).unwrap();
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    // `0.12 cm`, `167.97 Tm`, `1.366 Tf` : origine (150.66, 487.12), cadratin de 27,5 pt.
+    let r = boxes[0].rect;
+    assert!(
+        (r.x - 150.66).abs() < 0.5 && (r.w - 27.54).abs() < 0.5,
+        "{r:?}"
+    );
+}
+
+/// Le repli place les caractères en espace **affiché** comme PDFium : sur une page tournée
+/// (`/Rotate` 90, 180, 270), la boîte du repli (CID 0xA911, que PDFium ne lit pas) est celle
+/// que PDFium donne pour la même police quand il la lit (CID 1).
+#[test]
+fn opentype_cff_cid_fallback_matches_pdfium_on_rotated_pages() {
+    use mega_core::testing::opentype_cff_cid_pdf_with;
+    for rotate in [0, 90, 180, 270] {
+        let boxes = |cid| {
+            Document::from_bytes(opentype_cff_cid_pdf_with(cid, rotate), None)
+                .unwrap()
+                .text_boxes(0)
+                .unwrap()
+        };
+        let (fallback, pdfium) = (boxes(0xA911), boxes(1));
+        assert_eq!(fallback.len(), 1, "{rotate} : {fallback:?}");
+        assert_eq!(pdfium.len(), 1, "{rotate} : {pdfium:?}");
+        let (a, b) = (fallback[0].rect, pdfium[0].rect);
+        for (x, y) in [(a.x, b.x), (a.y, b.y), (a.w, b.w), (a.h, b.h)] {
+            assert!((x - y).abs() < 0.5, "{rotate} : {a:?} contre {b:?}");
+        }
+    }
+}
+
+/// Relecture de la partie B : la lecture `lopdf` gardée pour le repli est oubliée par une
+/// modification **directe** (chemin du CLI, sans `apply`). L'objet texte déplacé reste
+/// illisible pour PDFium : le repli le relit, à sa nouvelle place et non à l'ancienne.
+///
+/// Supprimer ou caviarder l'objet ne prouverait rien ici : sans objet texte sur la page, le
+/// repli n'est même pas consulté.
+#[test]
+fn the_fallback_sees_a_direct_edit() {
+    let mut doc = Document::from_bytes(mega_core::testing::opentype_cff_cid_pdf(), None).unwrap();
+    let before = doc.text_boxes(0).unwrap();
+    assert_eq!(before.len(), 1, "cache rempli : {before:?}");
+    doc.move_object(0, 0, 30.0, 20.0).unwrap();
+    let after = doc.text_boxes(0).unwrap();
+    assert_eq!(after.len(), 1, "{after:?}");
+    assert_eq!(after[0].ch, '除');
+    let (a, b) = (before[0].rect, after[0].rect);
+    assert!(
+        (b.x - a.x - 30.0).abs() < 0.5 && (b.y - a.y - 20.0).abs() < 0.5,
+        "{a:?} puis {b:?}"
+    );
+}

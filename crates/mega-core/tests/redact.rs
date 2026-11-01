@@ -947,3 +947,28 @@ fn image_with_indirect_subtype_is_redacted() {
         "{report:?}"
     );
 }
+
+/// Audit L2 : une police que PDFium ne sait pas lire (CID CFF en OpenType) laisse un objet
+/// texte sans largeur, posé au point d'origine du glyphe (50, 100). Le contrôle après
+/// caviardage relit la `/ToUnicode` : une zone qui couvre le glyphe sans toucher ce point
+/// laisserait le texte dans le fichier ; elle est refusée.
+#[test]
+fn redaction_sees_text_that_pdfium_cannot_read() {
+    let mut doc = Document::from_bytes(mega_core::testing::opentype_cff_cid_pdf(), None).unwrap();
+    let result = doc.apply(&Cmd::Redact {
+        page: 0,
+        rect: rect(55.0, 95.0, 30.0, 30.0),
+    });
+    match result {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("reste"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(page_text(&doc, 0), "除");
+    // Une zone qui couvre tout le glyphe retire l'objet texte : plus rien à extraire.
+    doc.apply(&Cmd::Redact {
+        page: 0,
+        rect: rect(45.0, 95.0, 35.0, 30.0),
+    })
+    .unwrap();
+    assert_eq!(page_text(&doc, 0), "");
+}

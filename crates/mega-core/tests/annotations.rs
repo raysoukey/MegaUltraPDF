@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Annotations : lecture de fichiers tiers, création, apparences, aller-retour.
 
-use mega_core::testing::{annotated_pdf, annotated_pdf_without_annots, sample_pdf};
+use mega_core::testing::{
+    annotated_pdf, annotated_pdf_without_annots, sample_pdf, third_party_annots_pdf,
+};
 use mega_core::{AnnotationKind, Color, CoreError, Document};
 
 fn annotated() -> Document {
@@ -993,4 +995,51 @@ fn all_annotations_lists_every_page() {
     let fields = form.all_form_fields().unwrap();
     assert_eq!(fields.len(), usize::from(form.page_count()));
     assert_eq!(fields[0], form.form_fields(0).unwrap());
+}
+
+/// Audit L11 : un `FreeText` tiers (`/DA`, pas de `/AP`) se montre comme un texte mais ne se
+/// modifie pas : le recréer l'aurait changé en tampon et perdu son `/DA`.
+#[test]
+fn third_party_free_text_is_shown_but_not_editable() {
+    let mut doc = Document::from_bytes(third_party_annots_pdf(), None).unwrap();
+    let anns = doc.annotations(0).unwrap();
+    let free = anns
+        .iter()
+        .find(|a| a.contents.as_deref() == Some("Texte libre tiers"))
+        .expect("FreeText listé");
+    assert_eq!(free.kind, AnnotationKind::Text);
+    assert!(!free.editable);
+    let index = free.index;
+    let patch = mega_core::AnnotationPatch {
+        contents: Some("autre".to_string()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        doc.update_annotation(0, index, &patch),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    let rect = mega_core::Rect {
+        x: 10.0,
+        y: 10.0,
+        w: 50.0,
+        h: 20.0,
+    };
+    assert!(matches!(
+        doc.set_annotation_rect(0, index, rect),
+        Err(CoreError::InvalidOperation(_))
+    ));
+}
+
+/// Audit L11 : un `Popup` n'est que la fenêtre d'une note, pas une annotation à montrer.
+#[test]
+fn popups_are_not_listed() {
+    let doc = Document::from_bytes(third_party_annots_pdf(), None).unwrap();
+    let anns = doc.annotations(0).unwrap();
+    assert_eq!(anns.len(), 6);
+    // L'index reste celui de `/Annots` : le Popup (6) a disparu, la note (5) garde le sien.
+    assert!(anns.iter().all(|a| a.index != 6));
+    assert!(
+        anns.iter()
+            .any(|a| a.index == 5 && a.kind == AnnotationKind::Note)
+    );
 }

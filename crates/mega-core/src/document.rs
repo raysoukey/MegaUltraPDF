@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Un document PDF ouvert : métadonnées, pages, sérialisation.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use pdfium_render::prelude::{PdfDocument, PdfDocumentMetadataTagType, PdfPageIndex};
@@ -61,6 +62,16 @@ pub struct Document {
     /// chargement incorpore une copie entière de la police, on la réutilise donc tant que
     /// le document PDFium n'est pas remplacé (voir [`Document::replace_inner`]).
     unicode_font: Option<pdfium_render::prelude::PdfFontToken>,
+    /// Le document courant lu par `lopdf` (repli de la couche de texte, pièces jointes de
+    /// page, propriétés), chargé au premier besoin puis gardé : sans lui, chaque page d'un long
+    /// document relirait tout le fichier. `Some(None)` : `lopdf` n'a pas su le lire. Vidé par
+    /// toute modification ([`Document::clear_lopdf_cache`]). Privé à ce fichier : on ne le lit
+    /// que par [`Document::lopdf_view`].
+    ///
+    /// \[Apprentissage\] **`OnceLock`** se remplit une seule fois à travers une référence
+    /// partagée (`&self`), comme l'instance PDFium globale (`engine.rs`) ; le vider demande
+    /// `&mut self` (`take`), ce qui garantit que personne ne lit le cache à ce moment-là.
+    lopdf_cache: std::sync::OnceLock<Option<lopdf::Document>>,
 }
 
 impl std::fmt::Debug for Document {
@@ -134,6 +145,7 @@ impl Document {
             needs_cleanup: false,
             last_redaction: None,
             unicode_font: None,
+            lopdf_cache: std::sync::OnceLock::new(),
         })
     }
 
@@ -217,6 +229,46 @@ impl Document {
     /// après les gardes de refus (`ensure_cleanable`, validation préalable), jamais avant.
     pub(crate) fn mark_changed(&mut self) {
         self.changed = true;
+        self.clear_lopdf_cache();
+    }
+
+    /// Oublie la lecture `lopdf` gardée ([`Document::lopdf_view`]) : le document vient de
+    /// changer (ou va changer), elle ne le décrit plus.
+    pub(crate) fn clear_lopdf_cache(&mut self) {
+        self.lopdf_cache.take();
+    }
+
+    /// Le document **courant** lu avec `lopdf`, gardé jusqu'à la prochaine modification : un
+    /// long document ne se relit pas à chaque page. `None` si `lopdf` ne sait pas le lire, ou
+    /// si PDFium n'a pas su le sérialiser ; cet échec est gardé lui aussi (pas de nouvel essai
+    /// avant la prochaine modification). La lecture occupe à peu près la taille du fichier.
+    ///
+    /// Les octets lus sont ceux du fichier tant que rien n'a changé, sinon une sérialisation
+    /// par PDFium (après un caviardage, on doit voir la page caviardée, pas l'originale).
+    ///
+    /// **Prend le jeton PDFium** (par [`Document::to_bytes`], quand le document a changé) :
+    /// jamais sous `engine::guard()`, verrou non réentrant (interblocage).
+    ///
+    /// Invariant : **toute mutation du document PDFium passe d'abord par `mark_changed()`**
+    /// (ou par [`Document::inner_mut`], [`Document::replace_inner`]), qui vide ce cache ; une
+    /// mutation qui l'oublierait laisserait lire l'état d'avant.
+    pub(crate) fn lopdf_view(&self) -> Option<&lopdf::Document> {
+        // Sous l'acteur, un seul appel à la fois touche un `Document` ; ailleurs, `get_or_init`
+        // resterait correct (un second appel concurrent attendrait le premier).
+        self.lopdf_cache
+            .get_or_init(|| {
+                // [Apprentissage] `Cow` (« copie à l'écriture ») : soit un emprunt des octets
+                // du fichier, soit des octets fraîchement produits, sans copier les premiers.
+                // Le `?` sort de la **fermeture** (qui rend une `Option`) : un échec de
+                // `to_bytes` donne `None`, gardé comme un fichier illisible.
+                let bytes: Cow<'_, [u8]> = if self.changed {
+                    Cow::Owned(self.to_bytes().ok()?)
+                } else {
+                    Cow::Borrowed(&self.file_bytes)
+                };
+                crate::crypt::load_limited(&bytes, self.password()).ok()
+            })
+            .as_ref()
     }
 
     /// Refuse une opération qui supprime ou remplace du contenu si le nettoyage à
@@ -276,6 +328,7 @@ impl Document {
         self.inner = Some(inner);
         // Le jeton de police désignait l'ancien document : il ne vaut plus rien.
         self.unicode_font = None;
+        self.clear_lopdf_cache();
     }
 
     /// Jeton de la police Unicode incorporée dans le document PDFium courant, chargée au
@@ -312,12 +365,18 @@ impl Document {
     /// Accès mutable au document PDFium sous-jacent, réservé aux autres modules du crate.
     #[allow(clippy::expect_used)]
     pub(crate) fn inner_mut(&mut self) -> &mut PdfDocument<'static> {
+        // Un accès mutable annonce une modification : la lecture `lopdf` gardée est périmée.
+        self.clear_lopdf_cache();
         self.inner
             .as_mut()
             .expect("le document PDFium n'est libéré que dans Drop")
     }
 
     /// Accès au document PDFium sous-jacent, réservé aux autres modules du crate.
+    ///
+    /// PDFium laisse modifier une page obtenue par cet accès partagé : **toute mutation du
+    /// document PDFium passe d'abord par `mark_changed()`**, sinon la lecture `lopdf` gardée
+    /// ([`Document::lopdf_view`]) décrirait l'état d'avant.
     ///
     /// Invariant : `inner` n'est `None` que pendant `Drop`, où plus aucune méthode ne peut
     /// être appelée ; l'`expect` ne peut donc pas se déclencher (ADR-0005).
@@ -342,6 +401,35 @@ fn uses_certificate_encryption(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// La lecture `lopdf` se fait une seule fois : deux lectures de la page réutilisent le
+    /// même document gardé, et une modification l'oublie.
+    #[test]
+    fn the_lopdf_view_is_read_once_until_a_change() {
+        let mut doc = Document::from_bytes(crate::testing::opentype_cff_cid_pdf(), None).unwrap();
+        assert!(doc.lopdf_cache.get().is_none());
+        assert_eq!(doc.page_text(0).unwrap().trim(), "除");
+        let first = std::ptr::from_ref(doc.lopdf_cache.get().unwrap().as_ref().unwrap());
+        assert_eq!(doc.page_text(0).unwrap().trim(), "除");
+        let second = std::ptr::from_ref(doc.lopdf_view().unwrap());
+        assert_eq!(first, second, "relu au lieu d'être réutilisé");
+        doc.mark_changed();
+        assert!(doc.lopdf_cache.get().is_none());
+        // Relu depuis le document courant (sérialisé par PDFium, puisqu'il a « changé »).
+        assert_eq!(doc.page_text(0).unwrap().trim(), "除");
+        assert!(doc.lopdf_cache.get().is_some());
+    }
+
+    /// Un document que `lopdf` ne sait pas lire : l'échec est gardé (`Some(None)`) au lieu
+    /// d'être retenté à chaque appel.
+    #[test]
+    fn an_unreadable_lopdf_view_is_cached_as_none() {
+        let mut doc = Document::from_bytes(crate::testing::sample_pdf(1, "t"), None).unwrap();
+        // Octets du fichier remplacés par du charabia : `lopdf` échoue, PDFium n'est pas relu.
+        doc.file_bytes = b"%PDF-1.7 pas un PDF".to_vec();
+        assert!(doc.lopdf_view().is_none());
+        assert!(matches!(doc.lopdf_cache.get(), Some(None)));
+    }
 
     /// Le drapeau `needs_cleanup` monte avec une suppression et retombe à l'enregistrement.
     #[test]

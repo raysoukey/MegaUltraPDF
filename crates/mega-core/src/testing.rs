@@ -358,6 +358,36 @@ pub fn kerned_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Title (Crenage) >>")
 }
 
+/// Une page dont le texte contient un caractère **hors du plan multilingue de base** : U+1D70B
+/// (`𝜋`, lettre mathématique italique), que Cambria Math et Word écrivent. La police simple
+/// Helvetica n'a pas ce glyphe ; son `/ToUnicode` associe le code `A` à la paire de substitution
+/// UTF-16 `D835 DF0B`, et c'est cette paire que PDFium rend, une moitié par « caractère »
+/// (audit de compatibilité, L1). Le texte est invisible (`3 Tr`), comme une couche OCR.
+pub fn astral_text_pdf() -> Vec<u8> {
+    let content = "BT 3 Tr /F1 24 Tf 72 700 Td (x A y) Tj ET";
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap \
+/CMapName /Adobe-Identity-UCS def /CMapType 2 def \
+1 begincodespacerange <00> <FF> endcodespacerange \
+1 beginbfchar <41> <D835DF0B> endbfchar \
+endcmap CMapName currentdict /CMap defineresource pop end end";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding \
+         /ToUnicode 6 0 R >>"
+            .to_string(),
+        format!("<< /Length {} >>\nstream\n{cmap}\nendstream", cmap.len()),
+    ];
+    assemble_pdf(&objects, "<< /Title (Astral) >>")
+}
+
 pub fn xmp_pdf() -> Vec<u8> {
     let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
@@ -377,6 +407,61 @@ xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:pdf=\"http://ns.adobe.com/pdf/1
         ),
     ];
     assemble_pdf(&objects, "<< /Title (Ancien) /Author (Alice) >>")
+}
+
+/// Variantes de métadonnées pour les tests d'encodage et de repli XMP. `kind` : `xmp-only`
+/// (XMP sans `/Info`), `pdfdoc-e9`, `pdfdoc-80-a0`, `utf8-raw` (titre `/Info` aux octets
+/// bruts correspondants).
+///
+/// Elles existent pour que le banc de l'audit et les vrais tests partagent les mêmes octets.
+pub fn metadata_variant_pdf(kind: &str) -> Vec<u8> {
+    let mut doc;
+    if kind == "xmp-only" {
+        doc = lopdf::Document::load_mem(&xmp_pdf()).expect("squelette XMP");
+        doc.trailer.remove(b"Info");
+    } else {
+        let title: Vec<u8> = match kind {
+            "pdfdoc-e9" => vec![b'C', b'a', b'f', 0xE9],
+            "pdfdoc-80-a0" => vec![0x80, b' ', 0xA0],
+            _ => "Café".as_bytes().to_vec(),
+        };
+        doc = lopdf::Document::load_mem(&sample_pdf(1, "x")).expect("squelette");
+        let info_id = doc
+            .trailer
+            .get(b"Info")
+            .and_then(lopdf::Object::as_reference)
+            .expect("/Info du squelette");
+        doc.get_dictionary_mut(info_id)
+            .expect("dictionnaire /Info")
+            .set(
+                "Title",
+                lopdf::Object::String(title, lopdf::StringFormat::Literal),
+            );
+    }
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
+/// Une page de 100 pt de côté avec `/UserUnit 10` (§7.7.3.3) : 1000 pt, soit 353 mm, une fois
+/// l'unité appliquée. PDFium l'ignore pour la taille de page.
+pub fn user_unit_pdf() -> Vec<u8> {
+    let content = "BT /F1 12 Tf 10 50 Td (UU) Tj ET";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /UserUnit 10 /Contents 4 0 R          /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>
+stream
+{content}
+endstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+    assemble_pdf(&objects, "<< /Title (UU) >>")
 }
 
 /// Un document dont le dictionnaire `/Info` est **direct** dans la remorque (permis, rare).
@@ -1934,4 +2019,390 @@ pub fn rich_catalog_pdf(header: &str, catalog_version: Option<&str>) -> Vec<u8> 
         objects.len() + 1
     ));
     out.into_bytes()
+}
+
+/// Une ligne arabe de deux mots, **sans glyphe espace** : le second mot est séparé du premier
+/// par un simple déplacement `Td` d'environ un em (audit de compatibilité, L3). Police DejaVu
+/// Sans incorporée (Type0 / Identity-H). Les glyphes sont dessinés de gauche à droite, donc
+/// chaque mot est écrit à l'envers dans le flux ; lu dans l'ordre logique, le texte est
+/// « جميل كتاب » (« beau livre »).
+pub fn rtl_gaps_pdf() -> Vec<u8> {
+    use crate::fonts::unicode::{Type0Writer, UnicodeFont};
+    use lopdf::{Dictionary, Object, Stream};
+    let reversed = |w: &str| w.chars().rev().collect::<String>();
+    // À l'écran : « كتاب » à gauche, « جميل » à droite.
+    let (left, right) = (reversed("كتاب"), reversed("جميل"));
+    let size = 24.0;
+    let advance = UnicodeFont::embedded().text_width(&left, size) + size;
+    let mut writer = Type0Writer::new();
+    let (left_hex, right_hex) = (writer.encode(&left), writer.encode(&right));
+    let base = blank_pdf(595.0, 842.0);
+    let mut doc = lopdf::Document::load_mem(&base).expect("squelette lisible");
+    let font_id = writer.write(&mut doc).expect("police Unicode");
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        format!("BT /U1 {size} Tf 72 700 Td {left_hex} Tj {advance} 0 Td {right_hex} Tj ET")
+            .into_bytes(),
+    ));
+    let page_id = *doc.get_pages().get(&1).expect("une page");
+    let page = doc.get_dictionary_mut(page_id).expect("page");
+    page.set("Contents", Object::Reference(content));
+    page.set(
+        "Resources",
+        Object::Dictionary(Dictionary::from_iter(vec![(
+            "Font",
+            Object::Dictionary(Dictionary::from_iter(vec![(
+                "U1",
+                Object::Reference(font_id),
+            )])),
+        )])),
+    );
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation");
+    out
+}
+
+/// CID du glyphe unique de [`opentype_cff_cid_pdf`] : celui de « 除 » dans Noto Sans TC, la
+/// police du fichier où l'audit a mesuré le défaut (corpus `polices/Embedded_font.pdf`).
+const CFF_CID: u16 = 0xA911;
+
+/// Une page qui écrit « 除 » (`<A911> Tj`) avec une police CID **CFF enveloppée en OpenType**
+/// (`/FontFile3 /Subtype /OpenType`, `/Encoding /Identity-H`, `/ToUnicode` A911 → U+9664) :
+/// un programme CFF à clés CID d'un seul glyphe (un carré), écrit octet par octet par
+/// [`cid_keyed_otf`], où le CID 0xA911 est porté par le glyphe 1 (table `charset`).
+///
+/// Pourquoi : PDFium ne trouve aucun glyphe pour un tel CID (il le prend pour un numéro de
+/// glyphe, et la police n'en a que deux) ; l'objet texte n'a alors aucune largeur et sa couche
+/// de texte reste vide (audit L2). Le texte doit pourtant s'extraire par la `/ToUnicode`.
+pub fn opentype_cff_cid_pdf() -> Vec<u8> {
+    opentype_cff_cid_pdf_with(CFF_CID, 0)
+}
+
+/// [`opentype_cff_cid_pdf`] avec le CID `cid` pour le glyphe 1 et la rotation `rotate`
+/// (`/Rotate`). Contrôle : avec `cid` = 1, le CID et le numéro de glyphe coïncident, PDFium
+/// lit le texte lui-même ; on compare ainsi le repli à PDFium sur la même géométrie.
+pub fn opentype_cff_cid_pdf_with(cid: u16, rotate: i64) -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    let base = blank_pdf(200.0, 200.0);
+    let mut doc = lopdf::Document::load_mem(&base).expect("squelette lisible");
+    let font_file = doc.add_object(Stream::new(
+        Dictionary::from_iter(vec![("Subtype", Object::Name(b"OpenType".to_vec()))]),
+        cid_keyed_otf(cid),
+    ));
+    let descriptor = doc.add_object(Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"FontDescriptor".to_vec())),
+        ("FontName", Object::Name(b"MegaCID".to_vec())),
+        ("Flags", Object::Integer(4)),
+        (
+            "FontBBox",
+            Object::Array(vec![0.into(), (-120).into(), 1000.into(), 880.into()]),
+        ),
+        ("ItalicAngle", Object::Integer(0)),
+        ("Ascent", Object::Integer(880)),
+        ("Descent", Object::Integer(-120)),
+        ("CapHeight", Object::Integer(700)),
+        ("StemV", Object::Integer(80)),
+        ("FontFile3", Object::Reference(font_file)),
+    ]));
+    let descendant = doc.add_object(Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Font".to_vec())),
+        ("Subtype", Object::Name(b"CIDFontType0".to_vec())),
+        ("BaseFont", Object::Name(b"MegaCID".to_vec())),
+        (
+            "CIDSystemInfo",
+            Object::Dictionary(Dictionary::from_iter(vec![
+                ("Registry", Object::string_literal("Adobe")),
+                ("Ordering", Object::string_literal("Identity")),
+                ("Supplement", Object::Integer(0)),
+            ])),
+        ),
+        ("FontDescriptor", Object::Reference(descriptor)),
+        (
+            "W",
+            Object::Array(vec![
+                i64::from(cid).into(),
+                Object::Array(vec![1000.into()]),
+            ]),
+        ),
+    ]));
+    let cmap = format!(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
+         /CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n\
+         1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n\
+         1 beginbfchar\n<{cid:04X}> <9664>\nendbfchar\n\
+         endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
+    );
+    let to_unicode = doc.add_object(Stream::new(Dictionary::new(), cmap.into_bytes()));
+    let font = doc.add_object(Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Font".to_vec())),
+        ("Subtype", Object::Name(b"Type0".to_vec())),
+        ("BaseFont", Object::Name(b"MegaCID".to_vec())),
+        ("Encoding", Object::Name(b"Identity-H".to_vec())),
+        (
+            "DescendantFonts",
+            Object::Array(vec![Object::Reference(descendant)]),
+        ),
+        ("ToUnicode", Object::Reference(to_unicode)),
+    ]));
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        format!("BT /F1 24 Tf 50 100 Td <{cid:04X}> Tj ET").into_bytes(),
+    ));
+    let page_id = *doc.get_pages().get(&1).expect("une page");
+    let page = doc.get_dictionary_mut(page_id).expect("page");
+    page.set("Contents", Object::Reference(content));
+    page.set("Rotate", Object::Integer(rotate));
+    page.set(
+        "Resources",
+        Object::Dictionary(Dictionary::from_iter(vec![(
+            "Font",
+            Object::Dictionary(Dictionary::from_iter(vec![("F1", Object::Reference(font))])),
+        )])),
+    );
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation");
+    out
+}
+
+/// Un nombre dans un dictionnaire ou une chaîne de caractères CFF : forme la plus courte.
+fn cff_int(v: i32) -> Vec<u8> {
+    match v {
+        -107..=107 => vec![(v + 139) as u8],
+        108..=1131 => vec![((v - 108) / 256 + 247) as u8, ((v - 108) % 256) as u8],
+        -1131..=-108 => vec![((-v - 108) / 256 + 251) as u8, ((-v - 108) % 256) as u8],
+        _ => {
+            let mut b = vec![29];
+            b.extend_from_slice(&v.to_be_bytes());
+            b
+        }
+    }
+}
+
+/// Un décalage dans un dictionnaire CFF, toujours sur cinq octets : la taille du dictionnaire
+/// ne dépend pas de la valeur, on peut donc la connaître avant de placer les données.
+fn cff_offset(v: usize) -> Vec<u8> {
+    let mut b = vec![29];
+    b.extend_from_slice(&i32::try_from(v).expect("petit décalage").to_be_bytes());
+    b
+}
+
+/// Un INDEX CFF (spécification CFF d'Adobe, §5) : nombre d'éléments, décalages sur un octet
+/// (données de moins de 255 octets ici), données.
+fn cff_index(items: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = u16::try_from(items.len())
+        .expect("peu d'éléments")
+        .to_be_bytes()
+        .to_vec();
+    if items.is_empty() {
+        return out;
+    }
+    out.push(1);
+    let mut offset = 1usize;
+    out.push(1);
+    for item in items {
+        offset += item.len();
+        out.push(u8::try_from(offset).expect("INDEX de moins de 255 octets"));
+    }
+    for item in items {
+        out.extend_from_slice(item);
+    }
+    out
+}
+
+/// Programme CFF à clés CID (`ROS Adobe Identity 0`) de deux glyphes, `.notdef` et un carré
+/// (glyphe 1, CID `cid`), enveloppé dans une police OpenType (`OTTO`) minimale : tables
+/// `CFF `, `head`, `hhea`, `hmtx`, `maxp`.
+fn cid_keyed_otf(cid: u16) -> Vec<u8> {
+    // Chaînes de caractères Type 2 : `.notdef` vide, puis un carré de 800 unités.
+    let notdef = vec![14u8]; // endchar
+    let mut square = Vec::new();
+    for v in [100, 0] {
+        square.extend(cff_int(v));
+    }
+    square.push(21); // rmoveto
+    for v in [800, 800, -800] {
+        square.extend(cff_int(v));
+    }
+    square.extend([6, 14]); // hlineto, endchar
+    let name_index = cff_index(&[b"MegaCID".to_vec()]);
+    let string_index = cff_index(&[b"Adobe".to_vec(), b"Identity".to_vec()]);
+    let global_subrs = cff_index(&[]);
+    // `charset` format 0 : un CID par glyphe après `.notdef`.
+    let mut charset = vec![0u8];
+    charset.extend_from_slice(&cid.to_be_bytes());
+    // `FDSelect` format 0 : les deux glyphes dans le Font DICT 0.
+    let fd_select = vec![0u8, 0, 0];
+    let char_strings = cff_index(&[notdef, square]);
+    let private = vec![139u8, 20]; // defaultWidthX 0
+    let top_dict =
+        |charset_at: usize, strings_at: usize, fd_array_at: usize, fd_select_at: usize| {
+            let mut d = Vec::new();
+            d.extend(cff_int(391)); // SID de « Adobe »
+            d.extend(cff_int(392)); // SID de « Identity »
+            d.extend(cff_int(0));
+            d.extend([12, 30]); // ROS
+            d.extend(cff_int(65535));
+            d.extend([12, 34]); // CIDCount
+            for v in [0, -120, 1000, 880] {
+                d.extend(cff_int(v));
+            }
+            d.push(5); // FontBBox
+            d.extend(cff_offset(charset_at));
+            d.push(15); // charset
+            d.extend(cff_offset(strings_at));
+            d.push(17); // CharStrings
+            d.extend(cff_offset(fd_array_at));
+            d.extend([12, 36]); // FDArray
+            d.extend(cff_offset(fd_select_at));
+            d.extend([12, 37]); // FDSelect
+            d
+        };
+    let font_dict = |private_at: usize| {
+        let mut d = cff_int(2); // taille du Private DICT
+        d.extend(cff_offset(private_at));
+        d.push(18); // Private
+        d
+    };
+    // Les tailles ne dépendent pas des décalages (toujours sur cinq octets) : un premier
+    // calcul avec des zéros donne la disposition, le second écrit les vraies valeurs.
+    let top_len = cff_index(&[top_dict(0, 0, 0, 0)]).len();
+    let charset_at = 4 + name_index.len() + top_len + string_index.len() + global_subrs.len();
+    let fd_select_at = charset_at + charset.len();
+    let char_strings_at = fd_select_at + fd_select.len();
+    let fd_array_at = char_strings_at + char_strings.len();
+    let private_at = fd_array_at + cff_index(&[font_dict(0)]).len();
+    let mut cff = vec![1u8, 0, 4, 4]; // en-tête : version 1.0, taille 4, décalages sur 4 octets
+    cff.extend(&name_index);
+    cff.extend(cff_index(&[top_dict(
+        charset_at,
+        char_strings_at,
+        fd_array_at,
+        fd_select_at,
+    )]));
+    cff.extend(&string_index);
+    cff.extend(&global_subrs);
+    cff.extend(&charset);
+    cff.extend(&fd_select);
+    cff.extend(&char_strings);
+    cff.extend(cff_index(&[font_dict(private_at)]));
+    cff.extend(&private);
+
+    let be16 = |v: i32| (v as i16).to_be_bytes();
+    let mut head = Vec::new();
+    head.extend(0x0001_0000u32.to_be_bytes()); // version
+    head.extend(0x0001_0000u32.to_be_bytes()); // fontRevision
+    head.extend(0u32.to_be_bytes()); // checkSumAdjustment
+    head.extend(0x5F0F_3CF5u32.to_be_bytes()); // magicNumber
+    head.extend(be16(3)); // flags
+    head.extend(be16(1000)); // unitsPerEm
+    head.extend([0u8; 16]); // created, modified
+    // xMin, yMin, xMax, yMax, macStyle, lowestRecPPEM, fontDirectionHint, indexToLocFormat,
+    // glyphDataFormat.
+    for v in [0, -120, 1000, 880, 0, 8, 2, 0, 0] {
+        head.extend(be16(v));
+    }
+    let mut hhea = 0x0001_0000u32.to_be_bytes().to_vec();
+    // ascender, descender, lineGap, advanceWidthMax, minLeftSideBearing, minRightSideBearing,
+    // xMaxExtent, caretSlopeRise, caretSlopeRun, caretOffset, 4 × réservé, metricDataFormat,
+    // numberOfHMetrics.
+    for v in [880, -120, 0, 1000, 0, 0, 1000, 1, 0, 0, 0, 0, 0, 0, 0, 2] {
+        hhea.extend(be16(v));
+    }
+    let mut hmtx = Vec::new();
+    for v in [1000, 0, 1000, 100] {
+        hmtx.extend(be16(v));
+    }
+    let mut maxp = 0x0000_5000u32.to_be_bytes().to_vec(); // version 0.5 (police CFF)
+    maxp.extend(be16(2)); // numGlyphs
+
+    let tables: [(&[u8; 4], Vec<u8>); 5] = [
+        (b"CFF ", cff),
+        (b"head", head),
+        (b"hhea", hhea),
+        (b"hmtx", hmtx),
+        (b"maxp", maxp),
+    ];
+    let mut out = b"OTTO".to_vec();
+    out.extend(be16(5)); // numTables
+    out.extend(be16(64)); // searchRange : 16 × 4
+    out.extend(be16(2)); // entrySelector : log2(4)
+    out.extend(be16(5 * 16 - 64)); // rangeShift
+    let mut offset = 12 + 16 * tables.len();
+    let mut data = Vec::new();
+    for (tag, bytes) in &tables {
+        let mut padded = bytes.clone();
+        padded.resize(bytes.len().div_ceil(4) * 4, 0);
+        let checksum = padded
+            .chunks(4)
+            .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+            .fold(0u32, u32::wrapping_add);
+        out.extend(*tag);
+        out.extend(checksum.to_be_bytes());
+        out.extend(u32::try_from(offset).expect("petite police").to_be_bytes());
+        out.extend(
+            u32::try_from(bytes.len())
+                .expect("petite table")
+                .to_be_bytes(),
+        );
+        offset += padded.len();
+        data.extend(padded);
+    }
+    out.extend(data);
+    out
+}
+
+/// Une page portant des annotations de sous-types que nous ne créons pas, chacune dans un
+/// rectangle disjoint : `Polygon`, `FreeText` (avec `/DA`, sans `/AP`), `Square` sans `/AP`,
+/// `Link` nommé, `FileAttachment` (fichier `piece.txt` contenant « contenu »), `Text` avec
+/// son `Popup`.
+///
+/// Pourquoi : un fichier venu d'un autre logiciel ne ressemble jamais à ce que nous écrivons ;
+/// ce PDF sert au banc de compatibilité et aux tests qui vérifient que ces annotations sont
+/// lues sans être abîmées (audit L11, L15).
+pub fn third_party_annots_pdf() -> Vec<u8> {
+    let stream = |dict: &str, content: &str| {
+        format!(
+            "<< {dict} /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+    };
+    let objects: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Names << /Dests << /Names [(chap) [3 0 R /Fit]] >> >> \
+         /AcroForm << /Fields [] /DR << /Font << /Helv 4 0 R >> >> /DA (/Helv 0 Tf 0 g) >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Resources << /Font << /Helv 4 0 R >> >> \
+         /Contents 12 0 R /Annots [5 0 R 6 0 R 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+        // 5 Polygon
+        "<< /Type /Annot /Subtype /Polygon /Rect [50 400 150 480] /Vertices [50 400 150 400 100 480] \
+         /C [1 0 0] /BS << /W 2 >> /Contents (Polygone) /P 3 0 R >>"
+            .to_string(),
+        // 6 FreeText sans /AP
+        "<< /Type /Annot /Subtype /FreeText /Rect [200 400 350 440] /DA (/Helv 12 Tf 0 g) \
+         /Contents (Texte libre tiers) /C [1 1 0.8] /P 3 0 R >>"
+            .to_string(),
+        // 7 Square sans /AP
+        "<< /Type /Annot /Subtype /Square /Rect [50 250 150 350] /C [0 0 1] /IC [1 1 0] /BS << /W 3 >> \
+         /Contents (Carre) /P 3 0 R >>"
+            .to_string(),
+        // 8 Link nommé
+        "<< /Type /Annot /Subtype /Link /Rect [200 250 350 300] /Border [0 0 0] /Dest (chap) /P 3 0 R >>"
+            .to_string(),
+        // 9 FileAttachment
+        "<< /Type /Annot /Subtype /FileAttachment /Rect [400 400 420 420] /Name /PushPin \
+         /FS << /Type /Filespec /F (piece.txt) /UF (piece.txt) /EF << /F 13 0 R >> >> /Contents (PJ) /P 3 0 R >>"
+            .to_string(),
+        // 10 Text + Popup
+        "<< /Type /Annot /Subtype /Text /Rect [400 250 420 270] /Contents (Note tierce) /T (Tiers) \
+         /Popup 11 0 R /Open true /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Popup /Rect [300 100 450 200] /Parent 10 0 R /Open true /P 3 0 R >>"
+            .to_string(),
+        stream("", "BT /Helv 10 Tf 20 20 Td (fond) Tj ET"),
+        stream("/Type /EmbeddedFile", "contenu"),
+    ];
+    assemble_pdf(&objects, "<< >>")
 }

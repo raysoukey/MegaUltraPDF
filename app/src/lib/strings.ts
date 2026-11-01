@@ -160,6 +160,8 @@ export const fr = {
   renderFailed: 'Page impossible à afficher',
   copyFailed: 'Copie impossible : le presse-papiers est refusé par le système.',
   propPdfa: 'Conformité déclarée',
+  propPhysicalSize: 'Taille physique',
+  userUnit: (n: number) => `UserUnit ${n}`,
   pdfaNone: 'Aucune',
   pdfaNoLongerGuaranteed: (claim: string) =>
     `Enregistré. Ce document déclare la conformité ${claim} : après modification, elle n’est plus garantie.`,
@@ -531,6 +533,7 @@ export const fr = {
   attachmentDelete: 'Retirer la pièce jointe',
   attachmentAdd: 'Joindre un fichier…',
   attachmentSaved: 'Pièce jointe enregistrée.',
+  attachmentOnPage: (n: number) => `(page ${n})`,
   compareTitle: 'Comparer…',
   compareWith: 'Comparer avec',
   compareNoOther: 'Aucun autre document ouvert',
@@ -774,6 +777,8 @@ export const en: Strings = {
   renderFailed: 'This page cannot be displayed',
   copyFailed: 'Copy failed: the system refused access to the clipboard.',
   propPdfa: 'Declared conformance',
+  propPhysicalSize: 'Physical size',
+  userUnit: (n: number) => `UserUnit ${n}`,
   pdfaNone: 'None',
   pdfaNoLongerGuaranteed: (claim: string) =>
     `Saved. This document declares ${claim} conformance: after editing, it is no longer guaranteed.`,
@@ -1144,6 +1149,7 @@ export const en: Strings = {
   attachmentDelete: 'Remove attachment',
   attachmentAdd: 'Attach a file…',
   attachmentSaved: 'Attachment saved.',
+  attachmentOnPage: (n: number) => `(page ${n})`,
   compareTitle: 'Compare…',
   compareWith: 'Compare with',
   compareNoOther: 'No other document open',

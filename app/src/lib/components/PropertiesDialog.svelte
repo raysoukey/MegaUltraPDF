@@ -3,6 +3,7 @@
   import { trapFocus } from '$lib/actions/trapFocus';
   import { documentProperties, fileSize, type DocumentProperties } from '$lib/api';
   import { formatPdfDate } from '$lib/logic/labels';
+  import { physicalSize } from '$lib/logic/physicalSize';
   import { ensureSecurity, setMetadata, type OpenDoc } from '$lib/state/documents.svelte';
   import { t } from '$lib/strings';
 
@@ -50,6 +51,18 @@
 
   const rows = $derived.by((): [string, string][] => {
     if (!info) return [];
+    const first = doc.summary.pages[0];
+    const unit = info.user_unit;
+    // Ligne présente seulement quand une unité utilisateur modifie la taille réelle (L13).
+    const physical: [string, string][] =
+      unit !== null && first
+        ? [
+            [
+              t.propPhysicalSize,
+              `${physicalSize(first.width_pt, first.height_pt, unit)} (${t.userUnit(unit)})`,
+            ],
+          ]
+        : [];
     return [
       [t.propFile, doc.summary.path ?? t.unknown],
       [t.propSize, size === null ? t.unknown : t.bytes(size)],
@@ -59,6 +72,7 @@
       [t.propModified, pdfDate(info.modification_date)],
       [t.propVersion, info.pdf_version],
       [t.propPages, String(info.page_count)],
+      ...physical,
       [t.propPdfa, info.pdfa ?? t.pdfaNone],
     ];
   });

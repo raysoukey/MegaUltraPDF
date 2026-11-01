@@ -40,9 +40,10 @@ pub(crate) struct RasterReport {
 }
 
 /// Matrice affine PDF `[a b c d e f]` : `(x, y) ↦ (a x + c y + e, b x + d y + f)` (§8.3.3).
-type Matrix = [f32; 6];
+pub(crate) type Matrix = [f32; 6];
 
-const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+/// La matrice identité : rien ne bouge.
+pub(crate) const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
 /// Côté maximal d'une image que l'on accepte de décoder (au-delà : retirée entière).
 const MAX_SIDE: i64 = 20_000;
@@ -54,7 +55,7 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 }
 
 /// `a` puis `b` : la matrice qui applique `a`, puis `b` (convention PDF `a × b`).
-fn multiply(a: &Matrix, b: &Matrix) -> Matrix {
+pub(crate) fn multiply(a: &Matrix, b: &Matrix) -> Matrix {
     [
         a[0] * b[0] + a[1] * b[2],
         a[0] * b[1] + a[1] * b[3],
@@ -66,7 +67,7 @@ fn multiply(a: &Matrix, b: &Matrix) -> Matrix {
 }
 
 /// Image du point `(x, y)` par `m`.
-fn apply(m: &Matrix, x: f32, y: f32) -> (f32, f32) {
+pub(crate) fn apply(m: &Matrix, x: f32, y: f32) -> (f32, f32) {
     (x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5])
 }
 
@@ -559,7 +560,7 @@ fn stream_paints_images(
 }
 
 /// Les six nombres d'un opérateur `cm`.
-fn matrix_operands(op: &Operation) -> Option<Matrix> {
+pub(crate) fn matrix_operands(op: &Operation) -> Option<Matrix> {
     let values: Vec<f32> = op
         .operands
         .iter()

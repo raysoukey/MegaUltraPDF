@@ -267,7 +267,13 @@ impl Document {
         let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
         filters.insert(b"StdCF".to_vec(), Arc::new(Aes256CryptFilter));
         let state = EncryptionState::try_from(EncryptionVersion::V5 {
-            encrypt_metadata: true,
+            // XMP en clair (`/EncryptMetadata false`) : PDFium écrit toujours le flux
+            // `/Metadata` en clair, mais le déchiffre à la relecture si la clé vaut `true`.
+            // Comme chaque enregistrement fait relire à PDFium sa propre sortie, un XMP déclaré
+            // chiffré devenait des octets aléatoires (tâche 21 du Lot 14). Le titre et l'auteur
+            // du XMP restent donc lisibles sans mot de passe ; ceux de `/Info`, le contenu et
+            // les pièces jointes sont chiffrés.
+            encrypt_metadata: false,
             crypt_filters: filters,
             file_encryption_key: &key,
             stream_filter: b"StdCF".to_vec(),

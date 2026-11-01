@@ -503,3 +503,62 @@ fn unicode_font_is_subset_in_an_aes256_document() {
     let reopened = Document::from_bytes(bytes, Some("secret")).unwrap();
     assert!(reopened.page_text(0).unwrap().contains('Ω'));
 }
+
+/// Constat F21-4 (tâche 21 du Lot 14), pas encore corrigé : un fichier AES dont le XMP est
+/// chiffré (`/EncryptMetadata true`, le réglage par défaut d'Acrobat et de qpdf) perd son XMP
+/// au premier enregistrement. PDFium écrit le flux `/Metadata` en clair sans changer la
+/// déclaration, puis, en relisant sa propre sortie (`rewritten_bytes`, historique), le
+/// « déchiffre » en octets aléatoires. `protect` évite le piège en posant
+/// `/EncryptMetadata false` ; pour un fichier reçu, il faudrait rechiffrer le XMP de chaque
+/// sortie de PDFium.
+#[test]
+#[ignore = "constat F21-4 (Lot 14, tâche 21) : XMP chiffré détruit par PDFium à l'enregistrement"]
+fn editing_a_file_with_encrypted_xmp_keeps_its_xmp() {
+    use lopdf::encryption::crypt_filters::Aes256CryptFilter;
+    let mut doc =
+        lopdf::Document::load_mem(&mega_core::testing::rich_catalog_pdf("1.7", None)).unwrap();
+    let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
+    filters.insert(b"StdCF".to_vec(), Arc::new(Aes256CryptFilter));
+    let key = [7u8; 32];
+    let state = EncryptionState::try_from(EncryptionVersion::V5 {
+        encrypt_metadata: true,
+        crypt_filters: filters,
+        file_encryption_key: &key,
+        stream_filter: b"StdCF".to_vec(),
+        string_filter: b"StdCF".to_vec(),
+        owner_password: "o",
+        user_password: "u",
+        permissions: Permissions::all(),
+    })
+    .unwrap();
+    doc.encrypt(&state).unwrap();
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(bytes, Some("u")).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("xmp.pdf");
+    doc.save_as(&path).unwrap();
+    let options = lopdf::LoadOptions {
+        password: Some("u".to_string()),
+        ..lopdf::LoadOptions::default()
+    };
+    let saved =
+        lopdf::Document::load_mem_with_options(&std::fs::read(&path).unwrap(), options).unwrap();
+    let id = saved
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = saved.get_object(id).unwrap().as_stream().unwrap();
+    let xmp = stream
+        .decompressed_content()
+        .unwrap_or_else(|_| stream.content.clone());
+    assert!(
+        xmp.starts_with(b"<?xpacket"),
+        "XMP détruit : {:?}",
+        String::from_utf8_lossy(&xmp[..xmp.len().min(40)])
+    );
+}

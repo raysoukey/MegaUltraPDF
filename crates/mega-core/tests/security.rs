@@ -406,3 +406,65 @@ fn protect_declares_the_adobe_extension_level_and_a_1_7_header() {
         "une version plus haute reste"
     );
 }
+
+/// Le paquet XMP d'un document lu dans `bytes` (déchiffré avec `password`), en texte.
+fn xmp_text(bytes: &[u8], password: &str) -> String {
+    let options = lopdf::LoadOptions {
+        password: Some(password.to_string()),
+        ..lopdf::LoadOptions::default()
+    };
+    let doc = lopdf::Document::load_mem_with_options(bytes, options).unwrap();
+    let id = doc
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+    String::from_utf8_lossy(
+        &stream
+            .decompressed_content()
+            .unwrap_or(stream.content.clone()),
+    )
+    .into_owned()
+}
+
+/// Tâche 21 du Lot 14 (constat de la relecture) : PDFium écrit le flux `/Metadata` **en clair**
+/// même quand `/EncryptMetadata` vaut `true`, mais le déchiffre à la relecture. Chaque
+/// enregistrement (PDFium relit sa propre sortie) changeait alors le XMP d'un document que nous
+/// venions de protéger en octets aléatoires. Protéger pose donc `/EncryptMetadata false` : le
+/// XMP survit à la protection, à l'enregistrement et à une édition suivie d'un second
+/// enregistrement.
+#[test]
+fn protecting_keeps_the_xmp_readable_through_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("protege.pdf");
+    let mut doc =
+        Document::from_bytes(mega_core::testing::rich_catalog_pdf("1.7", None), None).unwrap();
+    doc.protect(&protection("u", "o", all())).unwrap();
+    doc.save_as(&path).unwrap();
+    let first = std::fs::read(&path).unwrap();
+    let xmp = xmp_text(&first, "u");
+    assert!(
+        xmp.starts_with("<?xpacket") && xmp.contains("</x:xmpmeta>"),
+        "XMP illisible après protection : {:?}",
+        &xmp[..xmp.len().min(60)]
+    );
+    assert!(
+        String::from_utf8_lossy(&first).contains("/EncryptMetadata false"),
+        "le XMP est déclaré en clair"
+    );
+    doc.apply(&EditCommand::RotatePages {
+        pages: vec![0],
+        quarter_turns: 1,
+    })
+    .unwrap();
+    doc.save_as(&path).unwrap();
+    let xmp = xmp_text(&std::fs::read(&path).unwrap(), "u");
+    assert!(
+        xmp.starts_with("<?xpacket") && xmp.contains("</x:xmpmeta>"),
+        "XMP illisible après un second enregistrement : {:?}",
+        &xmp[..xmp.len().min(60)]
+    );
+}

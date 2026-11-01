@@ -1444,6 +1444,43 @@ pub fn note_with_popup_pdf(secret: &str) -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Une page dont `/Annots` vaut `[note, popup de la note, pièce jointe a.txt, pièce jointe
+/// b.txt]`. Supprimer la note puis enregistrer retire le popup du fichier écrit (nettoyage),
+/// ce qui décale les index de `/Annots` : sert à vérifier qu'après un enregistrement, PDFium et
+/// `lopdf` désignent encore la même annotation (relecture finale du Lot 14, I1).
+pub fn note_then_two_attachments_pdf() -> Vec<u8> {
+    let attachment = |name: &str, stream: u32| {
+        format!(
+            "<< /Type /Annot /Subtype /FileAttachment /Rect [400 400 420 420] /Name /PushPin \
+             /FS << /Type /Filespec /F ({name}) /UF ({name}) /EF << /F {stream} 0 R >> >> \
+             /Contents ({name}) /P 3 0 R >>"
+        )
+    };
+    let file = |content: &str| {
+        format!(
+            "<< /Type /EmbeddedFile /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+    };
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] \
+         /Annots [4 0 R 5 0 R 6 0 R 7 0 R] >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents (Note) /T (Auteur) \
+         /Popup 5 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Popup /Rect [300 300 450 400] /Parent 4 0 R /P 3 0 R >>"
+            .to_string(),
+        attachment("a.txt", 8),
+        attachment("b.txt", 9),
+        file("contenu A"),
+        file("contenu B"),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un texte « Secret » dans une police **sous-ensemble** (`/BaseFont /ABCDEF+Helvetica`) :
 /// seuls les glyphes utilisés seraient incorporés, un caractère nouveau s'afficherait mal.
 pub fn subset_font_pdf() -> Vec<u8> {

@@ -809,6 +809,13 @@ impl Document {
         }
         let bytes = self.rewritten_bytes()?;
         write_atomically(path, &bytes)?;
+        // Le nettoyage a pu retirer des objets que PDFium garde en mémoire (popup d'une note
+        // supprimée, entrées de `/Annots`) : on recharge PDFium depuis les octets **écrits**,
+        // sinon un index lu dans le fichier (`lopdf_view`, qui relit `file_bytes`) et le même
+        // index dans PDFium désigneraient deux annotations différentes (relecture finale du
+        // Lot 14, I1). Comme pour une signature : rechargement, puis état « enregistré ».
+        // Un échec laisse le document « modifié » : le prochain enregistrement le réécrira.
+        self.reload_from_bytes(bytes.clone())?;
         // Ce qui vient d'être écrit est désormais l'état du fichier.
         self.mark_saved(path, bytes);
         Ok(())

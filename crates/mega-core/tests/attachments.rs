@@ -256,3 +256,27 @@ fn page_attachment_is_targeted_after_a_null_annots_entry() {
     });
     assert_attachment_targeted_and_deleted(doc);
 }
+
+/// Relecture finale du Lot 14 (I1) : après un enregistrement, la lecture `lopdf` (le fichier
+/// écrit, nettoyé) et PDFium doivent désigner la même annotation. Supprimer la note retire
+/// aussi son popup du fichier écrit ; si PDFium gardait l'état d'avant ce nettoyage, retirer
+/// la seconde pièce jointe ferait disparaître la première.
+#[test]
+fn deleting_a_page_attachment_after_a_save_targets_the_right_one() {
+    let mut doc =
+        Document::from_bytes(mega_core::testing::note_then_two_attachments_pdf(), None).unwrap();
+    let names = |doc: &Document| -> Vec<String> {
+        doc.attachments()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect()
+    };
+    assert_eq!(names(&doc), ["a.txt", "b.txt"]);
+    doc.delete_annotation(0, 0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    doc.save_as(dir.path().join("sans-note.pdf")).unwrap();
+    assert_eq!(names(&doc), ["a.txt", "b.txt"]);
+    doc.delete_attachment(1).unwrap();
+    assert_eq!(names(&doc), ["a.txt"], "c'est b.txt qui devait partir");
+}

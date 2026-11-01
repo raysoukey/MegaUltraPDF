@@ -112,3 +112,76 @@ fn qpdf_encrypted_files_keep_their_xmp_through_edits() {
         }
     }
 }
+
+/// Relecture finale du Lot 14 (I3, constat F24-1) : `navigation/encrypted-attachment.pdf`
+/// (AES-256 R6, filtres `Identity`, seule la pièce jointe est chiffrée) s'ouvre sans mot de
+/// passe, et `lopdf` ne s'y authentifie pas. Une note posée, enregistrée, rouverte puis
+/// supprimée doit disparaître du fichier : la session passe-plat n'a pas besoin du mot de
+/// passe. qpdf ne lit pas ce fichier sans mot de passe ; le texte d'une note y étant en clair
+/// (filtre `Identity`), on cherche directement ses octets.
+#[test]
+fn a_note_deleted_from_the_attachment_only_corpus_file_does_not_survive() {
+    use mega_core::{AnnotationKind, Color, Geometry, NewAnnotation, Rect, Style};
+    let Some(root) = crate::env_path("MEGA_CORPUS") else {
+        eprintln!("MEGA_CORPUS absent : test sauté");
+        return;
+    };
+    let secret = "NOTE-SECRETE-I3";
+    let contains = |bytes: &[u8]| bytes.windows(secret.len()).any(|w| w == secret.as_bytes());
+    let input = std::fs::read(root.join("navigation/encrypted-attachment.pdf")).unwrap();
+    let mut doc = Document::from_bytes(input, None).unwrap();
+    assert!(doc.security().unwrap().encrypted);
+    doc.add_annotation(
+        0,
+        &NewAnnotation {
+            kind: AnnotationKind::Note,
+            geometry: Geometry::Rect {
+                rect: Rect {
+                    x: 100.0,
+                    y: 600.0,
+                    w: 0.0,
+                    h: 0.0,
+                },
+            },
+            style: Style {
+                color: Color {
+                    r: 255,
+                    g: 200,
+                    b: 0,
+                },
+                fill: None,
+                opacity: 1.0,
+                stroke_width: 1.0,
+                font_size: 12.0,
+            },
+            contents: secret.to_string(),
+            author: "Moi".to_string(),
+        },
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let with_note = dir.path().join("avec-note.pdf");
+    doc.save_as(&with_note).unwrap();
+    assert!(
+        contains(&std::fs::read(&with_note).unwrap()),
+        "note écrite en clair"
+    );
+
+    let mut doc = Document::open(&with_note, None).unwrap();
+    assert_eq!(doc.annotations(0).unwrap().len(), 1);
+    doc.delete_annotation(0, 0).unwrap();
+    let without = dir.path().join("sans-note.pdf");
+    doc.save_as(&without).unwrap();
+    let bytes = std::fs::read(&without).unwrap();
+    assert!(!contains(&bytes), "le texte de la note supprimée survit");
+    let reopened = Document::from_bytes(bytes, None).unwrap();
+    assert!(reopened.security().unwrap().encrypted, "toujours chiffré");
+    assert!(reopened.annotations(0).unwrap().is_empty());
+    let names: Vec<String> = reopened
+        .attachments()
+        .unwrap()
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    assert_eq!(names, ["attachment.pdf"], "pièce jointe conservée");
+}

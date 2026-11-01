@@ -184,6 +184,31 @@ fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<
     Ok(FilterCheck::Standard)
 }
 
+/// Vrai si le dictionnaire `/Encrypt` d'un document **resté chiffré** (lopdf ne s'est pas
+/// authentifié) décrit le gestionnaire standard avec des filtres `Identity` pour les flux et
+/// les chaînes (version 4 ou plus, la seule où `/StmF` et `/StrF` existent, §7.6.5).
+///
+/// Pourquoi : un tel fichier n'a rien de chiffré hors de ses pièces jointes ; la session
+/// passe-plat le relit sans clé, donc sans mot de passe. Le dictionnaire `/Encrypt` lui-même
+/// n'est jamais chiffré : on peut le lire sans s'authentifier.
+fn is_identity_pass_through(doc: &LoDocument) -> bool {
+    let Some(encrypt) = doc
+        .trailer
+        .get(b"Encrypt")
+        .ok()
+        .and_then(|e| doc.dereference(e).ok())
+        .and_then(|(_, e)| e.as_dict().ok())
+    else {
+        return false;
+    };
+    let name_of = |key: &[u8]| encrypt.get(key).and_then(|n| n.as_name()).ok();
+    let version = encrypt.get(b"V").and_then(Object::as_i64).unwrap_or(0);
+    name_of(b"Filter") == Some(b"Standard".as_slice())
+        && version >= 4
+        && is_identity(name_of(b"StmF"))
+        && is_identity(name_of(b"StrF"))
+}
+
 /// Copie de `bytes` où la référence `/Encrypt N G R` de chaque remorque (le dictionnaire qui
 /// suit un mot-clé `trailer`) est rebaptisée `/Encrypx N G R`, sans changer la longueur : lopdf
 /// voit alors un fichier non chiffré et ne touche à aucun octet, et le dictionnaire `/Encrypt`
@@ -306,6 +331,13 @@ impl LopdfSession {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;
         if doc.is_encrypted() {
+            // lopdf n'a pas pu s'authentifier (pas de mot de passe, ou mot de passe d'ouverture
+            // non vide). Avec des filtres `Identity`, aucun mot de passe n'est nécessaire :
+            // chaînes et flux sont en clair, PDFium l'a d'ailleurs ouvert sans en vérifier un
+            // (constat F24-1, relecture finale du Lot 14, I3).
+            if is_identity_pass_through(&doc) {
+                return Self::passthrough(bytes, repair);
+            }
             return Err(CoreError::InvalidOperation(
                 "document chiffré que cette version ne sait pas réécrire (mot de passe ou \
                  chiffrement non pris en charge)"
@@ -325,8 +357,9 @@ impl LopdfSession {
         })
     }
 
-    /// Session d'un fichier `/StmF /StrF Identity` : relu sans déchiffrement (la première
-    /// lecture a déjà authentifié le mot de passe), avec `/Encrypt` remis dans la remorque pour
+    /// Session d'un fichier `/StmF /StrF Identity` : relu sans déchiffrement, donc sans clé ni
+    /// mot de passe (rien n'est chiffré hors des pièces jointes, que la session ne lit jamais
+    /// en clair ; PDFium a déjà ouvert le document), avec `/Encrypt` remis dans la remorque pour
     /// que l'élagage le garde ; `/ID` n'est pas touché, et les objets ne doivent pas être
     /// renumérotés (`keeps_object_numbers`). `finish` n'a rien à rechiffrer : ce qui est
     /// chiffré (les pièces jointes) n'a jamais été lu en clair.

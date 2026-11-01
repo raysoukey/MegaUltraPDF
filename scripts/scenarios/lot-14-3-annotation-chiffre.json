@@ -6,7 +6,7 @@
   },
   {
     "assert": "(document.querySelector('#pwd-title') === null && document.querySelectorAll('.page img').length >= 1) || 'ERREUR ' + (document.querySelector('#pwd-title') ? 'mot de passe demandé' : 'page non rendue')",
-    "label": "encrypted-attachment.pdf ouvert (mot de passe utilisateur vide) et rendu"
+    "label": "encrypted-attachment.pdf ouvert sans mot de passe (filtres Identity : PDFium n’en vérifie aucun) et rendu"
   },
   {
     "assert": "window.__TAURI_INTERNALS__.invoke('security', { id: 1 }).then((s) => s.encrypted === true || 'ERREUR ' + JSON.stringify(s))",

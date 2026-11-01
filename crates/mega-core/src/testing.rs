@@ -2007,6 +2007,43 @@ pub fn identity_encrypted_note_pdf(secret: &str) -> Vec<u8> {
     out.into_bytes()
 }
 
+/// La page de [`note_with_popup_pdf`] (note contenant `secret`, popup, réponse, arbre de
+/// structure) chiffrée en AES-256 (V5, R6) avec des filtres `/StmF /StrF Identity` et un mot de
+/// passe d'ouverture **non vide** (`user`, propriétaire `owner`).
+///
+/// Pourquoi : rien n'y est chiffré hors des pièces jointes, si bien que PDFium l'ouvre sans
+/// vérifier de mot de passe (aucun chiffre à préparer), alors que `lopdf` ne s'authentifie pas
+/// avec le mot de passe vide et laisse le document chiffré. C'est la forme de
+/// `navigation/encrypted-attachment.pdf` (constat F24-1, relecture finale du Lot 14, I3) : la
+/// session passe-plat doit s'y appliquer sans mot de passe.
+pub fn identity_encrypted_note_with_user_password_pdf(secret: &str) -> Vec<u8> {
+    use lopdf::encryption::crypt_filters::{Aes256CryptFilter, CryptFilter};
+    use lopdf::{EncryptionState, EncryptionVersion, Permissions};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    let mut doc = crate::crypt::load_limited(&note_with_popup_pdf(secret), None)
+        .expect("PDF de test lisible par lopdf");
+    let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
+    filters.insert(b"StdCF".to_vec(), Arc::new(Aes256CryptFilter));
+    let state = EncryptionState::try_from(EncryptionVersion::V5 {
+        encrypt_metadata: true,
+        crypt_filters: filters,
+        // Clé fixe : le fichier de test est reproductible.
+        file_encryption_key: &[7u8; 32],
+        stream_filter: b"Identity".to_vec(),
+        string_filter: b"Identity".to_vec(),
+        owner_password: "owner",
+        user_password: "user",
+        permissions: Permissions::all(),
+    })
+    .expect("état de chiffrement");
+    doc.encrypt(&state).expect("chiffrement (filtres Identity)");
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
 /// Paquet XMP minimal (titre « Riche ») du catalogue de [`rich_catalog_pdf`].
 const RICH_XMP: &str = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\

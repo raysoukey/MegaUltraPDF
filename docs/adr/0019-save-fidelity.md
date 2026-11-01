@@ -276,8 +276,10 @@ Quelques mots employés plus bas :
 ## Conséquences
 
 - Une suppression peut être refusée sur un fichier que `lopdf` ne lit pas (rare) ; le message
-  dit que l'ajout reste possible. Chaque édition gardée coûte un `to_bytes` et une lecture
-  `lopdf` de plus, coût encore à mesurer (à chiffrer avec les bancs de fin de lot).
+  dit que l'ajout reste possible. Chaque suppression coûte un `to_bytes` et une lecture
+  `lopdf` de plus : mesuré au CLI en fin de lot sur `producteurs/tracemonkey.pdf` (1 Mo, 14 pages,
+  profil `debug`, médiane de 7 passes), une extraction de 13 pages prend 186 ms contre 170 ms pour
+  une rotation sans contrôle, soit au plus 15 ms par Mo ; le profil `release` divise ce coût.
 - Un document fusionné, extrait ou scindé garde son formulaire (remplissable), ses signets,
   ses pièces jointes, ses calques et son XMP ; il perd son arbre de structure et ses scripts.
 - L'identifiant `/ID` reste conforme : pour un fichier existant, le premier est conservé et le

@@ -8,8 +8,8 @@ use mega_core::Document;
 use serde_json::{Value, json};
 
 use crate::{
-    Case, annotation, annotation_with, assert_conforms, check, fixture, missing_variants, qpdf,
-    rect, style,
+    Case, annotation, annotation_with, assert_conforms, assert_text_reads_back, check, fixture,
+    missing_variants, qpdf, rect, style,
 };
 
 /// Éditions de pages et de document sur `simple.pdf`.
@@ -196,7 +196,8 @@ fn content_cases(dir: &Path) -> Vec<Case> {
                         "style": {"family": "unicode", "bold": false, "italic": false, "size": 14.0,
                                   "color": {"r": 0, "g": 0, "b": 0}}}),
             ],
-        ),
+        )
+        .expecting("Ελληνικά — Ünïcödé"),
         Case::new(
             // E10 (Lot 14) : la police Unicode incorporée par PDFium sort en sous-ensemble.
             "tampon Unicode",
@@ -204,7 +205,8 @@ fn content_cases(dir: &Path) -> Vec<Case> {
             vec![json!({"kind": "add_annotation", "page": 0, "annotation": {
                 "kind": "stamp", "geometry": {"kind": "rect", "rect": rect(100.0, 400.0, 200.0, 40.0)},
                 "style": style(), "contents": "Ωμέγα Жук", "author": "Moi"}})],
-        ),
+        )
+        .expecting("Ωμέγα Жук"),
         Case::new(
             "image insérée",
             "simple.pdf",
@@ -328,6 +330,7 @@ fn ocr_text_layers_produce_conforming_files() {
         let out = dir.path().join("ocr.pdf");
         doc.save_as(&out).unwrap();
         assert_conforms(&qpdf, &out, None, what);
+        assert_text_reads_back(&out, None, text, what);
     }
 }
 
@@ -423,7 +426,8 @@ fn text_and_image_cases(dir: &Path) -> Vec<Case> {
                         "opacity": 0.3, "angle_deg": 45.0, "color": {"r": 200, "g": 0, "b": 0},
                         "pages": null}}),
             ],
-        ),
+        )
+        .expecting("Черновик"),
         Case::new(
             "numéros de page Unicode",
             "simple.pdf",
@@ -432,7 +436,8 @@ fn text_and_image_cases(dir: &Path) -> Vec<Case> {
                         "corner": "bottom_right", "margin": 20.0, "size": 10.0, "start": 1,
                         "pages": null}}),
             ],
-        ),
+        )
+        .expecting("Страница 1 / 3"),
         Case::new(
             "texte inséré (Helvetica)",
             "simple.pdf",
@@ -441,12 +446,14 @@ fn text_and_image_cases(dir: &Path) -> Vec<Case> {
                         "style": {"family": "helvetica", "bold": true, "italic": false, "size": 14.0,
                                   "color": {"r": 0, "g": 0, "b": 120}}}),
             ],
-        ),
+        )
+        .expecting("Texte ajouté — été"),
         Case::new(
             "retouche de texte vers DejaVu",
             "simple.pdf",
             vec![json!({"kind": "set_object_text", "page": 0, "index": 0, "text": "Страница 1"})],
-        ),
+        )
+        .expecting("Страница 1"),
         Case::new(
             "image insérée JPEG",
             "simple.pdf",
@@ -498,6 +505,7 @@ fn encrypted_cases() -> Vec<Case> {
         source: fixture(source),
         password,
         commands,
+        expect_text: None,
     };
     vec![
         with(
@@ -585,6 +593,7 @@ fn optimizing_heavy_images_produces_a_smaller_conforming_file() {
         password: None,
         commands: vec![json!({"kind": "optimize", "options": {"image_quality": 60,
                               "max_image_px": 400, "compress_streams": true}})],
+        expect_text: None,
     };
     let out = check(&qpdf, &case);
     assert!(

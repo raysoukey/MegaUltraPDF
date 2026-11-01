@@ -82,11 +82,11 @@ fn verapdf_setup() -> Option<(PathBuf, PathBuf)> {
 /// Rapport veraPDF (`--format text`) d'un fichier pour un profil, et son verdict : vrai si la
 /// sortie commence par `PASS`.
 fn verapdf_report(verapdf: &Path, flavour: &str, file: &Path) -> (bool, String) {
-    let report = Command::new(verapdf)
-        .args(["--flavour", flavour, "--format", "text", "--verbose"])
-        .arg(file)
-        .output()
-        .unwrap();
+    let mut cmd = Command::new(verapdf);
+    cmd.args(["--flavour", flavour, "--format", "text", "--verbose"])
+        .arg(file);
+    let report = crate::run_with_timeout(&mut cmd, crate::TOOL_LIMIT)
+        .unwrap_or_else(|| panic!("veraPDF injoignable ou bloqué plus de 60 s sur {file:?}"));
     let text = String::from_utf8_lossy(&report.stdout).into_owned();
     (text.starts_with("PASS"), text)
 }
@@ -340,11 +340,7 @@ fn qpdf_password(
         .chain(std::iter::once(None))
         .chain(CORPUS_PASSWORDS.iter().copied().map(Some));
     for password in candidates {
-        let mut cmd = Command::new(qpdf);
-        if let Some(p) = password {
-            cmd.arg(format!("--password={p}"));
-        }
-        let out = cmd.arg("--show-npages").arg(path).output().unwrap();
+        let out = crate::run_qpdf(qpdf, path, password, &["--show-npages"]);
         if !crate::output_text(&out).contains("invalid password") {
             return password;
         }

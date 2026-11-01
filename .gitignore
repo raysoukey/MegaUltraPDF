@@ -8,3 +8,7 @@ app/src-tauri/gen/
 # PDFium préparé pour le bundler par `cargo xtask stage-pdfium`
 app/src-tauri/resources/
 .DS_Store
+# Audit de compatibilité : outils de dev et corpus de PDF réels (jamais commités, voir fixtures/corpus/MANIFEST.md)
+/tools/
+/fixtures/corpus/*
+!/fixtures/corpus/MANIFEST.md

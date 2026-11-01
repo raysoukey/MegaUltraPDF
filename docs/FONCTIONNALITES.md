@@ -80,7 +80,7 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 
 - [x] Export en images PNG/JPEG (résolution choisie), export du texte [6]
 - [x] Impression (dialogue système, via la vue d'impression du WebView) [6]
-- [x] Édition des métadonnées (titre, auteur, sujet, mots-clés) [6] ; reportées dans le XMP existant (`dc:title`, `dc:creator`, `dc:description`, `pdf:Keywords`, créés s'ils manquent ; aucun paquet XMP créé), aucun `/Info` créé sur un PDF/A-4 ; le XMP est conservé à chaque enregistrement, rechiffré dans un document protégé et décompressé quand PDFium l'aurait abîmé (ADR-0019) [14]
+- [x] Édition des métadonnées (titre, auteur, sujet, mots-clés) [6] ; reportées dans le XMP existant (`dc:title`, `dc:creator`, `dc:description`, `pdf:Keywords`, créés s'ils manquent ; aucun paquet XMP créé), aucun `/Info` créé sur un PDF/A-4 ; le XMP est conservé à chaque enregistrement, rechiffré dans un document protégé et, pour les fichiers sains (lus à l'identique par `lopdf` et PDFium), décompressé quand PDFium l'aurait abîmé ; sur un fichier abîmé, un XMP compressé reste perdu à la première édition, comme avant, et c'est noté au journal (ADR-0019) [14]
 - [x] Chiffrement AES-256 / mot de passe et permissions, retrait du mot de passe [6]
 - [x] Optimisation : recompression / réduction des images, flux compressés, objets inutilisés [6]
 - [x] Comparaison visuelle de deux versions (page par page) [6]
@@ -104,10 +104,10 @@ route (`ROADMAP.md`) donne l'ordre, la conception (`superpowers/specs/`) le dét
 
 ## Fidélité à l'enregistrement et compatibilité mesurée
 
-Audit `docs/audit/2026-10-31-compatibilite-pdf.md` (137 PDF réels, poppler, MuPDF, pdf.js,
-veraPDF) ; décisions : ADR-0019.
+Audit `docs/audit/2026-10-31-compatibilite-pdf.md` (137 PDF : 132 réels et 5 générés sur ce poste ;
+poppler, MuPDF, pdf.js, veraPDF) ; décisions : ADR-0019.
 
-- [x] Une suppression (annotation, page, objet, texte remplacé, pièce jointe, caviardage) ne survit jamais dans le fichier : refusée d'emblée si le fichier ne pourra pas être nettoyé (l'ajout reste possible), enregistrement refusé si le nettoyage n'a pas pu s'appliquer [14]
+- [x] Une suppression (annotation, page, objet, texte remplacé, pièce jointe, caviardage) ne survit jamais dans le fichier : refusée d'emblée si le fichier ne pourra pas être nettoyé (l'ajout reste possible), enregistrement, extraction ou protection refusés si le nettoyage n'a pas pu s'appliquer, le fichier d'origine restant intact [14]
 - [x] Version d'en-tête d'origine conservée (`%PDF-2.0` reste 2.0) ; protection AES-256 déclarée (`/Extensions`, en-tête 1.7 au moins) [14]
 - [x] Documents PDF/A et PDF/UA : rotation, optimisation, métadonnées, filigrane et numérotation gardent la conformité mesurée par veraPDF ; filigrane, numéros et couche OCR balisés comme artefacts [14]
 - [x] Formulaires : `/NeedAppearances` retiré du fichier une fois les apparences régénérées [14]

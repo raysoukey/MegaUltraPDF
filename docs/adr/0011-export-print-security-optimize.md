@@ -87,7 +87,7 @@ accès aux XObjects image.
 ## Mise à jour (Lot 14, 2026-10-31)
 
 Audit de compatibilité `docs/audit/2026-10-31-compatibilite-pdf.md`, constats E6 et E8, et
-constat F21-4 de la tâche 21 du lot.
+constat F21-4 trouvé pendant le lot (XMP d'un document chiffré, voir ADR-0019).
 
 - **Protection et version** (E8) : AES-256 révision 6 appartient à PDF 2.0, ou à l'extension
   Adobe de niveau 8 en PDF 1.7. `protect` relève donc l'en-tête à 1.7 s'il est inférieur, et

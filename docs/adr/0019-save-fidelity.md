@@ -4,10 +4,10 @@ Date : 2026-10-31 · Statut : accepté (Lot 14)
 
 ## Contexte
 
-L'audit `docs/audit/2026-10-31-compatibilite-pdf.md` a confronté la v0.13.0 à 137 PDF réels et
-à quatre moteurs indépendants (poppler, MuPDF, pdf.js, veraPDF). En écriture, il a montré qu'un
-fichier enregistré par MegaUltraPDF n'était pas toujours celui que l'utilisateur croyait avoir
-enregistré :
+L'audit `docs/audit/2026-10-31-compatibilite-pdf.md` a confronté la v0.13.0 à 137 PDF (132 réels
+et 5 générés sur ce poste) et à quatre moteurs indépendants (poppler, MuPDF, pdf.js, veraPDF). En
+écriture, il a montré qu'un fichier enregistré par MegaUltraPDF n'était pas toujours celui que
+l'utilisateur croyait avoir enregistré :
 
 - **E1** : quand `lopdf` ne relisait pas la sortie de PDFium, la passe de nettoyage
   (`cleanup::before_save`) était sautée sans rien dire. Une annotation supprimée restait alors
@@ -24,8 +24,9 @@ enregistré :
 - **E9, E10** : un JPEG inséré était réencodé (15 Ko devenaient 85 Ko) ; un texte Unicode
   inséré par PDFium incorporait la police DejaVu entière (un fichier de 2 Ko passait à 420 Ko).
 
-Pendant le lot, les tests de conformité étendus (tâche 21) ont trouvé deux pertes silencieuses
-du XMP (le flux `/Metadata`, qui porte titre, auteur et déclaration PDF/A) :
+Pendant les corrections, les tests de conformité étendus ont trouvé deux pertes silencieuses du
+XMP (le flux `/Metadata`, qui porte titre, auteur et déclaration PDF/A), notées F21-4 et F21-5
+(la liste des constats « F21 » est dans les limites assumées) :
 
 - **F21-4** : dans un document chiffré, PDFium écrit le XMP **en clair**, puis le « déchiffre »
   en le relisant. Le XMP devenait des octets aléatoires dès la première édition, sur tout
@@ -38,6 +39,21 @@ L'intention du lot (`docs/superpowers/specs/2026-10-31-lot-14-compatibilite-mesu
 de supprimé ne survit dans le fichier, rien n'est perdu que l'utilisateur n'ait pas demandé, la
 version et les déclarations de conformité sont respectées.
 
+Quelques mots employés plus bas :
+
+- **remorque** (*trailer*) : le petit dictionnaire de fin de fichier qui désigne le catalogue
+  (`/Root`), les métadonnées `/Info`, le chiffrement (`/Encrypt`) et l'identifiant `/ID` ;
+- **table de références** (*xref*) : la table qui donne la position de chaque objet dans le
+  fichier ; depuis PDF 1.5, elle peut être écrite **en flux** (compressée dans un objet) au
+  lieu d'une table de texte suivie du mot-clé `trailer` ;
+- **jeton PDFium** : le verrou de processus que rend `engine::guard()` ; tant qu'on le tient,
+  aucun autre fil ne touche à PDFium (`docs/apprentissage/concepts/mutex-et-etat-partage.md`) ;
+- **XObject formulaire** : un sous-dessin réutilisable, décrit dans son propre flux et appelé
+  depuis le contenu d'une page par l'opérateur `Do` ;
+- **CID** : dans une police composite (`Type0`), le numéro de caractère écrit dans le contenu
+  de page ; une table le relie au glyphe à dessiner (`docs/apprentissage/lot-10.md`) ;
+- **empreinte** : un hachage des octets, qui reconnaît un fichier sans le comparer en entier.
+
 ## Décisions
 
 1. **Pas de repli silencieux après une suppression** (E1).
@@ -48,7 +64,10 @@ version et les déclarations de conformité sont respectées.
      actuelle de PDFium (`cleanup::check_cleanable`). Sinon : refus `InvalidOperation`
      (« la suppression est refusée, l'ajout reste possible »), document intact.
    - La garde passe **avant** `mark_changed()` : une opération refusée ne rend pas le document
-     « modifié » (un fichier signé ne serait pas réécrit pour rien).
+     « modifié » (un fichier signé ne serait pas réécrit pour rien). La même règle vaut pour
+     toute méthode qui modifie : le lot a remis dans cet ordre `protect`, `unprotect`,
+     `add_invisible_words`, `add_watermark`, `add_page_numbers` et `crop_pages`, qui valide
+     maintenant toutes les pages avant d'en recadrer une seule.
    - La garde lève aussi le drapeau `needs_cleanup`. `before_save` rend un `Saved { bytes,
      cleaned }` marqué `#[must_use]`, et le code de production ne lit ses octets que par
      `Saved::into_checked(needs_cleanup, …)`. Si une suppression a eu lieu et que le nettoyage
@@ -56,6 +75,12 @@ version et les déclarations de conformité sont respectées.
      refusée », « protection refusée ») et le fichier d'origine reste tel quel. Une fusion
      refuse de même quand une de ses sources porte une suppression et que le nettoyage du
      document neuf n'a pas pu s'appliquer.
+
+     [Apprentissage] `#[must_use]` sur un type fait avertir le compilateur quand une valeur
+     de ce type est calculée puis jetée sans être lue : un nettoyage dont on oublierait de
+     vérifier le résultat ne passerait pas `cargo clippy -D warnings`. Faire passer les octets
+     par une seule méthode (`into_checked`) rend la vérification impossible à contourner par
+     mégarde (`crates/mega-core/src/cleanup/mod.rs`).
    - Drapeau **prudent** : annuler ne le baisse pas (l'instantané rechargé peut lui aussi
      porter des orphelins) ; seul un enregistrement réussi le remet à faux.
    - Déplacer ou redimensionner un objet n'est pas gardé : rien de visible n'est retiré.
@@ -65,22 +90,35 @@ version et les déclarations de conformité sont respectées.
    `/Encrypt` et `/ID` tels quels et **ne renumérote pas** les objets : le numéro d'un objet
    entre dans la clé de ses octets chiffrés. Un tel fichier sans remorque classique (table de
    références en flux) reste refusé, comme avant.
-3. **Version d'en-tête d'origine** (E2, E8).
+3. **Version d'en-tête d'origine** (E2, E8). PDFium réécrit toujours l'en-tête en 1.x ; on
+   reprend donc la version du fichier d'origine **après** PDFium, au moment où `lopdf` réécrit
+   le fichier, plutôt que d'essayer de la faire écrire à PDFium, qui ne le sait pas.
    - `Document::file_version` lit `%PDF-M.n` dans les octets du fichier (`file_bytes`, tels
      que chargés ou enregistrés) par `crypt::header_version`, après un éventuel préfixe.
    - `before_save(bytes, password, min_version)` écrit la plus grande des deux versions : celle
-     des octets de PDFium et celle d'origine.
+     des octets de PDFium et celle d'origine. On ne baisse jamais une version : une édition
+     peut ajouter une structure plus récente, jamais en retirer l'exigence.
    - Le repli sans nettoyage relève l'en-tête sur place (`crypt::raise_header_version` : même
      longueur, aucune position décalée).
    - La fusion prend la plus haute version des sources. L'extraction, la scission et la
      protection passent celle du document ; la signature garde la version déclarée du fichier
      qu'elle complète.
    - Protéger en AES-256 (révision 6) relève l'en-tête à 1.7 au minimum et pose
-     `/Extensions << /ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >> >>`.
-4. **Report du catalogue** après fusion, extraction et scission (E3). Le module `pages/carry.rs`
-   (et `carry/{acroform,dests,labels,layers}.rs`) relit la source et la copie avec `lopdf` et
-   reporte ce qui concerne les pages copiées. Chaque étape est une fonction pure sur deux
-   `lopdf::Document`, testée sans PDFium.
+     `/Extensions << /ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >> >>` : ce chiffrement
+     n'existe pas en PDF 1.4, et un lecteur strict doit savoir qu'il le rencontrera.
+4. **Report du catalogue** après fusion, extraction et scission (E3). PDFium ne copie que les
+   pages ; plutôt que de lui faire copier autre chose (il ne le sait pas), on relit après coup
+   la source et la copie avec `lopdf` et on reporte, structure par structure, ce qui concerne
+   les pages copiées. C'est le module `pages/carry.rs` (et `pages/carry/` : `acroform.rs`,
+   `dests.rs`, `labels.rs`, `layers.rs`).
+
+   [Apprentissage] **Fonction pure sur un `lopdf::Document`** : chaque étape prend deux
+   documents en mémoire et rend le second modifié, sans fichier ni PDFium. Ses tests
+   construisent un petit document à la main et vérifient le résultat directement : rapide,
+   sans moteur de rendu, et l'on voit exactement quel objet a changé. La copie d'un objet
+   avec tout ce qu'il cite utilise une table de correspondance (numéro source → numéro cible)
+   qui sert aussi d'ensemble des visités
+   (`docs/apprentissage/concepts/complexite-et-collections.md`).
    - Entrées simples : `/Lang`, `/ViewerPreferences`, `/PageMode`, `/PageLayout`, `/Metadata`,
      `/OutputIntents`. Pièces jointes (`/Names /EmbeddedFiles`), renommées si le nom est déjà
      pris (`notes (2).txt`). À la fusion, la première source qui porte une entrée l'emporte.
@@ -96,12 +134,14 @@ version et les déclarations de conformité sont respectées.
      citaient sont retirés) ; `/MarkInfo`, car `/Marked true` sans arbre déclarerait balisé un
      document qui ne l'est plus (faux en PDF/UA et en PDF/A-1a).
 5. **Déplacer sans copier** (E4). `pages/reorder.rs` réordonne les `/Kids` de l'arbre des pages
-   avec `lopdf` (session chiffrée comprise), met `/Count` à jour jusqu'à la racine et recopie
-   sur la page les attributs hérités (`/Resources`, `/MediaBox`, `/CropBox`, `/Rotate`) avant
-   qu'elle change de parent. PDFium recharge ensuite le document. La page reste **le même
-   objet** : tout ce qui la vise reste juste. Si `lopdf` ne lit pas le fichier ou n'y voit pas
-   les mêmes pages que PDFium, le déplacement est refusé, document intact. On ne revient pas à
-   l'ancienne copie, qui perdait signets et liens sans le dire.
+   avec `lopdf` (session chiffrée comprise) et met `/Count` à jour jusqu'à la racine. Une page
+   qui change de parent fige d'abord les attributs qu'elle héritait de l'ancien
+   (`/Resources`, `/MediaBox`, `/CropBox`, `/Rotate`), et reçoit une valeur neutre (`/Rotate 0`,
+   `/Resources` vide, `/CropBox` égale à sa `/MediaBox`) là où le nouveau parent lui en
+   imposerait une à tort (`reorder::pin_inherited`). PDFium recharge ensuite le document. La
+   page reste **le même objet** : tout ce qui la vise reste juste. Si `lopdf` ne lit pas le
+   fichier ou n'y voit pas les mêmes pages que PDFium, le déplacement est refusé, document
+   intact. On ne revient pas à l'ancienne copie, qui perdait signets et liens sans le dire.
    Après une suppression de pages, `cleanup::neutralize_dead_destinations` traite ce qui visait
    une page disparue : le signet reste sans cible, le lien et `/OpenAction` sont retirés.
 6. **MCID orphelins** (E5). `cleanup/mcid.rs` retire de l'arbre de structure les références à
@@ -118,7 +158,18 @@ version et les déclarations de conformité sont respectées.
    - Elle n'est pas construite à l'ouverture, seulement au premier besoin.
    - Elle prend le jeton PDFium (par `to_bytes`) : jamais sous `engine::guard()`, verrou non
      réentrant.
-8. **Le XMP survit à PDFium** (F21-4, F21-5).
+
+   [Apprentissage] Le cache est un `OnceLock<Option<lopdf::Document>>` : il se remplit une
+   seule fois à travers une référence partagée (`&self`), et se vide par `take`, qui demande
+   `&mut self`, ce qui garantit que personne ne le lit à ce moment-là
+   (`docs/apprentissage/concepts/oncelock.md`).
+8. **Le XMP survit à PDFium** (F21-4, F21-5). En résumé : PDFium abîme le XMP de deux façons,
+   en l'écrivant en clair dans un document chiffré, et en lui retirant son filtre de
+   compression sans le décompresser. Dans les deux cas, on corrige au seul endroit où les
+   octets passent entre PDFium et nous : à la **sortie** de PDFium pour le chiffrement (on
+   rechiffre ce flux, et lui seul), à l'**entrée** de PDFium pour la compression (on lui
+   donne le XMP déjà décompressé). On ne touche jamais aux octets d'origine du fichier, et un
+   échec ne bloque jamais un enregistrement : au pire, le XMP est perdu comme avant le lot.
    - **Document chiffré** : `crypt::seal_metadata` passe sur **chaque** sortie de PDFium
      (`Document::to_bytes`, seconde sortie de `rewritten_bytes`).
      - Tout flux `/Type /Metadata` resté en clair dans un document qui le déclare chiffré est
@@ -130,8 +181,7 @@ version et les déclarations de conformité sont respectées.
        et un flux n'est jamais chiffré deux fois.
      - Un filtre inconnu (`/StmF` absent de `/CF`, `/CFM /None`) est une erreur : se rabattre
        sur RC4, comme le fait `lopdf`, rendrait le XMP illisible partout.
-     - Un échec ne bloque jamais l'enregistrement : les octets de PDFium sont écrits (le XMP
-       est perdu, comme avant) et l'échec est noté au journal de diagnostic.
+     - Un échec laisse les octets de PDFium tels quels et est noté au journal de diagnostic.
      - `protect` chiffre le XMP comme Acrobat et qpdf ; jamais `encrypt_metadata: false`.
    - **XMP compressé** : `document::load_file_bytes` est le seul point d'entrée des octets de
      fichier dans PDFium (ouverture, annuler et rétablir, rechargement après une signature).
@@ -142,7 +192,8 @@ version et les déclarations de conformité sont respectées.
      - La copie n'est faite que si `lopdf` lit le fichier **exactement** comme PDFium le
        lirait : lecture stricte (`crypt::load_exact`), table de références intacte, `%PDF-` en
        tout début, toute entrée en usage de la table présente, pas de `/Encrypt` (cas
-       précédent), même nombre de pages après réécriture.
+       précédent), même nombre de pages après réécriture. Sur un fichier abîmé, les deux
+       bibliothèques pourraient réparer différemment : PDFium verrait alors un autre document.
      - Sinon, PDFium reçoit les octets d'origine et la renonciation est notée au journal (sauf
        pour `/Encrypt`, chemin normal). Si PDFium refuse la copie, l'original est chargé, et
        c'est noté aussi.
@@ -161,17 +212,22 @@ version et les déclarations de conformité sont respectées.
      Sur un PDF/A-4, seul le XMP est écrit : aucun `/Info` n'est créé, et `/ModDate` n'est mis
      à jour que s'il existait (PDF/A-4 interdit `/Info`). À la lecture, `properties()` se
      replie sur le XMP quand `/Info` ne donne pas la valeur (L12).
-9. **Déclarations de conformité respectées** (E6, E7, E11) : filigrane, numéros et couche OCR
-   sont des artefacts balisés, et adaptent police, couleur et transparence au PDF/A déclaré ;
-   `/NeedAppearances` est retiré après régénération ; les marquages reçoivent leur `/AP`. Le
-   détail et les mesures veraPDF sont dans ADR-0018 (§7), ADR-0008 et ADR-0009.
-10. **Taille des fichiers** (partie D du lot).
+9. **Déclarations de conformité respectées** (E6, E7, E11). Un document qui déclare PDF/A ou
+   PDF/UA promet à ses lecteurs des règles précises (polices incorporées, pas de transparence
+   en PDF/A-1, contenu ajouté balisé, apparence pour chaque annotation…). Ce que nous ajoutons
+   doit les suivre, sinon une simple édition rend le fichier non conforme sans que
+   l'utilisateur le sache. On adapte donc ce qu'on écrit à la déclaration lue dans le XMP,
+   plutôt que de retirer la déclaration : filigrane, numéros et couche OCR sont des artefacts
+   balisés, et choisissent police, couleur et transparence selon la norme déclarée ;
+   `/NeedAppearances` est retiré après régénération des champs ; les marquages reçoivent leur
+   `/AP`. Le détail et les mesures veraPDF sont dans ADR-0018 (§7), ADR-0008 et ADR-0009.
+10. **Taille des fichiers** (E9, E10).
     - **Sous-ensemble de la DejaVu de PDFium** (E10, `cleanup/subset.rs`, dans `before_save`) :
       - la police n'est réduite que dans les octets **écrits** ; le document PDFium en
         mémoire garde la police entière ;
       - candidat = un programme `/FontFile2` **exactement** égal à la DejaVu embarquée
         (taille et empreinte) ;
-      - les glyphes utilisés sont relevés dans les contenus de page, les formulaires XObject
+      - les glyphes utilisés sont relevés dans les contenus de page, les XObjects formulaires
         et les apparences d'annotation ; le glyphe de l'espace est toujours gardé ;
       - `subsetter` renumérote les glyphes gardés : on réécrit `/CIDToGIDMap` et on garde les
         CID, si bien que `/W`, `/ToUnicode` et les flux de contenu restent justes sans y
@@ -190,11 +246,20 @@ version et les déclarations de conformité sont respectées.
       - ressources propres à la page, placement de l'espace affiché vers l'espace du fichier
         par matrice (ADR-0010).
 11. **Conformité vérifiée sur tous les chemins d'écriture** (§5 de l'audit,
-    `crates/mega-core/tests/conformance/`).
+    `crates/mega-core/tests/conformance/`). Nos propres tests relisent nos fichiers avec
+    PDFium et `lopdf`, les deux bibliothèques qui les ont écrits : ils ne verraient pas un
+    défaut que ces deux-là tolèrent. Chaque sortie passe donc aussi par des lecteurs
+    indépendants, et une variante d'édition ajoutée plus tard ne peut pas échapper au
+    contrôle.
     - Chaque variante d'`EditCommand`, écrite en JSON comme l'interface l'envoie, est appliquée
       puis enregistrée, et sa sortie passe `qpdf --check` sans erreur **ni** avertissement.
-      Une liste exhaustive (`variant`, `ALL_VARIANTS`) ne compile plus si une variante est
-      ajoutée sans cas. `ocr_page` en est exclue (voir les limites).
+      La fonction `variant` fait un `match` sur `EditCommand` : une variante ajoutée sans cas
+      l'empêche de compiler. La liste `ALL_VARIANTS` est ensuite vérifiée à l'exécution
+      (`missing_variants`) : chaque variante doit être exercée par au moins une commande.
+      `ocr_page` en est exclue (voir les limites).
+
+      [Apprentissage] Le `match` exhaustif transforme un oubli en erreur de compilation
+      (`docs/apprentissage/concepts/enums-et-match-exhaustif.md`).
     - Les fichiers chiffrés par qpdf (RC4 40 et 128 bits, AES 128 et 256 bits) gardent leur XMP
       au fil des éditions. Sont aussi couverts : la signature numérique visible, la fusion, la
       scission et l'extraction.
@@ -212,7 +277,7 @@ version et les déclarations de conformité sont respectées.
 
 - Une suppression peut être refusée sur un fichier que `lopdf` ne lit pas (rare) ; le message
   dit que l'ajout reste possible. Chaque édition gardée coûte un `to_bytes` et une lecture
-  `lopdf` de plus, coût encore à mesurer sur un gros fichier.
+  `lopdf` de plus, coût encore à mesurer (à chiffrer avec les bancs de fin de lot).
 - Un document fusionné, extrait ou scindé garde son formulaire (remplissable), ses signets,
   ses pièces jointes, ses calques et son XMP ; il perd son arbre de structure et ses scripts.
 - L'identifiant `/ID` reste conforme : pour un fichier existant, le premier est conservé et le
@@ -230,11 +295,22 @@ version et les déclarations de conformité sont respectées.
 
 ## Limites assumées
 
-- **Entrées abîmées réécrites telles quelles** (F21-1 à F21-3) : une page sans `/Resources`, un
-  arbre de noms vide ou mal trié, un flux Flate suivi de données parasites. Le lot promet de ne
-  pas **ajouter** de défaut, pas de réparer ceux de l'entrée : qpdf signale sur la sortie ce
-  qu'il signalait déjà sur l'original. Le test `rewriting_repairs_damaged_corpus_files` garde
-  cette exigence plus forte, ignoré (`#[ignore]`) avec les identifiants des constats.
+Les constats « F21 » sont ceux que les tests de conformité étendus ont trouvés pendant le lot,
+sur le corpus de l'audit :
+
+- **F21-1** : une page sans `/Resources` ;
+- **F21-2** : un arbre de noms au nœud vide ou aux clés mal triées ;
+- **F21-3** : un flux Flate suivi de données parasites ;
+- **F21-4** : le XMP d'un document chiffré écrit en clair par PDFium (corrigé, décision 8) ;
+- **F21-5** : le XMP compressé dont PDFium retire le filtre (corrigé, décision 8, sauf pour les
+  fichiers ci-dessous).
+
+Ce qui reste :
+
+- **Entrées abîmées réécrites telles quelles** (F21-1 à F21-3). Le lot promet de ne pas
+  **ajouter** de défaut, pas de réparer ceux de l'entrée : qpdf signale sur la sortie ce qu'il
+  signalait déjà sur l'original. Le test `rewriting_repairs_damaged_corpus_files` garde cette
+  exigence plus forte, ignoré (`#[ignore]`) avec les identifiants des constats.
 - **XMP en UTF-16 ou UTF-32** (permis par ISO 16684-1, jamais rencontré dans un PDF) : non
   reconnu, laissé tel quel, comme avant le lot.
 - **`/Type` indirect sur un flux de métadonnées** (`/Type 5 0 R`), ou dictionnaire de flux de
@@ -269,7 +345,7 @@ version et les déclarations de conformité sont respectées.
   structure) : bien plus de code, et chaque structure oubliée serait une perte silencieuse.
   Réordonner `/Kids` ne laisse rien à remapper.
 - **Reporter `/StructTreeRoot` à la fusion** : l'arbre ne se découpe pas page par page ; hors
-  de portée raisonnable. Reporter `/MarkInfo` (prévu par le plan) : faux, voir §4.
+  de portée raisonnable. Reporter `/MarkInfo` : faux, voir la décision 4.
 - **`encrypt_metadata: false` à la protection** (premier contournement de F21-4) : annulé.
   Il ne réglait que nos propres fichiers, pas ceux qu'on reçoit déjà chiffrés, et s'écartait
   de ce que font Acrobat et qpdf.

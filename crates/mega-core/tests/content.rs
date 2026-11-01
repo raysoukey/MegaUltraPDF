@@ -1071,3 +1071,162 @@ fn inserted_images_render_the_same_after_save() {
         );
     }
 }
+
+/// Un PDF d'une page A4 rangée sous 300 niveaux de nœuds `/Pages` (chacun avec un second
+/// enfant vide) : PDFium la trouve (il descend jusqu'à 1 024 niveaux), lopdf s'arrête à 256
+/// et ne la compte pas.
+fn deep_page_tree_pdf() -> Vec<u8> {
+    const DEPTH: usize = 300;
+    // Objets : 1 catalogue, 2..=DEPTH+1 nœuds de l'arbre, puis la page, son contenu et un
+    // nœud vide par niveau.
+    let page = DEPTH + 2;
+    let contents = DEPTH + 3;
+    let empty = |level: usize| DEPTH + 4 + level;
+    let mut objects = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string()];
+    for level in 0..DEPTH {
+        let id = level + 2;
+        let parent = if level == 0 {
+            String::new()
+        } else {
+            format!(" /Parent {} 0 R", id - 1)
+        };
+        let child = if level + 1 == DEPTH { page } else { id + 1 };
+        objects.push(format!(
+            "<< /Type /Pages /Count 1{parent} /Kids [{child} 0 R {} 0 R] >>",
+            empty(level)
+        ));
+    }
+    objects.push(format!(
+        "<< /Type /Page /Parent {} 0 R /MediaBox [0 0 595 842] /Resources << >>          /Contents {contents} 0 R >>",
+        DEPTH + 1
+    ));
+    objects.push(
+        "<< /Length 0 >>
+stream
+
+endstream"
+            .to_string(),
+    );
+    for level in 0..DEPTH {
+        objects.push(format!(
+            "<< /Type /Pages /Count 0 /Parent {} 0 R /Kids [] >>",
+            level + 2
+        ));
+    }
+    let mut out = b"%PDF-1.7
+"
+    .to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(
+            format!(
+                "{} 0 obj
+{body}
+endobj
+",
+                i + 1
+            )
+            .as_bytes(),
+        );
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!(
+            "xref
+0 {}
+0000000000 65535 f 
+",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    for offset in offsets {
+        out.extend_from_slice(
+            format!(
+                "{offset:010} 00000 n 
+"
+            )
+            .as_bytes(),
+        );
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer
+<< /Size {} /Root 1 0 R >>
+startxref
+{xref}
+%%EOF
+",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+/// Revue de la partie D : une insertion d'image qui échoue dans la phase `lopdf` (ici, une
+/// page que PDFium lit mais que lopdf ne range pas parmi les pages) ne marque pas le document
+/// modifié : « Enregistrer sous » écrit encore les octets d'origine (chemin direct du CLI).
+#[test]
+fn a_failed_image_insertion_leaves_the_document_unchanged() {
+    let input = deep_page_tree_pdf();
+    assert!(
+        lopdf::Document::load_mem(&input)
+            .unwrap()
+            .get_pages()
+            .is_empty()
+    );
+    let mut doc = Document::from_bytes(input.clone(), None).unwrap();
+    assert_eq!(doc.page_count(), 1);
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("carre.png");
+    image::RgbImage::from_pixel(10, 10, image::Rgb([0, 0, 0]))
+        .save(&png)
+        .unwrap();
+    let failed = doc.insert_image(
+        0,
+        Rect {
+            x: 10.0,
+            y: 10.0,
+            w: 50.0,
+            h: 50.0,
+        },
+        &png.to_string_lossy(),
+    );
+    assert!(
+        matches!(failed, Err(CoreError::InvalidOperation(ref m)) if m.contains("introuvable")),
+        "{failed:?}"
+    );
+    let out = dir.path().join("intact.pdf");
+    doc.save_as(&out).unwrap();
+    assert!(std::fs::read(&out).unwrap() == input, "octets d'origine");
+}
+
+/// Revue de la partie D : un JPEG abîmé (ici, sa table de Huffman a perdu son marqueur) est
+/// refusé avant d'entrer dans le fichier, au lieu d'y être recopié tel quel.
+#[test]
+fn a_corrupted_jpeg_is_refused() {
+    let mut jpeg = photo_jpeg(false);
+    let dht = jpeg.windows(2).position(|w| w == [0xFF, 0xC4]).unwrap();
+    // DHT devient un segment APP5 : même longueur, mais plus aucune table de Huffman.
+    jpeg[dht + 1] = 0xE5;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("abime.jpg");
+    std::fs::write(&path, &jpeg).unwrap();
+    let mut doc = one_page();
+    let refused = doc.insert_image(
+        0,
+        Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 200.0,
+            h: 150.0,
+        },
+        &path.to_string_lossy(),
+    );
+    assert!(
+        matches!(refused, Err(CoreError::InvalidOperation(ref m)) if m == "image JPEG illisible"),
+        "{refused:?}"
+    );
+}

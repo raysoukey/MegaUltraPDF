@@ -561,7 +561,6 @@ impl Document {
         // Repère lu par PDFium (jeton pris et rendu) **avant** la phase `lopdf`.
         let frame = self.page_frame(page)?;
         rect_in_page(&frame, &rect)?;
-        self.mark_changed();
         let bytes = self.to_bytes()?;
         // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
         let mut session = LopdfSession::load(&bytes, self.password())?;
@@ -570,8 +569,13 @@ impl Document {
             .get_pages()
             .get(&(u32::from(page) + 1))
             .ok_or_else(|| invalid("page introuvable dans la structure du PDF"))?;
-        image::place(&mut session.doc, page_id, &frame, rect, &loaded)?;
+        image::place(&mut session.doc, page_id, &frame, rect, loaded)?;
         let out = session.finish()?;
+        // Exception à la règle « `mark_changed` en tête » : rien avant cette ligne ne touche
+        // à `self` (la phase `lopdf` travaille sur une copie des octets). Un échec plus haut
+        // laisse donc le document intact **et** non modifié : « Enregistrer sous » (chemin
+        // direct du CLI) écrit encore les octets d'origine, signatures comprises.
+        self.mark_changed();
         self.reload_from_bytes(out)
     }
 }

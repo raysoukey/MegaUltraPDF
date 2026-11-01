@@ -22,6 +22,7 @@ use pdfium_render::prelude::{PdfMatrix, PdfPage, PdfPageObjectsCommon, PdfPoints
 
 use crate::content::raster::{decode_jpeg, multiply};
 use crate::error::{CoreError, CoreResult};
+use crate::fonts::unicode::compressed;
 use crate::geometry::{PageFrame, Rect};
 use crate::overlay::{append_content, ensure_resources, free_resource_name, num};
 
@@ -58,10 +59,13 @@ pub(crate) enum ImageData {
         height: u32,
         /// Vrai pour une seule composante (`/DeviceGray`), faux pour trois (`/DeviceRGB`).
         gray: bool,
+        /// Vrai si les trois composantes sont codées en RVB et non en YCbCr (voir
+        /// [`JpegHeader::rgb_coded`]) : le lecteur ne doit pas les convertir.
+        rgb_coded: bool,
     },
-    /// Toute autre image, décodée : écrite en RVB 8 bits Flate, plus un masque `/SMask` si
-    /// un pixel est transparent.
-    Rgba(DynamicImage),
+    /// Toute autre image, décodée : écrite en pixels 8 bits Flate (gris ou RVB), plus un
+    /// masque `/SMask` si un pixel est transparent.
+    Pixels(DynamicImage),
 }
 
 impl ImageData {
@@ -69,7 +73,7 @@ impl ImageData {
     pub(crate) fn dimensions(&self) -> (u32, u32) {
         match self {
             ImageData::Jpeg { width, height, .. } => (*width, *height),
-            ImageData::Rgba(image) => (image.width(), image.height()),
+            ImageData::Pixels(image) => (image.width(), image.height()),
         }
     }
 }
@@ -114,15 +118,17 @@ pub(crate) fn load_bounded(path: &str) -> CoreResult<DynamicImage> {
 }
 
 /// Lit un fichier image pour l'insérer dans une page : un JPEG gris ou RVB garde ses octets
-/// ([`ImageData::Jpeg`]), toute autre image est décodée ([`ImageData::Rgba`]).
+/// ([`ImageData::Jpeg`]), toute autre image est décodée ([`ImageData::Pixels`]).
 ///
 /// Un JPEG est tout de même décodé une fois, avec des limites posées **avant** l'allocation
-/// ([`decode_jpeg`], ADR-0017) : on n'insère pas un fichier tronqué ou mensonger que les
-/// lecteurs afficheraient en morceaux. Un JPEG CMJN (ou d'un codage que `/DCTDecode` ne
-/// garantit pas) suit le chemin des pixels, comme avant le Lot 14.
+/// ([`decode_jpeg`], ADR-0017) : on n'insère pas un fichier que le décodeur refuse (tables
+/// manquantes, en-tête mensonger). Le décodeur est indulgent pour les **données** compressées
+/// (un fichier tronqué se décode, complété de gris) : les lecteurs PDF le sont autant. Un
+/// JPEG CMJN (ou d'un codage que `/DCTDecode` ne garantit pas) suit le chemin des pixels,
+/// comme avant le Lot 14.
 pub(crate) fn load_for_insertion(path: &str) -> CoreResult<ImageData> {
     let (bytes, width, height) = read_bounded(path)?;
-    if let Some(components @ (1 | 3)) = jpeg_components(&bytes) {
+    if let Some(header) = dct_header(&bytes) {
         if decode_jpeg(&bytes, width, height).is_none() {
             return Err(invalid("image JPEG illisible".to_string()));
         }
@@ -130,27 +136,50 @@ pub(crate) fn load_for_insertion(path: &str) -> CoreResult<ImageData> {
             bytes,
             width,
             height,
-            gray: components == 1,
+            gray: header.components == 1,
+            rgb_coded: header.rgb_coded,
         });
     }
     let image =
         image::load_from_memory(&bytes).map_err(|e| invalid(format!("image illisible : {e}")))?;
-    Ok(ImageData::Rgba(image))
+    Ok(ImageData::Pixels(image))
 }
 
-/// Nombre de composantes (1 gris, 3 RVB, 4 CMJN) d'un JPEG **8 bits, de base ou progressif**
-/// (marqueurs SOF0, SOF1, SOF2), lu dans son en-tête ; `None` si `bytes` n'est pas un JPEG
-/// ou si son codage (sans perte, hiérarchique, arithmétique, 12 bits) n'est pas garanti par
-/// le filtre `/DCTDecode` des lecteurs PDF.
+/// Ce que dit l'en-tête d'un JPEG, lu par [`jpeg_header`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct JpegHeader {
+    /// Nombre de composantes : 1 gris, 3 couleur, 4 CMJN.
+    components: u8,
+    /// Vrai pour trois composantes nommées `R`, `G`, `B` (identifiants du SOF) **sans**
+    /// marqueur Adobe (APP14) : la convention de libjpeg pour un JPEG codé en RVB. Sans le
+    /// dire (`/ColorTransform 0`), un lecteur PDF appliquerait la conversion YCbCr → RVB par
+    /// défaut à trois composantes (ISO 32000-1, tableau 13) et fausserait les couleurs. Avec
+    /// un marqueur Adobe, c'est lui qui décide, pour le lecteur comme pour nous.
+    rgb_coded: bool,
+}
+
+/// L'en-tête d'un JPEG que `/DCTDecode` garantit et que nous gardons tel quel : gris ou
+/// couleur (une ou trois composantes). `None` pour le reste (CMJN compris), qui suit le
+/// chemin des pixels.
+fn dct_header(bytes: &[u8]) -> Option<JpegHeader> {
+    jpeg_header(bytes).filter(|h| matches!(h.components, 1 | 3))
+}
+
+/// L'en-tête (composantes, codage RVB) d'un JPEG **8 bits, de base ou progressif**
+/// (marqueurs SOF0, SOF1, SOF2) ; `None` si `bytes` n'est pas un JPEG ou si son codage (sans
+/// perte, hiérarchique, arithmétique, 12 bits) n'est pas garanti par le filtre `/DCTDecode`
+/// des lecteurs PDF.
 ///
 /// \[Apprentissage\] **Lire un format binaire** : un JPEG est une suite de segments
 /// `FF <marqueur> <longueur sur 2 octets> <données>`. On saute de segment en segment jusqu'à
 /// l'en-tête d'image (SOF). Chaque accès passe par `get`, qui rend `None` au lieu de
 /// paniquer si le fichier est tronqué : `?` arrête alors la lecture proprement.
-fn jpeg_components(bytes: &[u8]) -> Option<u8> {
+fn jpeg_header(bytes: &[u8]) -> Option<JpegHeader> {
     if !bytes.starts_with(&[0xFF, 0xD8]) {
         return None;
     }
+    // Un marqueur Adobe (APP14) vu avant le SOF.
+    let mut adobe = false;
     let mut i = 2;
     // Chaque tour avance d'au moins un octet : la boucle se termine toujours.
     while i < bytes.len() {
@@ -170,11 +199,25 @@ fn jpeg_components(bytes: &[u8]) -> Option<u8> {
                     return None;
                 }
                 match marker {
-                    // Données du SOF : précision (1 octet), hauteur (2), largeur (2), composantes (1).
+                    // Données du SOF : précision (1 octet), hauteur (2), largeur (2), nombre de
+                    // composantes (1), puis trois octets par composante, dont l'identifiant
+                    // en tête (`i + 10`, `i + 13`, `i + 16`).
                     0xC0..=0xC2 => {
                         let precision = *bytes.get(i + 4)?;
                         let components = *bytes.get(i + 9)?;
-                        return (precision == 8).then_some(components);
+                        let ids = [bytes.get(i + 10), bytes.get(i + 13), bytes.get(i + 16)];
+                        let rgb_coded = components == 3
+                            && !adobe
+                            && ids == [Some(&b'R'), Some(&b'G'), Some(&b'B')];
+                        return (precision == 8).then_some(JpegHeader {
+                            components,
+                            rgb_coded,
+                        });
+                    }
+                    // APP14 : `Adobe` en tête de ses données.
+                    0xEE => {
+                        adobe |= bytes.get(i + 4..i + 9) == Some(b"Adobe".as_slice());
+                        i += 2 + length;
                     }
                     // Autres SOF (sans perte, hiérarchique, arithmétique), début des données
                     // (SOS) ou fin d'image (EOI) avant tout SOF : pas pour `/DCTDecode`.
@@ -214,46 +257,76 @@ fn image_dict(w: u32, h: u32, space: &str) -> Dictionary {
     ])
 }
 
-/// Écrit les pixels de `image` : RVB 8 bits comprimé (Flate) et, **seulement si un pixel
-/// n'est pas opaque**, un masque `/SMask` en niveaux de gris. Rend la référence de l'image.
+/// Écrit les pixels de `image` : 8 bits comprimés (Flate), en niveaux de gris pour une
+/// image sans couleur (trois fois moins d'octets), en RVB sinon ; et, **seulement si un
+/// pixel n'est pas opaque**, un masque `/SMask` en niveaux de gris. Rend la référence de
+/// l'image.
 ///
 /// Pourquoi tester les pixels et pas seulement le type : un PNG RVBA est souvent entièrement
 /// opaque, et un masque tout blanc ne ferait qu'alourdir le fichier (et gêner PDF/A-1, qui
 /// interdit la transparence).
 pub(crate) fn pixels_xobject(doc: &mut LoDocument, image: &DynamicImage) -> ObjectId {
     let (w, h) = (image.width(), image.height());
-    let mut dict = image_dict(w, h, "DeviceRGB");
-    if image.color().has_alpha() {
-        let alpha: Vec<u8> = image.to_rgba8().pixels().map(|p| p.0[3]).collect();
-        if alpha.iter().any(|&a| a < 255) {
-            let mut mask = Stream::new(image_dict(w, h, "DeviceGray"), alpha);
-            // `compress` ne fait rien si le flux comprimé serait plus gros.
-            let _ = mask.compress();
-            dict.set("SMask", Object::Reference(doc.add_object(mask)));
-        }
+    let (space, samples) = if image.color().has_color() {
+        ("DeviceRGB", image.to_rgb8().into_raw())
+    } else {
+        ("DeviceGray", image.to_luma8().into_raw())
+    };
+    let mut dict = image_dict(w, h, space);
+    if let Some(alpha) = alpha_channel(image)
+        && alpha.iter().any(|&a| a < 255)
+    {
+        let mask = compressed(image_dict(w, h, "DeviceGray"), alpha);
+        dict.set("SMask", Object::Reference(doc.add_object(mask)));
     }
     // Les couleurs sont gardées telles quelles (non prémultipliées) : c'est ce qu'attend un
     // `/SMask` sans `/Matte` (ISO 32000-1 §11.6.5.3).
-    let mut stream = Stream::new(dict, image.to_rgb8().into_raw());
-    let _ = stream.compress();
-    doc.add_object(stream)
+    doc.add_object(compressed(dict, samples))
 }
 
-/// Écrit l'objet image de `image` et rend sa référence.
-fn image_xobject(doc: &mut LoDocument, image: &ImageData) -> ObjectId {
+/// La transparence de `image`, un octet par pixel ; `None` sans canal alpha.
+///
+/// \[Apprentissage\] `match` sur les variantes de `DynamicImage` : pour les formes 8 bits
+/// courantes, on lit l'alpha **dans** le tampon existant, sans le recopier en RVBA entier
+/// (`to_rgba8` allouerait quatre octets par pixel pour n'en garder qu'un).
+fn alpha_channel(image: &DynamicImage) -> Option<Vec<u8>> {
+    if !image.color().has_alpha() {
+        return None;
+    }
+    Some(match image {
+        DynamicImage::ImageRgba8(buffer) => buffer.pixels().map(|p| p.0[3]).collect(),
+        DynamicImage::ImageLumaA8(buffer) => buffer.pixels().map(|p| p.0[1]).collect(),
+        // 16 bits ou flottants (rares) : conversion en 8 bits.
+        other => other.to_rgba8().pixels().map(|p| p.0[3]).collect(),
+    })
+}
+
+/// Écrit l'objet image de `image` et rend sa référence. Prend `image` **par valeur** : les
+/// octets d'un JPEG (jusqu'à 20 Mo) entrent dans le flux sans copie.
+fn image_xobject(doc: &mut LoDocument, image: ImageData) -> ObjectId {
     match image {
         ImageData::Jpeg {
             bytes,
             width,
             height,
             gray,
+            rgb_coded,
         } => {
-            let space = if *gray { "DeviceGray" } else { "DeviceRGB" };
-            let mut dict = image_dict(*width, *height, space);
+            let space = if gray { "DeviceGray" } else { "DeviceRGB" };
+            let mut dict = image_dict(width, height, space);
             dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
-            doc.add_object(Stream::new(dict, bytes.clone()))
+            if rgb_coded {
+                dict.set(
+                    "DecodeParms",
+                    Object::Dictionary(Dictionary::from_iter(vec![(
+                        "ColorTransform",
+                        Object::Integer(0),
+                    )])),
+                );
+            }
+            doc.add_object(Stream::new(dict, bytes))
         }
-        ImageData::Rgba(pixels) => pixels_xobject(doc, pixels),
+        ImageData::Pixels(pixels) => pixels_xobject(doc, &pixels),
     }
 }
 
@@ -271,7 +344,7 @@ pub(crate) fn place(
     page: ObjectId,
     frame: &PageFrame,
     rect: Rect,
-    image: &ImageData,
+    image: ImageData,
 ) -> CoreResult<()> {
     let (w, h) = image.dimensions();
     let placed = fit(w as f32, h as f32, &rect);
@@ -344,12 +417,124 @@ mod tests {
         out
     }
 
+    /// Nombre de composantes lu dans l'en-tête.
+    fn jpeg_components(bytes: &[u8]) -> Option<u8> {
+        jpeg_header(bytes).map(|h| h.components)
+    }
+
     #[test]
     fn jpeg_components_reads_the_frame_header() {
         let rgb = jpeg_of(&image::RgbImage::new(4, 3));
-        assert_eq!(jpeg_components(&rgb), Some(3));
+        assert_eq!(
+            jpeg_header(&rgb),
+            Some(JpegHeader {
+                components: 3,
+                rgb_coded: false
+            })
+        );
         let gray = jpeg_of(&image::GrayImage::new(4, 3));
         assert_eq!(jpeg_components(&gray), Some(1));
+    }
+
+    /// Un SOF0 8 bits de 4 × 3 pixels dont les composantes portent les identifiants `ids`,
+    /// précédé de `prefix` (segments facultatifs).
+    fn sof(prefix: &[u8], ids: &[u8]) -> Vec<u8> {
+        let mut out = vec![0xFF, 0xD8];
+        out.extend_from_slice(prefix);
+        let length = 8 + 3 * ids.len() as u16;
+        out.extend_from_slice(&[0xFF, 0xC0]);
+        out.extend_from_slice(&length.to_be_bytes());
+        out.extend_from_slice(&[8, 0, 3, 0, 4, ids.len() as u8]);
+        for id in ids {
+            out.extend_from_slice(&[*id, 0x11, 0]);
+        }
+        out.extend_from_slice(&[0xFF, 0xD9]);
+        out
+    }
+
+    /// Revue de la partie D : identifiants `R`, `G`, `B` sans marqueur Adobe → codé en RVB ;
+    /// un marqueur Adobe (APP14) décide à la place.
+    #[test]
+    fn rgb_component_ids_mean_rgb_coding() {
+        let header = |bytes: &[u8]| jpeg_header(bytes).unwrap();
+        assert!(header(&sof(&[], b"RGB")).rgb_coded);
+        assert!(!header(&sof(&[], &[1, 2, 3])).rgb_coded);
+        let mut app14 = vec![0xFF, 0xEE, 0x00, 0x0E];
+        app14.extend_from_slice(b"Adobe");
+        app14.extend_from_slice(&[0, 100, 0, 0, 0, 0, 0]);
+        assert!(!header(&sof(&app14, b"RGB")).rgb_coded);
+        // Un autre segment APP (JFIF) ne change rien.
+        let mut app0 = vec![0xFF, 0xE0, 0x00, 0x07];
+        app0.extend_from_slice(b"JFIF\0");
+        assert!(header(&sof(&app0, b"RGB")).rgb_coded);
+    }
+
+    /// Revue de la partie D : un JPEG CMJN (quatre composantes) n'est pas gardé tel quel, il
+    /// suit le chemin des pixels.
+    #[test]
+    fn a_cmyk_jpeg_takes_the_pixel_path() {
+        let cmyk = sof(&[], &[1, 2, 3, 4]);
+        assert_eq!(jpeg_components(&cmyk), Some(4));
+        assert_eq!(dct_header(&cmyk), None);
+        assert!(dct_header(&sof(&[], &[1, 2, 3])).is_some());
+        assert!(dct_header(&sof(&[], &[1])).is_some());
+    }
+
+    /// Un JPEG codé en RVB est écrit avec `/ColorTransform 0` ; un JPEG YCbCr sans paramètre.
+    #[test]
+    fn rgb_coded_jpeg_gets_color_transform_zero() {
+        for rgb_coded in [true, false] {
+            let mut doc = LoDocument::with_version("1.7");
+            let id = image_xobject(
+                &mut doc,
+                ImageData::Jpeg {
+                    bytes: sof(&[], b"RGB"),
+                    width: 4,
+                    height: 3,
+                    gray: false,
+                    rgb_coded,
+                },
+            );
+            let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+            let transform = stream
+                .dict
+                .get(b"DecodeParms")
+                .and_then(Object::as_dict)
+                .and_then(|d| d.get(b"ColorTransform"))
+                .and_then(Object::as_i64)
+                .ok();
+            assert_eq!(transform, rgb_coded.then_some(0), "RVB : {rgb_coded}");
+        }
+    }
+
+    /// Revue de la partie D : une image sans couleur est écrite en `/DeviceGray`, un octet
+    /// par pixel (trois fois moins qu'en RVB), avec son masque s'il est transparent.
+    #[test]
+    fn grey_pixels_are_written_as_device_gray() {
+        let mut doc = LoDocument::with_version("1.7");
+        let gray = DynamicImage::ImageLuma8(image::GrayImage::from_pixel(3, 2, image::Luma([90])));
+        let id = pixels_xobject(&mut doc, &gray);
+        let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+        assert_eq!(
+            stream.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+            b"DeviceGray"
+        );
+        assert_eq!(crate::crypt::stream_bytes(stream).unwrap(), vec![90; 6]);
+        assert!(!stream.dict.has(b"SMask"));
+        let mut see_through = image::GrayAlphaImage::from_pixel(3, 2, image::LumaA([90, 255]));
+        see_through.put_pixel(2, 1, image::LumaA([90, 0]));
+        let id = pixels_xobject(&mut doc, &DynamicImage::ImageLumaA8(see_through));
+        let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+        assert_eq!(
+            stream.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+            b"DeviceGray"
+        );
+        let mask = stream.dict.get(b"SMask").unwrap().as_reference().unwrap();
+        let mask = doc.get_object(mask).unwrap().as_stream().unwrap();
+        assert_eq!(
+            crate::crypt::stream_bytes(mask).unwrap(),
+            vec![255, 255, 255, 255, 255, 0]
+        );
     }
 
     #[test]

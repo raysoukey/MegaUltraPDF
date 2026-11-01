@@ -719,3 +719,30 @@ fn saving_creates_the_xmp_dates_when_absent() {
     assert!(xmp.contains("<xmp:MetadataDate>"), "{xmp}");
     assert!(xmp.contains("xmlns:xmp="), "{xmp}");
 }
+
+/// Constat de la tâche 21b du Lot 14 (pas encore corrigé hors chiffrement) : PDFium retire
+/// `/Filter /FlateDecode` d'un XMP compressé mais en recopie les octets compressés. Le XMP de
+/// tout fichier dont les métadonnées sont compressées (qpdf le fait par défaut) devient alors
+/// illisible au premier enregistrement. Dans un document chiffré, `Document::to_bytes` le
+/// répare en même temps qu'il le rechiffre (`crypt::reencrypt_metadata`) ; un document non
+/// chiffré n'y passe pas (pour qu'un document non chiffré ne paie aucune relecture `lopdf`).
+#[test]
+#[ignore = "constat 21b (Lot 14) : XMP compressé non chiffré dépouillé de son filtre par PDFium"]
+fn a_compressed_xmp_survives_a_save() {
+    let mut source =
+        lopdf::Document::load_mem(&mega_core::testing::rich_catalog_pdf("1.7", None)).unwrap();
+    source.compress();
+    let mut bytes = Vec::new();
+    source.save_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("xmp.pdf");
+    doc.save_as(&path).unwrap();
+    let xmp = xmp_of(&std::fs::read(&path).unwrap());
+    assert!(
+        xmp.contains(">Riche</rdf:li>"),
+        "XMP détruit : {:?}",
+        xmp.chars().take(40).collect::<String>()
+    );
+}

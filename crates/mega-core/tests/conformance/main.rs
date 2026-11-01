@@ -18,6 +18,7 @@
 //!
 //! Organisation (un seul binaire de test, `cargo test --test conformance`) :
 //! - `edits` : chaque variante d'`EditCommand`, et la preuve qu'aucune n'est oubliée ;
+//! - `encrypted` : fichiers chiffrés par qpdf, dont le XMP chiffré survit aux éditions ;
 //! - `catalogue` : les 17 structures du catalogue survivent aux éditions, à la fusion, à
 //!   l'extraction et à la scission ;
 //! - `pages` : fusion, scission, extraction, déplacements dans l'arbre des pages ;
@@ -35,12 +36,14 @@
 mod catalogue;
 mod corpus;
 mod edits;
+mod encrypted;
 mod pages;
 mod signature;
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use mega_core::Document;
@@ -103,19 +106,27 @@ fn output_text(out: &Output) -> String {
 /// Délai accordé à un outil externe (qpdf, MuPDF, pdf.js, veraPDF) pour un fichier.
 const TOOL_LIMIT: Duration = Duration::from_secs(60);
 
+/// Délai laissé aux fils de lecture pour rendre les sorties une fois le programme terminé (ou
+/// tué) : au-delà, un petit-enfant garde le tuyau ouvert, et l'on renonce.
+const DRAIN_GRACE: Duration = Duration::from_secs(5);
+
 /// Lance `cmd` et attend sa fin au plus `limit` ; au-delà, le processus est tué. `None` si le
-/// programme n'a pas pu être lancé ou s'il a dépassé le délai : l'appelant en fait un échec.
+/// programme n'a pas pu être lancé, s'il a dépassé le délai, ou si ses sorties ne se ferment
+/// pas : l'appelant en fait un échec.
 ///
 /// Pourquoi : un outil bloqué (fichier qui le fait boucler, `node` qui attend une entrée)
 /// figerait toute la suite de tests sans rien dire. `Command::output` n'a pas de délai.
 ///
-/// \[Apprentissage\] **Deux fils de lecture.** Un programme qui écrit beaucoup remplit le
-/// tuyau (*pipe*) de sa sortie, puis s'arrête en attendant qu'on le vide : si l'on se
-/// contentait d'attendre sa fin, les deux processus s'attendraient l'un l'autre. Chaque
+/// \[Apprentissage\] **Deux fils de lecture et un canal.** Un programme qui écrit beaucoup
+/// remplit le tuyau (*pipe*) de sa sortie, puis s'arrête en attendant qu'on le vide : si l'on
+/// se contentait d'attendre sa fin, les deux processus s'attendraient l'un l'autre. Chaque
 /// sortie est donc vidée par son propre fil (`std::thread::spawn`) pendant que le fil
-/// principal surveille l'horloge avec `try_wait` (qui ne bloque pas). Quand le programme se
-/// termine (ou est tué), ses tuyaux se ferment, `read_to_end` rend la main et `join` récupère
-/// les octets lus.
+/// principal surveille l'horloge avec `try_wait` (qui ne bloque pas). Les fils envoient ce
+/// qu'ils ont lu par un canal (`std::sync::mpsc`) ; le fil principal le reçoit avec
+/// `recv_timeout`, qui abandonne après un délai. Attendre les fils par `join` serait risqué :
+/// tuer le programme ne ferme pas un tuyau qu'un petit-enfant (`node`, l'enveloppe d'une JVM)
+/// garde ouvert, et `join` attendrait pour toujours. Un fil abandonné finira seul quand le
+/// tuyau se fermera.
 fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Option<Output> {
     let mut child = cmd
         .stdin(Stdio::null())
@@ -125,15 +136,18 @@ fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Option<Output> {
         .ok()?;
     let mut stdout = child.stdout.take()?;
     let mut stderr = child.stderr.take()?;
-    let read_out = std::thread::spawn(move || {
+    // `true` : sortie standard ; `false` : sortie d'erreur.
+    let (sender, receiver) = mpsc::channel::<(bool, Vec<u8>)>();
+    let sender_err = sender.clone();
+    std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = stdout.read_to_end(&mut bytes);
-        bytes
+        let _ = sender.send((true, bytes));
     });
-    let read_err = std::thread::spawn(move || {
+    std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = stderr.read_to_end(&mut bytes);
-        bytes
+        let _ = sender_err.send((false, bytes));
     });
     let deadline = Instant::now() + limit;
     let status = loop {
@@ -151,12 +165,22 @@ fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Option<Output> {
             }
         }
     };
-    let stdout = read_out.join().unwrap_or_default();
-    let stderr = read_err.join().unwrap_or_default();
+    let drain_until = Instant::now() + DRAIN_GRACE;
+    let (mut out, mut err) = (None, None);
+    while out.is_none() || err.is_none() {
+        let left = drain_until.saturating_duration_since(Instant::now());
+        // Délai écoulé ou fils disparus : sorties incomplètes, donc échec.
+        let (is_stdout, bytes) = receiver.recv_timeout(left).ok()?;
+        if is_stdout {
+            out = Some(bytes);
+        } else {
+            err = Some(bytes);
+        }
+    }
     Some(Output {
         status: status?,
-        stdout,
-        stderr,
+        stdout: out?,
+        stderr: err?,
     })
 }
 
@@ -166,24 +190,6 @@ fn run_with_timeout(cmd: &mut Command, limit: Duration) -> Option<Output> {
 fn assert_conforms(qpdf: &Path, path: &Path, password: Option<&str>, what: &str) {
     assert_qpdf_accepts(qpdf, path, password, what);
     assert_cross_readers_accept(path, password, what);
-}
-
-/// [`assert_conforms`] pour un fichier que nous avons protégé et qui porte un XMP : celui-ci
-/// est en clair, et la relecture MuPDF tolère son seul défaut connu
-/// ([`assert_mutool_reads_cleartext_xmp`]). qpdf et pdf.js restent exigeants.
-fn assert_conforms_with_cleartext_xmp(
-    qpdf: &Path,
-    path: &Path,
-    password: Option<&str>,
-    what: &str,
-) {
-    assert_qpdf_accepts(qpdf, path, password, what);
-    if let Some(mutool) = mutool() {
-        assert_mutool_reads_cleartext_xmp(&mutool, path, password, what);
-    }
-    if let Some(script) = pdfjs_check() {
-        assert_pdfjs_reads(&script, path, password, what);
-    }
 }
 
 fn assert_qpdf_accepts(qpdf: &Path, path: &Path, password: Option<&str>, what: &str) {
@@ -262,53 +268,6 @@ fn assert_mutool_reads(mutool: &Path, path: &Path, password: Option<&str>, what:
         out.status.success() && !diagnostics.contains("error"),
         "{what} : mutool info a échoué ({:?})\n{}",
         out.status.code(),
-        output_text(&out)
-    );
-}
-
-/// Diagnostic de MuPDF 1.27 sur un XMP **en clair** d'un fichier AES (`/EncryptMetadata
-/// false`) : il le déchiffre quand même, et la longueur du texte n'étant pas un multiple de
-/// 16 octets, le filtre AES échoue.
-const MUTOOL_CLEARTEXT_XMP: &str = "format error: partial block in aes filter";
-
-/// Comme [`assert_mutool_reads`], en tolérant le seul défaut de MuPDF sur un XMP en clair
-/// dans un fichier chiffré : un fichier que nous protégeons déclare `/EncryptMetadata false`
-/// (`Document::protect`, tâche 21 du Lot 14), comme le permet ISO 32000-1, §7.6.3.2. Mesuré
-/// avec MuPDF 1.27.0 : `mutool info -p u` échoue de la même façon (code 1, `partial block in
-/// aes filter` puis une erreur de l'analyseur XML) sur un fichier chiffré par
-/// `qpdf --encrypt … --bits=256 --cleartext-metadata`, que qpdf et pdf.js lisent sans
-/// erreur ; `mutool draw` rend les pages de notre fichier sans erreur. Le défaut est donc
-/// celui de `mutool info`, pas du fichier. On exige que le fichier déclare bien le XMP en
-/// clair, sinon la tolérance masquerait un vrai XMP mal chiffré.
-fn assert_mutool_reads_cleartext_xmp(
-    mutool: &Path,
-    path: &Path,
-    password: Option<&str>,
-    what: &str,
-) {
-    let out = mutool_info(mutool, path, password, what);
-    let declared =
-        String::from_utf8_lossy(&std::fs::read(path).unwrap()).contains("/EncryptMetadata false");
-    let diagnostics = String::from_utf8_lossy(&out.stderr).to_lowercase();
-    // Seules lignes permises : le défaut AES, la fin de lecture qui le suit, et l'erreur de
-    // l'analyseur XML de MuPDF sur le texte « déchiffré » (aléatoire, donc variable :
-    // `syntax error: syntax error in element`, `… after element name`, `… in comment`).
-    // Une erreur de syntaxe **PDF** s'écrit autrement (`syntax error: expected 'obj'…`).
-    let unexpected = diagnostics.lines().any(|line| {
-        line.contains("error")
-            && line != MUTOOL_CLEARTEXT_XMP
-            && line != "warning: read error; treating as end of file"
-            && !line.starts_with("syntax error: syntax error ")
-    });
-    assert!(
-        declared && (out.status.success() || diagnostics.contains(MUTOOL_CLEARTEXT_XMP)),
-        "{what} : mutool info a échoué ({:?}), XMP déclaré en clair : {declared}\n{}",
-        out.status.code(),
-        output_text(&out)
-    );
-    assert!(
-        !unexpected,
-        "{what} : mutool info signale autre chose que le XMP en clair\n{}",
         output_text(&out)
     );
 }
@@ -402,19 +361,22 @@ fn check(qpdf: &Path, case: &Case) -> Vec<u8> {
     std::fs::read(&out).unwrap()
 }
 
-/// La page 1 du fichier `path` livre `text` : dans son texte, ou dans le contenu d'une de ses
-/// annotations (un tampon dessine son texte dans son apparence, hors du texte de la page).
+/// La page 1 du fichier `path` livre `text` : dans son texte, ou, une fois aplatie, dans ce
+/// que dessinent ses annotations (un tampon dessine son texte dans son apparence, hors du
+/// texte de la page). Le `/Contents` d'une annotation ne compte pas : c'est la chaîne que la
+/// commande a fournie, elle prouverait le stockage, pas le dessin.
 fn assert_text_reads_back(path: &Path, password: Option<&str>, text: &str, what: &str) {
-    let doc = Document::open(path, password).unwrap();
+    let mut doc = Document::open(path, password).unwrap();
     let page = doc.page_text(0).unwrap();
-    let in_annotation = doc
-        .annotations(0)
-        .unwrap()
-        .iter()
-        .any(|a| a.contents.as_deref().is_some_and(|c| c.contains(text)));
+    if page.contains(text) {
+        return;
+    }
+    doc.flatten_all().unwrap();
+    let flattened = doc.page_text(0).unwrap();
     assert!(
-        page.contains(text) || in_annotation,
-        "{what} : « {text} » ne se relit pas (texte de la page : {page:?})"
+        flattened.contains(text),
+        "{what} : « {text} » ne se relit pas (texte de la page : {page:?}, aplatie : \
+         {flattened:?})"
     );
 }
 

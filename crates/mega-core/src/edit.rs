@@ -851,6 +851,9 @@ impl Document {
             self.replace_inner(clean);
             (bytes, fresh)
         };
+        // Seconde sortie de PDFium : son XMP est en clair lui aussi (voir `Document::to_bytes`).
+        // Rechiffré avant la passe `lopdf`, qui le « déchiffrerait » sinon en octets aléatoires.
+        let bytes = crate::crypt::seal_metadata(bytes, self.password());
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
         // Si une suppression a eu lieu et que le nettoyage n'a pas pu retirer ses restes,
         // écrire les octets de PDFium ferait survivre ce que l'utilisateur a supprimé : refus

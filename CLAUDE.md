@@ -244,8 +244,9 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   `/Encrypt /P` soi-même) ; sa balise « ModificationDate » n'existe pas (`/ModDate` lu par
   lopdf) ; `lopdf` déchiffre en silence un mot de passe utilisateur vide (`was_encrypted()`
   avant toute réécriture) ; chiffrer = `EncryptionVersion::V5` + `Aes256CryptFilter` + clé
-  `rand` + `encrypt_metadata: false` (PDFium écrit `/Metadata` en clair mais le déchiffre à la
-  relecture : un XMP déclaré chiffré devient aléatoire ; constat F21-4 pour les fichiers
-  reçus) ; les instantanés d'historique portent le mot de passe ; pièces jointes listées dans
+  `rand` ; PDFium écrit `/Metadata` en clair dans un document chiffré : `to_bytes` (et la
+  seconde sortie de `rewritten_bytes`) rechiffre ce seul flux (`crypt::seal_metadata`) ;
+  jamais `encrypt_metadata: false` (PDFium retire aussi le `/Filter` d'un XMP compressé en
+  gardant ses octets : réparé dans un document chiffré, constat ouvert sinon) ; les instantanés d'historique portent le mot de passe ; pièces jointes listées dans
   l'ordre de l'arbre de noms (clés triées) ; `cargo clippy --all-targets` échoue tant qu'un
   fichier de test ne compile pas : ne jamais enchaîner `task-done` après un gate qui a échoué.

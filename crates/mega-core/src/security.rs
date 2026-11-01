@@ -235,7 +235,6 @@ impl Document {
     /// reste utilisable ; les passes `lopdf` ultérieures (métadonnées, filigrane…) le
     /// refuseront : protéger est la **dernière** étape. Refusé si déjà chiffré.
     pub fn protect(&mut self, p: &Protection) -> CoreResult<()> {
-        self.mark_changed();
         if p.user_password.is_empty() && p.owner_password.is_empty() {
             return Err(invalid("indiquez au moins un mot de passe"));
         }
@@ -267,13 +266,9 @@ impl Document {
         let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
         filters.insert(b"StdCF".to_vec(), Arc::new(Aes256CryptFilter));
         let state = EncryptionState::try_from(EncryptionVersion::V5 {
-            // XMP en clair (`/EncryptMetadata false`) : PDFium écrit toujours le flux
-            // `/Metadata` en clair, mais le déchiffre à la relecture si la clé vaut `true`.
-            // Comme chaque enregistrement fait relire à PDFium sa propre sortie, un XMP déclaré
-            // chiffré devenait des octets aléatoires (tâche 21 du Lot 14). Le titre et l'auteur
-            // du XMP restent donc lisibles sans mot de passe ; ceux de `/Info`, le contenu et
-            // les pièces jointes sont chiffrés.
-            encrypt_metadata: false,
+            // XMP chiffré, comme le reste : PDFium l'écrit en clair, `Document::to_bytes` le
+            // rechiffre (tâche 21b du Lot 14).
+            encrypt_metadata: true,
             crypt_filters: filters,
             file_encryption_key: &key,
             stream_filter: b"StdCF".to_vec(),
@@ -289,6 +284,8 @@ impl Document {
         declare_aes256_extension(&mut doc);
         let mut out = Vec::new();
         doc.save_to(&mut out)?;
+        // Plus aucun refus possible avant le rechargement : la modification est certaine.
+        self.mark_changed();
         let previous = self.password().map(str::to_string);
         self.set_password((!p.user_password.is_empty()).then(|| p.user_password.clone()));
         if let Err(e) = self.reload_from_bytes(out) {

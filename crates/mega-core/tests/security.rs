@@ -425,7 +425,7 @@ fn xmp_text(bytes: &[u8], password: &str) -> String {
     String::from_utf8_lossy(
         &stream
             .decompressed_content()
-            .unwrap_or(stream.content.clone()),
+            .unwrap_or_else(|_| stream.content.clone()),
     )
     .into_owned()
 }
@@ -433,9 +433,9 @@ fn xmp_text(bytes: &[u8], password: &str) -> String {
 /// Tâche 21 du Lot 14 (constat de la relecture) : PDFium écrit le flux `/Metadata` **en clair**
 /// même quand `/EncryptMetadata` vaut `true`, mais le déchiffre à la relecture. Chaque
 /// enregistrement (PDFium relit sa propre sortie) changeait alors le XMP d'un document que nous
-/// venions de protéger en octets aléatoires. Protéger pose donc `/EncryptMetadata false` : le
-/// XMP survit à la protection, à l'enregistrement et à une édition suivie d'un second
-/// enregistrement.
+/// venions de protéger en octets aléatoires. Depuis la tâche 21b, `Document::to_bytes` rechiffre
+/// ce flux : le XMP survit à la protection, à l'enregistrement et à une édition suivie d'un
+/// second enregistrement.
 #[test]
 fn protecting_keeps_the_xmp_readable_through_saves() {
     let dir = tempfile::tempdir().unwrap();
@@ -449,11 +449,7 @@ fn protecting_keeps_the_xmp_readable_through_saves() {
     assert!(
         xmp.starts_with("<?xpacket") && xmp.contains("</x:xmpmeta>"),
         "XMP illisible après protection : {:?}",
-        &xmp[..xmp.len().min(60)]
-    );
-    assert!(
-        String::from_utf8_lossy(&first).contains("/EncryptMetadata false"),
-        "le XMP est déclaré en clair"
+        xmp.chars().take(60).collect::<String>()
     );
     doc.apply(&EditCommand::RotatePages {
         pages: vec![0],
@@ -465,6 +461,41 @@ fn protecting_keeps_the_xmp_readable_through_saves() {
     assert!(
         xmp.starts_with("<?xpacket") && xmp.contains("</x:xmpmeta>"),
         "XMP illisible après un second enregistrement : {:?}",
-        &xmp[..xmp.len().min(60)]
+        xmp.chars().take(60).collect::<String>()
+    );
+}
+
+/// Un `protect` refusé (document déjà protégé, mots de passe vides) ne marque pas le document
+/// modifié (CLAUDE.md : `mark_changed` après les gardes de refus) : enregistrer recopie alors
+/// les octets d'origine tels quels.
+#[test]
+fn refused_protect_leaves_the_document_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture("encrypted.pdf");
+    let mut doc = Document::from_bytes(source.clone(), Some("secret")).unwrap();
+    assert!(matches!(
+        doc.protect(&protection("a", "b", all())),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    let path = dir.path().join("deja.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        source,
+        "déjà protégé : intact"
+    );
+
+    let plain = sample_pdf(1, "intact");
+    let mut doc = Document::from_bytes(plain.clone(), None).unwrap();
+    assert!(matches!(
+        doc.protect(&protection("", "", all())),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    let path = dir.path().join("vide.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        plain,
+        "mots de passe vides : intact"
     );
 }

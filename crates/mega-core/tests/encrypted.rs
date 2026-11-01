@@ -504,47 +504,11 @@ fn unicode_font_is_subset_in_an_aes256_document() {
     assert!(reopened.page_text(0).unwrap().contains('Ω'));
 }
 
-/// Constat F21-4 (tâche 21 du Lot 14), pas encore corrigé : un fichier AES dont le XMP est
-/// chiffré (`/EncryptMetadata true`, le réglage par défaut d'Acrobat et de qpdf) perd son XMP
-/// au premier enregistrement. PDFium écrit le flux `/Metadata` en clair sans changer la
-/// déclaration, puis, en relisant sa propre sortie (`rewritten_bytes`, historique), le
-/// « déchiffre » en octets aléatoires. `protect` évite le piège en posant
-/// `/EncryptMetadata false` ; pour un fichier reçu, il faudrait rechiffrer le XMP de chaque
-/// sortie de PDFium.
-#[test]
-#[ignore = "constat F21-4 (Lot 14, tâche 21) : XMP chiffré détruit par PDFium à l'enregistrement"]
-fn editing_a_file_with_encrypted_xmp_keeps_its_xmp() {
-    use lopdf::encryption::crypt_filters::Aes256CryptFilter;
-    let mut doc =
-        lopdf::Document::load_mem(&mega_core::testing::rich_catalog_pdf("1.7", None)).unwrap();
-    let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
-    filters.insert(b"StdCF".to_vec(), Arc::new(Aes256CryptFilter));
-    let key = [7u8; 32];
-    let state = EncryptionState::try_from(EncryptionVersion::V5 {
-        encrypt_metadata: true,
-        crypt_filters: filters,
-        file_encryption_key: &key,
-        stream_filter: b"StdCF".to_vec(),
-        string_filter: b"StdCF".to_vec(),
-        owner_password: "o",
-        user_password: "u",
-        permissions: Permissions::all(),
-    })
-    .unwrap();
-    doc.encrypt(&state).unwrap();
-    let mut bytes = Vec::new();
-    doc.save_to(&mut bytes).unwrap();
-    let mut doc = Document::from_bytes(bytes, Some("u")).unwrap();
-    doc.rotate_pages(&[0], 1).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("xmp.pdf");
-    doc.save_as(&path).unwrap();
-    let options = lopdf::LoadOptions {
-        password: Some("u".to_string()),
-        ..lopdf::LoadOptions::default()
-    };
+/// Le XMP du catalogue de `bytes`, lu et déchiffré par lopdf avec `password`.
+fn catalog_xmp(bytes: &[u8], password: &str) -> Vec<u8> {
     let saved =
-        lopdf::Document::load_mem_with_options(&std::fs::read(&path).unwrap(), options).unwrap();
+        lopdf::Document::load_mem_with_options(bytes, lopdf::LoadOptions::with_password(password))
+            .unwrap();
     let id = saved
         .catalog()
         .unwrap()
@@ -553,12 +517,201 @@ fn editing_a_file_with_encrypted_xmp_keeps_its_xmp() {
         .as_reference()
         .unwrap();
     let stream = saved.get_object(id).unwrap().as_stream().unwrap();
-    let xmp = stream
+    stream
         .decompressed_content()
-        .unwrap_or_else(|_| stream.content.clone());
+        .unwrap_or_else(|_| stream.content.clone())
+}
+
+/// Le XMP de `rich_catalog_pdf` (titre « Riche ») se relit avec le mot de passe, et il n'est
+/// **pas** lisible en clair dans le fichier (constat F21-4 : PDFium l'écrit en clair).
+fn assert_xmp_intact(bytes: &[u8], password: &str, what: &str) {
+    let xmp = catalog_xmp(bytes, password);
+    let text = String::from_utf8_lossy(&xmp);
     assert!(
-        xmp.starts_with(b"<?xpacket"),
-        "XMP détruit : {:?}",
-        String::from_utf8_lossy(&xmp[..xmp.len().min(40)])
+        xmp.starts_with(b"<?xpacket") && text.contains(">Riche</rdf:li>"),
+        "{what} : XMP détruit : {:?}",
+        text.chars().take(60).collect::<String>()
+    );
+    assert!(
+        !contains(bytes, b"<x:xmpmeta"),
+        "{what} : XMP lisible en clair dans un fichier chiffré"
+    );
+    assert!(
+        !contains(bytes, b"/EncryptMetadata false"),
+        "{what} : XMP déclaré en clair"
+    );
+}
+
+fn all_permissions() -> mega_core::Permissions {
+    mega_core::Permissions {
+        print: true,
+        copy: true,
+        modify: true,
+        annotate: true,
+    }
+}
+
+/// Constat F21-4 (tâche 21b du Lot 14) : un document que nous protégeons garde un XMP
+/// **chiffré** et lisible, à la protection, à un second enregistrement (deuxième sortie de
+/// PDFium) et après réouverture puis édition.
+#[test]
+fn protected_document_keeps_an_encrypted_xmp_through_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("protege.pdf");
+    let mut doc =
+        Document::from_bytes(mega_core::testing::rich_catalog_pdf("1.7", None), None).unwrap();
+    doc.protect(&Protection {
+        user_password: "secret".to_string(),
+        owner_password: "proprio".to_string(),
+        permissions: all_permissions(),
+    })
+    .unwrap();
+    doc.save_as(&path).unwrap();
+    assert_xmp_intact(&std::fs::read(&path).unwrap(), "secret", "protection");
+    let rotate = mega_core::edit::EditCommand::RotatePages {
+        pages: vec![0],
+        quarter_turns: 1,
+    };
+    doc.apply(&rotate).unwrap();
+    doc.save_as(&path).unwrap();
+    assert_xmp_intact(
+        &std::fs::read(&path).unwrap(),
+        "secret",
+        "second enregistrement",
+    );
+    let mut reopened = Document::open(&path, Some("secret")).unwrap();
+    reopened.apply(&rotate).unwrap();
+    let again = dir.path().join("rouvert.pdf");
+    reopened.save_as(&again).unwrap();
+    assert_xmp_intact(&std::fs::read(&again).unwrap(), "secret", "réouverture");
+}
+
+/// Algorithmes de chiffrement d'un fichier **reçu** (écrit par lopdf, comme le ferait un autre
+/// logiciel), XMP chiffré.
+#[derive(Clone, Copy, Debug)]
+enum Cipher {
+    Aes256,
+    Aes128,
+    Rc4128,
+    Rc440,
+}
+
+/// `rich_catalog_pdf` chiffré par lopdf avec `cipher`, XMP chiffré compris (mot de passe
+/// utilisateur `u`, propriétaire `o`).
+fn lopdf_encrypted_rich(cipher: Cipher) -> Vec<u8> {
+    use lopdf::encryption::crypt_filters::Aes256CryptFilter;
+    let mut doc =
+        lopdf::Document::load_mem(&mega_core::testing::rich_catalog_pdf("1.7", None)).unwrap();
+    if doc.trailer.get(b"ID").is_err() {
+        let id = lopdf::Object::String(
+            b"0123456789abcdef".to_vec(),
+            lopdf::StringFormat::Hexadecimal,
+        );
+        doc.trailer
+            .set("ID", lopdf::Object::Array(vec![id.clone(), id]));
+    }
+    let key = [7u8; 32];
+    let filters = |filter: Arc<dyn CryptFilter>| {
+        let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
+        filters.insert(b"StdCF".to_vec(), filter);
+        filters
+    };
+    let version = match cipher {
+        Cipher::Aes256 => EncryptionVersion::V5 {
+            encrypt_metadata: true,
+            crypt_filters: filters(Arc::new(Aes256CryptFilter)),
+            file_encryption_key: &key,
+            stream_filter: b"StdCF".to_vec(),
+            string_filter: b"StdCF".to_vec(),
+            owner_password: "o",
+            user_password: "u",
+            permissions: Permissions::all(),
+        },
+        Cipher::Aes128 => EncryptionVersion::V4 {
+            document: &doc,
+            encrypt_metadata: true,
+            crypt_filters: filters(Arc::new(Aes128CryptFilter)),
+            stream_filter: b"StdCF".to_vec(),
+            string_filter: b"StdCF".to_vec(),
+            owner_password: "o",
+            user_password: "u",
+            permissions: Permissions::all(),
+        },
+        Cipher::Rc4128 => EncryptionVersion::V2 {
+            document: &doc,
+            owner_password: "o",
+            user_password: "u",
+            key_length: 128,
+            permissions: Permissions::all(),
+        },
+        Cipher::Rc440 => EncryptionVersion::V1 {
+            document: &doc,
+            owner_password: "o",
+            user_password: "u",
+            permissions: Permissions::all(),
+        },
+    };
+    let state = EncryptionState::try_from(version).unwrap();
+    doc.encrypt(&state).unwrap();
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+/// Constat F21-4 (tâche 21 du Lot 14), corrigé par la tâche 21b : un fichier dont le XMP est
+/// chiffré (`/EncryptMetadata true`, le réglage par défaut d'Acrobat et de qpdf ; toujours
+/// chiffré en RC4) perdait son XMP au premier enregistrement. PDFium écrit le flux `/Metadata`
+/// en clair sans changer la déclaration, puis, en relisant sa propre sortie
+/// (`rewritten_bytes`, historique), le « déchiffre » en octets aléatoires. `Document::to_bytes`
+/// rechiffre désormais ce flux.
+#[test]
+fn editing_a_file_with_encrypted_xmp_keeps_its_xmp() {
+    for cipher in [
+        Cipher::Aes256,
+        Cipher::Aes128,
+        Cipher::Rc4128,
+        Cipher::Rc440,
+    ] {
+        let what = format!("{cipher:?}");
+        let source = lopdf_encrypted_rich(cipher);
+        assert_xmp_intact(&source, "u", &format!("{what} (source)"));
+        let mut doc = Document::from_bytes(source, Some("u")).unwrap();
+        doc.rotate_pages(&[0], 1).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("xmp.pdf");
+        doc.save_as(&path).unwrap();
+        assert_xmp_intact(&std::fs::read(&path).unwrap(), "u", &what);
+        // Une seconde édition puis un second enregistrement : nouvelle sortie de PDFium.
+        doc.rotate_pages(&[1], 1).unwrap();
+        doc.save_as(&path).unwrap();
+        assert_xmp_intact(&std::fs::read(&path).unwrap(), "u", &format!("{what} bis"));
+    }
+}
+
+/// Le XMP d'un document chiffré **sans** mot de passe d'ouverture (propriétaire seul, que
+/// PDFium ouvre sans rien demander) est rechiffré lui aussi.
+#[test]
+fn owner_only_document_keeps_an_encrypted_xmp() {
+    let mut doc =
+        Document::from_bytes(mega_core::testing::rich_catalog_pdf("1.7", None), None).unwrap();
+    doc.protect(&Protection {
+        user_password: String::new(),
+        owner_password: "proprio".to_string(),
+        permissions: all_permissions(),
+    })
+    .unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("proprio.pdf");
+    doc.save_as(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_xmp_intact(&bytes, "", "propriétaire seul");
+    let mut reopened = Document::from_bytes(bytes, None).unwrap();
+    reopened.rotate_pages(&[0], 1).unwrap();
+    reopened.save_as(&path).unwrap();
+    assert_xmp_intact(
+        &std::fs::read(&path).unwrap(),
+        "",
+        "propriétaire seul, rouvert",
     );
 }

@@ -200,9 +200,21 @@ impl Document {
     }
 
     /// Sérialise le document complet en octets PDF.
+    ///
+    /// Dans un document chiffré, PDFium écrit le XMP (`/Metadata`) en clair sans le déclarer,
+    /// puis le détruirait en relisant sa propre sortie : il est rechiffré ici
+    /// (`crypt::seal_metadata`, tâche 21b du Lot 14), là où naissent les
+    /// octets PDFium d'un document ouvert (enregistrement, instantanés d'historique ; la
+    /// seconde sortie de `rewritten_bytes` passe par la même fonction). Sans
+    /// chiffrement, ce contrôle ne lit que la remorque.
     pub fn to_bytes(&self) -> CoreResult<Vec<u8>> {
-        let _guard = engine::guard();
-        Ok(self.inner().save_to_bytes()?)
+        // [Apprentissage] Un bloc `{ … }` borne la vie du jeton `_guard` : le verrou PDFium est
+        // rendu à la fin du bloc, avant le travail `lopdf` qui n'en a pas besoin.
+        let bytes = {
+            let _guard = engine::guard();
+            self.inner().save_to_bytes()?
+        };
+        Ok(crate::crypt::seal_metadata(bytes, self.password()))
     }
 
     /// Nombre de pages, **jeton déjà pris par l'appelant**.

@@ -16,8 +16,8 @@ use mega_core::testing::rich_catalog_pdf;
 use serde_json::{Value, json};
 
 use crate::{
-    Case, annotation, apply_and_save, assert_conforms, assert_conforms_with_cleartext_xmp,
-    missing_variants, output_password, qpdf, rect,
+    Case, annotation, apply_and_save, assert_conforms, missing_variants, output_password, qpdf,
+    rect,
 };
 
 /// Les 17 structures du catalogue, chacune comme un chemin de clés depuis `/Root` (liste du
@@ -292,13 +292,7 @@ fn every_edit_command_keeps_the_rich_catalog() {
         let out: PathBuf = apply_and_save(case, case_dir.path());
         let password = output_password(case);
         if let Some(qpdf) = &qpdf {
-            if case.what == "protect" {
-                // Fichier chiffré dont le XMP est en clair : MuPDF 1.27 le lit mal (voir
-                // `assert_mutool_reads_cleartext_xmp`).
-                assert_conforms_with_cleartext_xmp(qpdf, &out, password.as_deref(), case.what);
-            } else {
-                assert_conforms(qpdf, &out, password.as_deref(), case.what);
-            }
+            assert_conforms(qpdf, &out, password.as_deref(), case.what);
         }
         let kept = structures(&std::fs::read(&out).unwrap(), password.as_deref());
         let lost: Vec<String> = CATALOG_PATHS

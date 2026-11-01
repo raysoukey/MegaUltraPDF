@@ -15,7 +15,8 @@ plusieurs manques :
 
 ## Décisions
 
-1. **qpdf comme juge indépendant** (`tests/conformance.rs`).
+1. **qpdf comme juge indépendant** (`tests/conformance.rs`, devenu le dossier
+   `tests/conformance/` au Lot 14).
    - Chaque variante d'`EditCommand` est écrite en JSON, comme l'interface l'envoie, puis
      appliquée et enregistrée.
    - S'y ajoutent la couche OCR, la signature numérique et la réécriture des fichiers abîmés du
@@ -69,6 +70,28 @@ plusieurs manques :
    On ne retire pas la déclaration, car la plupart des éditions la respectent. On ne la
    vérifie pas non plus, ce qui serait le travail d'un validateur comme veraPDF.
 
+   **Mise à jour (Lot 14, 2026-10-31)** : mesures veraPDF de l'audit
+   `docs/audit/2026-10-31-compatibilite-pdf.md` (constats E2 et E6), sur les 16 fichiers PDF/A
+   et 7 PDF/UA du corpus.
+   - **Avant le lot** : rotation et optimisation gardaient PDF/A-1b, 2b, 2u, 3b et PDF/UA-1 ;
+     le filigrane cassait 11 fichiers sur 16 ; les métadonnées cassaient PDF/A-1b quand le XMP
+     n'avait pas de `dc:title` ; **toute** édition cassait PDF/A-4 et PDF/UA-2 (en-tête
+     réécrit `%PDF-1.0`).
+   - **Corrections** : en-tête d'origine reposé (ADR-0019 §3) ; filigrane, numéros et couche
+     OCR balisés comme artefacts, police incorporée, couleur `CalRGB` en PDF/A, transparence
+     simulée en PDF/A-1, groupe de transparence de page ailleurs (ADR-0010, mise à jour) ;
+     `/CIDSet` dans les sous-ensembles de la police Unicode ; titre, auteur, sujet et
+     mots-clés écrits dans le XMP ; aucun `/Info` créé sur un PDF/A-4 ; `/NeedAppearances`
+     retiré et apparences des marquages écrites (ADR-0008 et ADR-0009, mises à jour).
+   - **Après le lot** (banc d'écriture de l'audit, rejoué) : rotation, optimisation et
+     métadonnées gardent toutes les parties, PDF/A-4 et PDF/UA-2 comprises ; filigrane et
+     numéros gardent la conformité des 23 fichiers. Des tests le vérifient quand
+     `MEGA_VERAPDF` et `MEGA_CORPUS` sont posés : filigrane et numéros sur tout le corpus et
+     nouveau titre d'un PDF/A-4 (`tests/conformance/corpus.rs`), métadonnées d'un PDF/A-1b
+     (`tests/metadata.rs`).
+   - **Non mesuré** : les autres éditions (texte inséré en police Standard 14 non incorporée,
+     annotations, images, formulaires). L'avertissement à l'enregistrement reste la réponse.
+
 ## Limites assumées
 
 - **Glyphes sans Unicode** (police CID sans `/ToUnicode`) : ils gardent leur place, mais PDFium
@@ -79,4 +102,23 @@ plusieurs manques :
   encore de gauche à droite (la colonne de gauche d'abord). Le texte inséré par l'utilisateur
   reste refusé pour ces écritures (`fonts::check_drawable`, pas de mise en forme
   contextuelle).
-- **PDF/A** : aucune validation de conformité.
+- **PDF/A** : aucune validation de conformité dans l'application ; veraPDF n'est employé que
+  par les tests (Lot 14).
+
+## Mise à jour (Lot 14, 2026-10-31) : texte extrait
+
+Constats L1 à L3 de l'audit `docs/audit/2026-10-31-compatibilite-pdf.md`.
+
+- **Caractères hors du plan de base** (L1 : émojis, lettres mathématiques, CJK étendu) : PDFium
+  les rend en deux moitiés UTF-16 ; `text::drawn_chars` les réunit en un seul caractère, dont
+  le rectangle couvre les deux. Ils entrent dans le texte, la recherche et la copie.
+- **Police CFF CID en OpenType** (L2, polices Noto ou Source Han) : PDFium dessine la page mais
+  n'expose aucun caractère. Quand une page porte du texte et que PDFium n'en donne aucun,
+  `text/tounicode.rs` relit son contenu avec `lopdf` et traduit chaque code par la
+  `/ToUnicode` de sa police. C'est un repli borné, pas un second moteur de texte : une police
+  sans `/ToUnicode` n'y donne rien, et l'écriture verticale y est placée comme l'horizontale.
+- **Mots arabes collés** (L3) : dans une ligne surtout écrite de droite à gauche et sans aucune
+  espace, un écart de plus d'un quart de cadratin entre deux caractères reçoit une espace
+  (`reading_order::word_gaps`). PDFium le fait déjà pour l'écriture de gauche à droite.
+- Restent des limites de PDFium (L4 à L6) : `/ToUnicode` d'une Type 1 non incorporée ignorée,
+  espacement de mots d'une Type 3 non appliqué, glyphes CID sans `/ToUnicode`.

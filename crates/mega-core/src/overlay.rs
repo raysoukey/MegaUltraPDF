@@ -414,6 +414,8 @@ impl Document {
         self.mark_changed();
         {
             let _guard = engine::guard();
+            // Les indices et les boîtes ont déjà été validés : un échec ici ne peut venir que
+            // d'une panne de PDFium, et les pages déjà recadrées le resteraient (limite assumée).
             for (index, crop) in crops {
                 let mut pdf_page = self.inner().pages().get(index)?;
                 pdf_page.boundaries_mut().set_crop(to_pdf_rect(&crop))?;

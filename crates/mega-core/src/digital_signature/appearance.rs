@@ -93,31 +93,6 @@ fn font_size(lines: &[String], unicode: bool, text_w: f32, text_h: f32) -> f32 {
     by_height.min(by_width).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
 }
 
-/// Flux image (RVB 8 bits, comprimé) et, si l'image a de la transparence, son `/SMask`.
-fn image_xobject(doc: &mut LoDocument, image: &DynamicImage) -> ObjectId {
-    let image_dict = |w: u32, h: u32, space: &str| {
-        Dictionary::from_iter(vec![
-            ("Type", Object::Name(b"XObject".to_vec())),
-            ("Subtype", Object::Name(b"Image".to_vec())),
-            ("Width", Object::Integer(i64::from(w))),
-            ("Height", Object::Integer(i64::from(h))),
-            ("ColorSpace", Object::Name(space.as_bytes().to_vec())),
-            ("BitsPerComponent", Object::Integer(8)),
-        ])
-    };
-    let (w, h) = (image.width(), image.height());
-    let mut dict = image_dict(w, h, "DeviceRGB");
-    if image.color().has_alpha() {
-        let alpha: Vec<u8> = image.to_rgba8().pixels().map(|p| p.0[3]).collect();
-        let mut mask = Stream::new(image_dict(w, h, "DeviceGray"), alpha);
-        let _ = mask.compress();
-        dict.set("SMask", Object::Reference(doc.add_object(mask)));
-    }
-    let mut stream = Stream::new(dict, image.to_rgb8().into_raw());
-    let _ = stream.compress();
-    doc.add_object(stream)
-}
-
 /// Écrit l'apparence (formulaire XObject) et rend sa référence, à poser sous `/AP /N`.
 pub(crate) fn write(
     doc: &mut LoDocument,
@@ -145,7 +120,7 @@ pub(crate) fn write(
             h: (h - 2.0 * pad).max(1.0),
         };
         let fitted = crate::content::image::fit(image.width() as f32, image.height() as f32, &slot);
-        let id = image_xobject(doc, image);
+        let id = crate::content::image::pixels_xobject(doc, image);
         resources.set(
             "XObject",
             Object::Dictionary(Dictionary::from_iter(vec![(

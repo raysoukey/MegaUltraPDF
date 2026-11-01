@@ -196,6 +196,10 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   par `lopdf`. MCID orphelins (`cleanup/mcid`) : rien pour un `/MCR` à `/Stm` ni une page qui dessine
   un XObject formulaire. `Document::lopdf_view()` garde une lecture lopdf en cache (≈ taille du fichier)
   jusqu'à la prochaine édition ; elle prend le jeton PDFium, jamais sous `engine::guard()`.
+  Partie D : la DejaVu entière que PDFium incorpore n'est réduite (`cleanup/subset.rs`) que dans les
+  octets **écrits** (le document PDFium en mémoire garde la police entière) ; candidats = programme
+  exactement égal à la DejaVu embarquée, glyphe de l'espace toujours gardé, usage douteux = police
+  entière ; une image insérée passe par `content/image.rs` (`lopdf`), un JPEG y reste en `/DCTDecode`.
 - Fermeture (correctif 0.12.1) : avec un `onCloseRequested` dans l'interface, Tauri ne ferme plus la
   fenêtre lui-même, l'API JS appelle `window.destroy()` : la capacité **`core:window:allow-destroy`**
   est obligatoire (test `window-close.test.ts`), sinon la fenêtre ne se ferme jamais. Les scénarios

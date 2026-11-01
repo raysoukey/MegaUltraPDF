@@ -19,6 +19,7 @@ use lopdf::{Dictionary, Document, Object, ObjectId};
 use crate::error::{CoreError, CoreResult};
 
 mod mcid;
+mod subset;
 
 fn structure(e: impl std::fmt::Display) -> CoreError {
     CoreError::InvalidOperation(format!("nettoyage avant enregistrement : {e}"))
@@ -131,6 +132,8 @@ pub(crate) fn before_save_with(
     // `/StructTreeRoot`, la passe ne fait rien.
     mcid::prune_orphan_mcids(doc);
     dedupe_font_files(doc);
+    // Après la déduplication : un programme partagé donne un seul sous-ensemble (audit E10).
+    subset::subset_embedded_fonts(doc);
     if opts.appearances_fresh {
         drop_need_appearances(doc);
     }

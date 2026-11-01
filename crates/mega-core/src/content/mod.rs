@@ -23,6 +23,7 @@ use pdfium_render::prelude::{
 use serde::{Deserialize, Serialize};
 
 use crate::annotations::Color;
+use crate::crypt::LopdfSession;
 use crate::document::Document;
 use crate::engine;
 use crate::error::{CoreError, CoreResult};
@@ -548,21 +549,34 @@ impl Document {
 
     /// Insère l'image du fichier `path` (PNG ou JPEG, bornes de [`image`]) ajustée et
     /// centrée dans `rect` (points, espace **affiché**).
+    ///
+    /// Passe `lopdf` (Lot 14, audit E9) et non PDFium : un JPEG garde ses octets
+    /// (`/DCTDecode`) au lieu d'être réencodé en pixels, et seule une image vraiment
+    /// transparente reçoit un masque (voir `image::place`).
     pub fn insert_image(&mut self, page: u16, rect: Rect, path: &str) -> CoreResult<()> {
-        self.mark_changed();
         if !(rect.w > 0.0 && rect.h > 0.0 && rect.w.is_finite() && rect.h.is_finite()) {
             return Err(invalid("la zone de l'image est vide"));
         }
-        let loaded = image::load_bounded(path)?;
-        let placed = image::fit(loaded.width() as f32, loaded.height() as f32, &rect);
-        let _guard = engine::guard();
-        let mut pdf_page = self
-            .inner()
-            .pages()
-            .get(self.checked_index_unlocked(page)?)?;
-        let frame = frame_of(&pdf_page);
+        let loaded = image::load_for_insertion(path)?;
+        // Repère lu par PDFium (jeton pris et rendu) **avant** la phase `lopdf`.
+        let frame = self.page_frame(page)?;
         rect_in_page(&frame, &rect)?;
-        image::place(&mut pdf_page, &frame, &loaded, &placed)
+        let bytes = self.to_bytes()?;
+        // Un document chiffré est réécrit en clair puis rechiffré à l'identique (Lot 10).
+        let mut session = LopdfSession::load(&bytes, self.password())?;
+        let page_id = *session
+            .doc
+            .get_pages()
+            .get(&(u32::from(page) + 1))
+            .ok_or_else(|| invalid("page introuvable dans la structure du PDF"))?;
+        image::place(&mut session.doc, page_id, &frame, rect, loaded)?;
+        let out = session.finish()?;
+        // Exception à la règle « `mark_changed` en tête » : rien avant cette ligne ne touche
+        // à `self` (la phase `lopdf` travaille sur une copie des octets). Un échec plus haut
+        // laisse donc le document intact **et** non modifié : « Enregistrer sous » (chemin
+        // direct du CLI) écrit encore les octets d'origine, signatures comprises.
+        self.mark_changed();
+        self.reload_from_bytes(out)
     }
 }
 

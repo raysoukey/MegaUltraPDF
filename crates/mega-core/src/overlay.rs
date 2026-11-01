@@ -504,7 +504,7 @@ impl Document {
             doc,
             page_id,
             &mut wrapped,
-            ARTIFACT,
+            Some(ARTIFACT),
             content.into_bytes(),
             None,
         )?;
@@ -649,7 +649,7 @@ impl Document {
                 doc,
                 page_id,
                 &mut wrapped,
-                artifact,
+                Some(artifact),
                 content.into_bytes(),
                 group_space,
             )?;
@@ -714,7 +714,7 @@ fn over_white(color: Color, alpha: f32) -> Color {
 /// Un nom `<prefix><n>` absent du sous-dictionnaire `category` (`/Font`, `/ColorSpace`…) des
 /// ressources (propres ou héritées) de toutes les pages `pages` : réutiliser un nom pris
 /// remplacerait la ressource d'un autre contenu de la page.
-fn free_resource_name(
+pub(crate) fn free_resource_name(
     doc: &LoDocument,
     pages: &[ObjectId],
     category: &[u8],
@@ -812,7 +812,7 @@ pub(crate) fn inherited_resources(doc: &LoDocument, page: &Dictionary) -> Dictio
 /// référence nos objets (`entries` : sous-dictionnaire, nom, objet ; par exemple la police
 /// sous `/Font`). Les sous-dictionnaires partagés par référence sont copiés : on n'altère pas
 /// ceux des autres pages.
-fn ensure_resources(
+pub(crate) fn ensure_resources(
     doc: &mut LoDocument,
     page_id: ObjectId,
     entries: &[(&str, &str, ObjectId)],
@@ -847,27 +847,34 @@ fn ensure_resources(
 /// Ajoute `content` après le contenu existant de la page, que l'on enferme une fois dans
 /// `q … Q` pour que son état graphique (transformation en cours, couleur) ne déteigne pas.
 ///
-/// Le contenu ajouté (filigrane, numéros, couche OCR) est décoration, non contenu réel :
-/// il est enveloppé dans un artefact, `artifact` (`/Artifact BMC` ou `/Artifact <<…>> BDC`)
-/// … `EMC` (ISO 32000-1 §14.8.2.2), sans quoi un PDF balisé (PDF/UA-1 §7.1) serait invalide.
+/// Le contenu décoratif (filigrane, numéros, couche OCR) n'est pas du contenu réel : il est
+/// enveloppé dans un artefact, `artifact` (`Some(/Artifact BMC)` ou
+/// `Some(/Artifact <<…>> BDC)`) … `EMC` (ISO 32000-1 §14.8.2.2), sans quoi un PDF balisé
+/// (PDF/UA-1 §7.1) serait invalide. `None` pour du contenu réel (image insérée, Lot 14),
+/// écrit sans marquage, comme le faisait PDFium.
 ///
 /// `group_space` (`Some` quand ce contenu pose un état graphique à opacité < 1) : la page
 /// reçoit un groupe de transparence (§11.6.6) de cet espace de fusion si elle n'en a pas, ce
 /// qu'exige PDF/A-2 (6.2.10) sans profil de sortie. `/I` (groupe isolé) n'est pas posé : sa
 /// valeur par défaut (faux) laisse le filigrane se composer directement sur le contenu de la
 /// page qu'il recouvre, ce que l'on veut.
-fn append_content(
+pub(crate) fn append_content(
     doc: &mut LoDocument,
     page_id: ObjectId,
     wrapped: &mut BTreeSet<ObjectId>,
-    artifact: &[u8],
+    artifact: Option<&[u8]>,
     content: Vec<u8>,
     group_space: Option<Object>,
 ) -> CoreResult<()> {
-    let mut marked = artifact.to_vec();
-    marked.extend_from_slice(&content);
-    marked.extend_from_slice(b"\nEMC\n");
-    let content = marked;
+    let content = match artifact {
+        Some(artifact) => {
+            let mut marked = artifact.to_vec();
+            marked.extend_from_slice(&content);
+            marked.extend_from_slice(b"\nEMC\n");
+            marked
+        }
+        None => content,
+    };
     let existing = doc.get_page_contents(page_id);
     let mut list: Vec<Object> = Vec::with_capacity(existing.len() + 3);
     let stream = |doc: &mut LoDocument, bytes: &[u8]| {

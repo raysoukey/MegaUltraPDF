@@ -84,7 +84,7 @@ impl Document {
                     .pages()
                     .get(self.checked_index_unlocked(page)?)?;
                 let frame = frame_of(&pdf_page);
-                crate::content::image::place(&mut pdf_page, &frame, &image, &placed)
+                crate::content::image::place_with_pdfium(&mut pdf_page, &frame, &image, &placed)
             }
             SignatureSource::Strokes { strokes } => {
                 let valid: Vec<&Vec<[f32; 2]>> = strokes.iter().filter(|s| s.len() >= 2).collect();

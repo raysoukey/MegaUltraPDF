@@ -439,6 +439,248 @@ fn insert_image_refuses_more_than_sixteen_megapixels() {
     }
 }
 
+// --- Lot 14 (audit E9) : image insérée par lopdf ------------------------------------------
+
+/// Insère le fichier `path` sur la page de `doc`, dans `rect` (espace affiché).
+fn insert_file(doc: &mut Document, path: &std::path::Path, rect: Rect) {
+    doc.apply(&EditCommand::InsertImage {
+        page: 0,
+        rect,
+        path: path.to_string_lossy().into_owned(),
+    })
+    .unwrap();
+}
+
+/// Les objets image (`/Subtype /Image`, masques compris) d'un PDF sérialisé.
+fn image_objects(bytes: &[u8]) -> (lopdf::Document, Vec<lopdf::ObjectId>) {
+    let doc = lopdf::Document::load_mem(bytes).unwrap();
+    let ids = doc
+        .objects
+        .iter()
+        .filter(|(_, o)| {
+            o.as_stream()
+                .ok()
+                .and_then(|s| s.dict.get(b"Subtype").ok())
+                .and_then(|t| t.as_name().ok())
+                == Some(b"Image".as_slice())
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    (doc, ids)
+}
+
+fn name_entry(stream: &lopdf::Stream, key: &[u8]) -> Option<Vec<u8>> {
+    stream
+        .dict
+        .get(key)
+        .ok()
+        .and_then(|v| v.as_name().ok())
+        .map(<[u8]>::to_vec)
+}
+
+/// Un JPEG « photo » (dégradés et motif, ~15 Ko comme dans l'audit E8).
+fn photo_jpeg(gray: bool) -> Vec<u8> {
+    let mut img = image::RgbImage::new(200, 150);
+    for (x, y, p) in img.enumerate_pixels_mut() {
+        *p = image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x * y) % 256) as u8]);
+    }
+    let mut out = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85);
+    if gray {
+        encoder
+            .encode_image(&image::DynamicImage::ImageRgb8(img).to_luma8())
+            .unwrap();
+    } else {
+        encoder.encode_image(&img).unwrap();
+    }
+    out
+}
+
+/// E9 : un JPEG entre dans le fichier **tel quel** (`/DCTDecode`, octets d'origine), sans
+/// masque : PDFium le réencodait en Flate (15 Ko → 85 Ko) avec un `/SMask` opaque inutile.
+#[test]
+fn inserted_jpeg_keeps_dct_encoding_and_has_no_smask() {
+    let dir = tempfile::tempdir().unwrap();
+    for (gray, space) in [(false, &b"DeviceRGB"[..]), (true, &b"DeviceGray"[..])] {
+        let jpeg = photo_jpeg(gray);
+        let path = dir.path().join(format!("photo-{gray}.jpg"));
+        std::fs::write(&path, &jpeg).unwrap();
+        let mut doc = one_page();
+        let before = doc.to_bytes().unwrap();
+        insert_file(
+            &mut doc,
+            &path,
+            Rect {
+                x: 100.0,
+                y: 100.0,
+                w: 200.0,
+                h: 150.0,
+            },
+        );
+        let out = doc.to_bytes().unwrap();
+        let growth = out.len().saturating_sub(before.len());
+        assert!(
+            growth < jpeg.len() * 6 / 5 + 3 * 1024,
+            "gris {gray} : +{growth} octets pour un JPEG de {}",
+            jpeg.len()
+        );
+        let (lo, ids) = image_objects(&out);
+        assert_eq!(ids.len(), 1, "gris {gray} : une seule image, aucun masque");
+        let image = lo.get_object(ids[0]).unwrap().as_stream().unwrap();
+        assert_eq!(
+            name_entry(image, b"Filter").as_deref(),
+            Some(&b"DCTDecode"[..])
+        );
+        assert_eq!(name_entry(image, b"ColorSpace").as_deref(), Some(space));
+        assert_eq!(image.content, jpeg, "gris {gray} : octets d'origine");
+        assert!(!image.dict.has(b"SMask"), "gris {gray}");
+        // Posée et ajustée comme avant : 200 × 150 dans 200 × 150.
+        let placed = doc.last_image_bounds(0).unwrap().unwrap();
+        assert!(
+            close(placed.x, 100.0, 0.5)
+                && close(placed.y, 100.0, 0.5)
+                && close(placed.w, 200.0, 0.5)
+                && close(placed.h, 150.0, 0.5),
+            "{placed:?}"
+        );
+        doc.undo().unwrap();
+        assert_eq!(image_objects(&doc.to_bytes().unwrap()).1.len(), 0);
+    }
+}
+
+/// Une image transparente garde sa transparence : un vrai masque `/SMask` (DeviceGray).
+#[test]
+fn inserted_png_with_alpha_gets_a_real_smask() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("logo.png");
+    let mut rgba = image::RgbaImage::new(200, 150);
+    for (x, _y, p) in rgba.enumerate_pixels_mut() {
+        *p = image::Rgba([20, 120, 200, if x < 100 { 255 } else { 0 }]);
+    }
+    rgba.save(&path).unwrap();
+    let mut doc = one_page();
+    insert_file(
+        &mut doc,
+        &path,
+        Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 200.0,
+            h: 150.0,
+        },
+    );
+    let (lo, ids) = image_objects(&doc.to_bytes().unwrap());
+    assert_eq!(ids.len(), 2, "l'image et son masque");
+    let main = ids
+        .iter()
+        .map(|id| lo.get_object(*id).unwrap().as_stream().unwrap())
+        .find(|s| s.dict.has(b"SMask"))
+        .expect("une image porte un /SMask");
+    assert_eq!(
+        name_entry(main, b"ColorSpace").as_deref(),
+        Some(&b"DeviceRGB"[..])
+    );
+    let mask_id = main.dict.get(b"SMask").unwrap().as_reference().unwrap();
+    let mask = lo.get_object(mask_id).unwrap().as_stream().unwrap();
+    assert_eq!(
+        name_entry(mask, b"ColorSpace").as_deref(),
+        Some(&b"DeviceGray"[..])
+    );
+    let alpha = mask.decompressed_content().unwrap();
+    assert_eq!(alpha.len(), 200 * 150);
+    assert_eq!(alpha[0], 255, "moitié gauche opaque");
+    assert_eq!(alpha[199], 0, "moitié droite transparente");
+}
+
+/// Un PNG RVBA entièrement opaque n'a pas de masque : il ne servirait à rien.
+#[test]
+fn inserted_opaque_png_has_no_smask() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("opaque.png");
+    image::RgbaImage::from_pixel(80, 40, image::Rgba([200, 30, 30, 255]))
+        .save(&path)
+        .unwrap();
+    let mut doc = one_page();
+    insert_file(
+        &mut doc,
+        &path,
+        Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 80.0,
+            h: 40.0,
+        },
+    );
+    let (lo, ids) = image_objects(&doc.to_bytes().unwrap());
+    assert_eq!(ids.len(), 1, "aucun masque");
+    let image = lo.get_object(ids[0]).unwrap().as_stream().unwrap();
+    assert!(!image.dict.has(b"SMask"));
+    assert_eq!(
+        name_entry(image, b"Filter").as_deref(),
+        Some(&b"FlateDecode"[..])
+    );
+    assert_eq!(image.decompressed_content().unwrap().len(), 80 * 40 * 3);
+}
+
+/// Pixels sombres du rendu `img` dans le rectangle `(x, y, w, h)` (points, espace affiché,
+/// rendu à l'échelle 1).
+fn dark_pixels(img: &mega_core::RenderedPage, x: f32, y: f32, w: f32, h: f32) -> usize {
+    let mut n = 0;
+    for py in (img.height_px as f32 - y - h) as u32..(img.height_px as f32 - y) as u32 {
+        for px in x as u32..(x + w) as u32 {
+            let i = ((py * img.width_px + px) * 4) as usize;
+            if img.rgba[i] < 128 {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// ADR-0010 : sur une page `/Rotate 90` (affichée 600 × 400), l'image tombe dans le rectangle
+/// **affiché** et reste droite à l'écran (moitié noire à gauche, moitié blanche à droite).
+#[test]
+fn inserted_image_on_a_rotated_page_lands_at_the_displayed_rectangle() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("moitie.png");
+    let mut img = image::RgbImage::from_pixel(300, 100, image::Rgb([255, 255, 255]));
+    for (x, _y, p) in img.enumerate_pixels_mut() {
+        if x < 150 {
+            *p = image::Rgb([0, 0, 0]);
+        }
+    }
+    img.save(&path).unwrap();
+    let mut doc = Document::from_bytes(rotated_pdf(), None).unwrap();
+    insert_file(
+        &mut doc,
+        &path,
+        Rect {
+            x: 50.0,
+            y: 50.0,
+            w: 240.0,
+            h: 80.0,
+        },
+    );
+    let render = doc.render_page(0, 1.0).unwrap();
+    assert_eq!((render.width_px, render.height_px), (600, 400));
+    let inner = 110 * 70;
+    let left = dark_pixels(&render, 55.0, 55.0, 110.0, 70.0);
+    assert!(
+        left * 100 >= inner * 95,
+        "moitié gauche noire : {left}/{inner}"
+    );
+    assert_eq!(
+        dark_pixels(&render, 175.0, 55.0, 110.0, 70.0),
+        0,
+        "moitié droite blanche"
+    );
+    assert_eq!(
+        dark_pixels(&render, 300.0, 150.0, 180.0, 80.0),
+        0,
+        "rien ailleurs"
+    );
+}
+
 // --- Lot 9 : police sous-ensemble (B22), redimensionnement (B31) -------------------------
 
 #[test]
@@ -601,4 +843,390 @@ fn two_unicode_insertions_embed_one_font_after_save() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(programs.len(), 1, "un seul programme de police");
     assert!(doc.page_text(0).unwrap().contains('Ж'));
+}
+
+/// Programmes `/FontFile2` d'un fichier enregistré (objets distincts) et leurs octets.
+fn font_files(saved: &lopdf::Document) -> Vec<(lopdf::ObjectId, usize)> {
+    let ids = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| d.get(b"FontFile2").ok())
+        .filter_map(|r| r.as_reference().ok())
+        .collect::<std::collections::BTreeSet<_>>();
+    ids.into_iter()
+        .map(|id| {
+            (
+                id,
+                saved
+                    .get_object(id)
+                    .unwrap()
+                    .as_stream()
+                    .unwrap()
+                    .content
+                    .len(),
+            )
+        })
+        .collect()
+}
+
+/// Lot 14 (audit E10) : PDFium incorpore la police Unicode **entière** (≈ 386 Ko) ;
+/// l'enregistrement n'en garde que les glyphes dessinés, sans changer le rendu ni le texte.
+#[test]
+fn inserted_unicode_text_embeds_a_subset_font() {
+    let simple = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/simple.pdf"
+    ))
+    .unwrap();
+    let mut doc = Document::from_bytes(simple, None).unwrap();
+    let style = text_style(FontFamily::Unicode, false, false, 24.0);
+    doc.insert_text(0, [100.0, 500.0], "Ω", &style).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("subset.pdf");
+    doc.save_as(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let saved = lopdf::Document::load_mem(&bytes).unwrap();
+    let files = font_files(&saved);
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(files[0].1 < 40 * 1024, "police de {} octets", files[0].1);
+    let tagged = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| d.get(b"BaseFont").ok()?.as_name().ok())
+        .filter(|name| name.ends_with(b"DejaVuSans"))
+        .collect::<Vec<_>>();
+    assert!(!tagged.is_empty());
+    for name in tagged {
+        assert!(
+            name.len() == 17 && name[..6].iter().all(u8::is_ascii_uppercase) && name[6] == b'+',
+            "{}",
+            String::from_utf8_lossy(name)
+        );
+    }
+    let reopened = Document::from_bytes(bytes, None).unwrap();
+    assert!(reopened.page_text(0).unwrap().contains('Ω'));
+    let diff = mega_core::compare::compare_pages(&doc, 0, &reopened, 0, 1.0).unwrap();
+    assert_eq!(
+        diff.differing_pixels, 0,
+        "rendu changé par le sous-ensemble"
+    );
+}
+
+/// Revue de la tâche 19 : `set_object_text` admet toujours l'espace dans une police
+/// incorporée ; le sous-ensemble doit donc garder le glyphe de l'espace, sinon « Ω Ω »
+/// rouvert dessinerait un carré `.notdef` entre les deux Ω.
+#[test]
+fn a_space_typed_into_a_reopened_subset_font_is_not_a_box() {
+    let simple = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/simple.pdf"
+    ))
+    .unwrap();
+    let mut doc = Document::from_bytes(simple, None).unwrap();
+    let style = text_style(FontFamily::Unicode, false, false, 48.0);
+    doc.insert_text(0, [100.0, 400.0], "Ω", &style).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("omega.pdf");
+    doc.save_as(&first).unwrap();
+    let mut doc = Document::from_bytes(std::fs::read(&first).unwrap(), None).unwrap();
+    let index = doc
+        .page_objects(0)
+        .unwrap()
+        .iter()
+        .position(|o| o.text.as_deref() == Some("Ω"))
+        .unwrap() as u16;
+    doc.set_object_text(0, index, "Ω Ω").unwrap();
+    let second = dir.path().join("omega-space.pdf");
+    doc.save_as(&second).unwrap();
+    let doc = Document::from_bytes(std::fs::read(&second).unwrap(), None).unwrap();
+    let bounds = doc.page_objects(0).unwrap()[usize::from(index)].bounds;
+    let img = doc.render_page(0, 1.0).unwrap();
+    // L'espace occupe le milieu de « Ω Ω » (avances 764, 318, 764 millièmes) : on en lit le
+    // cinquième central, sur toute la hauteur de l'objet.
+    let (x0, x1) = (bounds.x + bounds.w * 0.45, bounds.x + bounds.w * 0.55);
+    let top = img.height_px as f32 - (bounds.y + bounds.h);
+    let mut dark = 0;
+    for y in top as u32..(top + bounds.h) as u32 {
+        for x in x0 as u32..x1 as u32 {
+            let i = ((y * img.width_px + x) * 4) as usize;
+            if img.rgba[i] < 128 {
+                dark += 1;
+            }
+        }
+    }
+    assert!(
+        dark < 5,
+        "{dark} pixels sombres là où l'espace est dessinée"
+    );
+}
+
+/// Le fichier `simple.pdf` des fixtures.
+fn simple_pdf() -> Vec<u8> {
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/simple.pdf"
+    ))
+    .unwrap()
+}
+
+/// Revue de la partie D : « enregistrer, insérer de l'Unicode, enregistrer ». Le second
+/// enregistrement réduit la police neuve sans abîmer le sous-ensemble du premier : les deux
+/// textes restent lisibles et dessinés, et aucune police entière ne reste dans le fichier.
+///
+/// Deux programmes, et non un : le fichier rouvert ne porte plus qu'un sous-ensemble sans
+/// « Ж » ; PDFium charge donc une DejaVu neuve pour l'insertion, réduite à son tour.
+#[test]
+fn save_insert_unicode_save_keeps_small_fonts_and_both_texts() {
+    let mut doc = Document::from_bytes(simple_pdf(), None).unwrap();
+    let style = text_style(FontFamily::Unicode, false, false, 24.0);
+    doc.insert_text(0, [100.0, 500.0], "Ω", &style).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("premier.pdf");
+    doc.save_as(&first).unwrap();
+    let mut doc = Document::from_bytes(std::fs::read(&first).unwrap(), None).unwrap();
+    doc.insert_text(0, [100.0, 400.0], "Ж", &style).unwrap();
+    let second = dir.path().join("second.pdf");
+    doc.save_as(&second).unwrap();
+    let bytes = std::fs::read(&second).unwrap();
+    let files = font_files(&lopdf::Document::load_mem(&bytes).unwrap());
+    assert_eq!(files.len(), 2, "{files:?}");
+    let total: usize = files.iter().map(|(_, size)| size).sum();
+    assert!(total < 40 * 1024, "polices : {files:?}");
+    let reopened = Document::from_bytes(bytes, None).unwrap();
+    let text = reopened.page_text(0).unwrap();
+    assert!(text.contains('Ω') && text.contains('Ж'), "{text}");
+    let diff = mega_core::compare::compare_pages(&doc, 0, &reopened, 0, 1.0).unwrap();
+    assert_eq!(diff.differing_pixels, 0, "rendu changé");
+}
+
+/// Revue de la partie D : un texte Unicode inséré puis supprimé ne laisse pas de police
+/// entière. PDFium retire aujourd'hui la police des ressources (l'élagage l'emporte) ; si elle
+/// y restait citée sans être dessinée, la passe la réduirait à `.notdef` et l'espace (voir le
+/// test unitaire `a_font_cited_but_no_longer_drawn_is_reduced` de `cleanup::subset`).
+#[test]
+fn a_deleted_unicode_text_leaves_no_full_font() {
+    let mut doc = Document::from_bytes(simple_pdf(), None).unwrap();
+    let style = text_style(FontFamily::Unicode, false, false, 24.0);
+    doc.insert_text(0, [100.0, 500.0], "Ω", &style).unwrap();
+    let index = doc
+        .page_objects(0)
+        .unwrap()
+        .iter()
+        .position(|o| o.text.as_deref() == Some("Ω"))
+        .unwrap() as u16;
+    doc.apply(&EditCommand::DeleteObject { page: 0, index })
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("supprime.pdf");
+    doc.save_as(&path).unwrap();
+    let files = font_files(&lopdf::Document::load_mem(&std::fs::read(&path).unwrap()).unwrap());
+    for (id, size) in &files {
+        assert!(*size < 40 * 1024, "police {id:?} de {size} octets");
+    }
+}
+
+/// Revue de la partie D : une image insérée (JPEG gardé en DCT, PNG en pixels) se dessine
+/// pareil avant et après l'enregistrement (`compare_pages`).
+#[test]
+fn inserted_images_render_the_same_after_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let jpeg = dir.path().join("photo.jpg");
+    std::fs::write(&jpeg, photo_jpeg(false)).unwrap();
+    let png = dir.path().join("logo.png");
+    let mut rgba = image::RgbaImage::new(120, 80);
+    for (x, y, p) in rgba.enumerate_pixels_mut() {
+        *p = image::Rgba([
+            (x * 2) as u8,
+            (y * 3) as u8,
+            90,
+            if x < 60 { 255 } else { 0 },
+        ]);
+    }
+    rgba.save(&png).unwrap();
+    for path in [jpeg, png] {
+        let mut doc = one_page();
+        insert_file(
+            &mut doc,
+            &path,
+            Rect {
+                x: 100.0,
+                y: 100.0,
+                w: 200.0,
+                h: 150.0,
+            },
+        );
+        let saved = dir.path().join("image.pdf");
+        doc.save_as(&saved).unwrap();
+        let reopened = Document::from_bytes(std::fs::read(&saved).unwrap(), None).unwrap();
+        let diff = mega_core::compare::compare_pages(&doc, 0, &reopened, 0, 1.0).unwrap();
+        assert_eq!(diff.differing_pixels, 0, "{}", path.display());
+        // Et l'image est bien dessinée : la page n'est plus blanche à cet endroit.
+        let render = reopened.render_page(0, 1.0).unwrap();
+        assert!(
+            dark_pixels(&render, 110.0, 110.0, 50.0, 50.0) > 0,
+            "{}",
+            path.display()
+        );
+    }
+}
+
+/// Un PDF d'une page A4 rangée sous 300 niveaux de nœuds `/Pages` (chacun avec un second
+/// enfant vide) : PDFium la trouve (il descend jusqu'à 1 024 niveaux), lopdf s'arrête à 256
+/// et ne la compte pas.
+fn deep_page_tree_pdf() -> Vec<u8> {
+    const DEPTH: usize = 300;
+    // Objets : 1 catalogue, 2..=DEPTH+1 nœuds de l'arbre, puis la page, son contenu et un
+    // nœud vide par niveau.
+    let page = DEPTH + 2;
+    let contents = DEPTH + 3;
+    let empty = |level: usize| DEPTH + 4 + level;
+    let mut objects = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string()];
+    for level in 0..DEPTH {
+        let id = level + 2;
+        let parent = if level == 0 {
+            String::new()
+        } else {
+            format!(" /Parent {} 0 R", id - 1)
+        };
+        let child = if level + 1 == DEPTH { page } else { id + 1 };
+        objects.push(format!(
+            "<< /Type /Pages /Count 1{parent} /Kids [{child} 0 R {} 0 R] >>",
+            empty(level)
+        ));
+    }
+    objects.push(format!(
+        "<< /Type /Page /Parent {} 0 R /MediaBox [0 0 595 842] /Resources << >>          /Contents {contents} 0 R >>",
+        DEPTH + 1
+    ));
+    objects.push(
+        "<< /Length 0 >>
+stream
+
+endstream"
+            .to_string(),
+    );
+    for level in 0..DEPTH {
+        objects.push(format!(
+            "<< /Type /Pages /Count 0 /Parent {} 0 R /Kids [] >>",
+            level + 2
+        ));
+    }
+    let mut out = b"%PDF-1.7
+"
+    .to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(
+            format!(
+                "{} 0 obj
+{body}
+endobj
+",
+                i + 1
+            )
+            .as_bytes(),
+        );
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!(
+            "xref
+0 {}
+0000000000 65535 f 
+",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    for offset in offsets {
+        out.extend_from_slice(
+            format!(
+                "{offset:010} 00000 n 
+"
+            )
+            .as_bytes(),
+        );
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer
+<< /Size {} /Root 1 0 R >>
+startxref
+{xref}
+%%EOF
+",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+/// Revue de la partie D : une insertion d'image qui échoue dans la phase `lopdf` (ici, une
+/// page que PDFium lit mais que lopdf ne range pas parmi les pages) ne marque pas le document
+/// modifié : « Enregistrer sous » écrit encore les octets d'origine (chemin direct du CLI).
+#[test]
+fn a_failed_image_insertion_leaves_the_document_unchanged() {
+    let input = deep_page_tree_pdf();
+    assert!(
+        lopdf::Document::load_mem(&input)
+            .unwrap()
+            .get_pages()
+            .is_empty()
+    );
+    let mut doc = Document::from_bytes(input.clone(), None).unwrap();
+    assert_eq!(doc.page_count(), 1);
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("carre.png");
+    image::RgbImage::from_pixel(10, 10, image::Rgb([0, 0, 0]))
+        .save(&png)
+        .unwrap();
+    let failed = doc.insert_image(
+        0,
+        Rect {
+            x: 10.0,
+            y: 10.0,
+            w: 50.0,
+            h: 50.0,
+        },
+        &png.to_string_lossy(),
+    );
+    assert!(
+        matches!(failed, Err(CoreError::InvalidOperation(ref m)) if m.contains("introuvable")),
+        "{failed:?}"
+    );
+    let out = dir.path().join("intact.pdf");
+    doc.save_as(&out).unwrap();
+    assert!(std::fs::read(&out).unwrap() == input, "octets d'origine");
+}
+
+/// Revue de la partie D : un JPEG abîmé (ici, sa table de Huffman a perdu son marqueur) est
+/// refusé avant d'entrer dans le fichier, au lieu d'y être recopié tel quel.
+#[test]
+fn a_corrupted_jpeg_is_refused() {
+    let mut jpeg = photo_jpeg(false);
+    let dht = jpeg.windows(2).position(|w| w == [0xFF, 0xC4]).unwrap();
+    // DHT devient un segment APP5 : même longueur, mais plus aucune table de Huffman.
+    jpeg[dht + 1] = 0xE5;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("abime.jpg");
+    std::fs::write(&path, &jpeg).unwrap();
+    let mut doc = one_page();
+    let refused = doc.insert_image(
+        0,
+        Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 200.0,
+            h: 150.0,
+        },
+        &path.to_string_lossy(),
+    );
+    assert!(
+        matches!(refused, Err(CoreError::InvalidOperation(ref m)) if m == "image JPEG illisible"),
+        "{refused:?}"
+    );
 }

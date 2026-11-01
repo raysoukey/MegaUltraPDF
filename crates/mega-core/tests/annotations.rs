@@ -1159,3 +1159,68 @@ fn a_text_note_still_has_no_appearance_after_save() {
     assert_eq!(found[0].0, "Text");
     assert!(found[0].1.is_none(), "{found:?}");
 }
+
+/// Lot 14 (audit E10) : deux annotations Unicode séparées par un rechargement chargent deux
+/// fois la police entière dans PDFium ; l'enregistrement n'en garde **qu'un** sous-ensemble,
+/// partagé, qui dessine encore les deux textes.
+#[test]
+fn two_unicode_annotations_share_one_subset() {
+    let mut doc = Document::from_bytes(sample_pdf(1, "ansi"), None).unwrap();
+    let plain = doc.render_page(0, 1.0).unwrap();
+    let at = |y: f32| Geometry::Rect {
+        rect: rect(72.0, y, 200.0, 40.0),
+    };
+    doc.add_annotation(
+        0,
+        &new(AnnotationKind::Text, at(600.0), style((0, 0, 0)), "Ωμέγα"),
+    )
+    .unwrap();
+    let mut doc = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    doc.add_annotation(
+        0,
+        &new(AnnotationKind::Stamp, at(400.0), style((0, 0, 0)), "Жук"),
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("annots.pdf");
+    doc.save_as(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let saved = lopdf::Document::load_mem(&bytes).unwrap();
+    let files = saved
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| d.get(b"FontFile2").ok())
+        .filter_map(|r| r.as_reference().ok())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(files.len(), 1, "un seul programme de police : {files:?}");
+    let id = *files.iter().next().unwrap();
+    let size = saved
+        .get_object(id)
+        .unwrap()
+        .as_stream()
+        .unwrap()
+        .content
+        .len();
+    assert!(size < 40 * 1024, "police de {size} octets");
+    // Les deux textes sont encore dessinés : des pixels sombres dans chaque rectangle.
+    let reopened = Document::from_bytes(bytes, None).unwrap();
+    let drawn = reopened.render_page(0, 1.0).unwrap();
+    let dark = |img: &mega_core::RenderedPage, top: u32| {
+        let mut n = 0;
+        for y in (842 - top)..(842 - top + 40) {
+            for x in 72..272 {
+                if pixel(img, x, y).0 < 100 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    for top in [640, 440] {
+        assert!(
+            dark(&drawn, top) > dark(&plain, top) + 50,
+            "texte du rectangle sous y = {top} non dessiné"
+        );
+    }
+}

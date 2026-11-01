@@ -3,7 +3,7 @@
 //! l'extraction et la scission reportent ce que `pages/carry.rs` promet, et rien d'autre.
 //!
 //! Le fichier de départ est `testing::rich_catalog_pdf` : trois pages et un catalogue qui
-//! porte les 17 structures mesurées par le banc de l'audit (`CATALOG_PATHS`). Sans ce test,
+//! porte les 17 structures mesurées par l'audit (`CATALOG_PATHS`). Sans ce test,
 //! une édition qui réécrit le document (PDFium recopie, `lopdf` élague) pouvait perdre un
 //! formulaire, des signets ou des pièces jointes sans qu'aucun contrôle ne le voie : qpdf juge
 //! la syntaxe, pas ce qui manque.
@@ -20,8 +20,8 @@ use crate::{
     rect,
 };
 
-/// Les 17 structures du catalogue, chacune comme un chemin de clés depuis `/Root` (liste du
-/// banc d'audit, `measure_catalog`).
+/// Les 17 structures du catalogue, chacune comme un chemin de clés depuis `/Root` (la liste
+/// que mesurait l'expérience E1 du banc de l'audit, retiré au Lot 14).
 const CATALOG_PATHS: [&[&str]; 17] = [
     &["StructTreeRoot"],
     &["MarkInfo"],

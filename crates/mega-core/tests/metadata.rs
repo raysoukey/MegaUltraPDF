@@ -369,8 +369,7 @@ fn pdfa_2_documents_still_receive_a_mod_date() {
 /// PDF sans `/Info` dont le XMP porte les cinq propriétés repliées (audit L12).
 fn xmp_only_full() -> Document {
     let xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\"><dc:title><rdf:Alt><rdf:li xml:lang=\"fr\">Autre</rdf:li><rdf:li xml:lang=\"x-default\">Ancien</rdf:li></rdf:Alt></dc:title><dc:creator><rdf:Seq><rdf:li>Alice</rdf:li><rdf:li>Bob</rdf:li></rdf:Seq></dc:creator><dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">Sujet XMP</rdf:li></rdf:Alt></dc:description><pdf:Keywords>un, deux</pdf:Keywords><xmp:CreateDate>2020-01-02T03:04:05Z</xmp:CreateDate></rdf:Description></rdf:RDF></x:xmpmeta>";
-    let mut lo =
-        lopdf::Document::load_mem(&mega_core::testing::metadata_variant_pdf("xmp-only")).unwrap();
+    let mut lo = lopdf::Document::load_mem(&mega_core::testing::xmp_only_pdf()).unwrap();
     let id = lo
         .catalog()
         .unwrap()
@@ -387,8 +386,7 @@ fn xmp_only_full() -> Document {
 
 #[test]
 fn title_falls_back_to_xmp_dc_title_when_info_is_absent() {
-    let d =
-        Document::from_bytes(mega_core::testing::metadata_variant_pdf("xmp-only"), None).unwrap();
+    let d = Document::from_bytes(mega_core::testing::xmp_only_pdf(), None).unwrap();
     let p = d.properties().unwrap();
     assert_eq!(p.title.as_deref(), Some("Ancien"));
     assert_eq!(p.author.as_deref(), Some("Alice"));
@@ -439,8 +437,7 @@ fn doc_with_xmp(description: &str) -> Document {
          xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
          <rdf:Description rdf:about=\"\">{description}</rdf:Description></rdf:RDF></x:xmpmeta>"
     );
-    let mut lo =
-        lopdf::Document::load_mem(&mega_core::testing::metadata_variant_pdf("xmp-only")).unwrap();
+    let mut lo = lopdf::Document::load_mem(&mega_core::testing::xmp_only_pdf()).unwrap();
     let id = lo
         .catalog()
         .unwrap()

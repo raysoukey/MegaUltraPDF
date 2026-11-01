@@ -55,6 +55,9 @@ dans `scripts/audit/*.sh` (variables `MEGA_QPDF`, `MEGA_MUTOOL`, `MEGA_POPPLER_B
    structures, repli du nettoyage, formulaires, chiffrement, images, polices, annotations tierces,
    arbre de pages profond, destinations nommées, métadonnées, signatures, les écarts du corpus, et cinq
    remesures demandées par la relecture normative de l'agent `pdf-expert`, §4 bis).
+   **Retiré au Lot 14** (tâche 23) : chaque expérience est devenue un test qui affirme
+   (correspondance au §9) ;
+   il se relit et se relance dans un arbre de travail à la révision `e2d8338`.
 
 **Non vérifié** : Acrobat, Aperçu et Edge en tant que lecteurs graphiques (choix du
 propriétaire : outils en ligne de commande seulement) ; export Word par COM (refusé par le
@@ -232,6 +235,8 @@ bash scripts/audit/fetch-corpus.sh                                 # fixtures/co
 cargo build -p mega-cli
 bash scripts/audit/read-bench.sh                                   # target/audit/lecture.csv
 bash scripts/audit/write-bench.sh                                  # target/audit/ecriture.csv
+# banc synthétique retiré au Lot 14 : le relancer depuis un arbre de travail à sa révision
+git worktree add ../banc-audit e2d8338 && cd ../banc-audit
 cargo test -p mega-core --test audit_compat -- --ignored --nocapture --test-threads=1 \
   > target/audit/audit_compat.txt                                  # verdicts [E…] et [L…]
 tools/verapdf/verapdf.bat --flavour 0 --format text fixtures/corpus/pdfa/*.pdf      # avant
@@ -243,3 +248,33 @@ MEGA_REQUIRE_QPDF=1 cargo test -p mega-core --test conformance    # vérifie que
 Sorties intermédiaires : `target/audit/lecture/<famille>-<fichier>/{mega,poppler,mupdf,pdfjs}.{txt,png}`,
 `target/audit/ecriture/<famille>-<fichier>/{rotation,filigrane,metadonnees,optimisation}.pdf`,
 `target/audit-compat/*.pdf` (sorties du banc synthétique, à inspecter avec `qpdf --json` ou `mutool show`).
+
+## 9. Ce que sont devenues les expériences du banc (Lot 14, tâche 23)
+
+Le banc `audit_compat.rs` imprimait des verdicts sans jamais échouer ; il est retiré. Chaque
+expérience est reprise par des tests qui **affirment** (fichiers sous `crates/mega-core/tests/`,
+« unitaire » = module de `src/`). « Partiel » : la mesure n'avait révélé aucun défaut et seule une
+partie en est gardée par un test.
+
+| Expérience | Test(s) |
+|---|---|
+| E1 catalogue riche | `edit.rs::untouched_save_writes_the_loaded_bytes` ; `cleanup.rs::before_save_keeps_a_2_0_header` ; `pages.rs::rotate_merge_extract_and_protect_keep_the_2_0_header`, `catalog_version_entry_survives_a_rewrite` ; `conformance/catalogue.rs::every_edit_command_keeps_the_rich_catalog`, `merge_extract_and_split_carry_the_promised_catalog` |
+| E2 repli du nettoyage | `cleanup.rs::deleted_note_does_not_survive_in_an_identity_encrypted_file`, `can_clean_accepts_identity_pass_through_and_plain_files_but_not_unknown_filters`, `every_removing_operation_is_refused_on_an_uncleanable_file` ; témoin : `redact.rs::deleting_a_note_also_drops_it_from_the_saved_file` |
+| E3 `/NeedAppearances` | `forms.rs::need_appearances_is_dropped_when_every_widget_has_an_appearance` (les quatre variantes) |
+| E4 `/ID` | partiel : `encrypted.rs::identity_filtered_file_keeps_its_encrypt_dictionary_and_attachment_bytes_after_watermark`, `digital_signature.rs::signed_revision_renews_the_second_id` |
+| E5 recompression des flux `lopdf` | aucun (constat E13, informatif) |
+| E6 police DejaVu entière | `content.rs::inserted_unicode_text_embeds_a_subset_font` ; `annotations.rs::two_unicode_annotations_share_one_subset` |
+| E7 AES-256 sur `%PDF-1.4` | `security.rs::protect_declares_the_adobe_extension_level_and_a_1_7_header` |
+| E8 `insert_image` | `content.rs::inserted_jpeg_keeps_dct_encoding_and_has_no_smask`, `inserted_png_with_alpha_gets_a_real_smask`, `inserted_opaque_png_has_no_smask`, `inserted_image_on_a_rotated_page_lands_at_the_displayed_rectangle` |
+| E9 qpdf hors `conformance` | `conformance/edits.rs` (formulaires, genres d'annotation, texte Unicode et images, fichiers chiffrés, optimisation, `every_edit_command_variant_is_checked_by_qpdf`), `conformance/signature.rs::a_visible_signature_produces_a_conforming_file`, `conformance/pages.rs::merge_split_and_extract_produce_conforming_files` |
+| E10 annotations créées | `annotations.rs::highlight_added_then_saved_has_an_appearance_stream` ; `conformance/edits.rs::every_annotation_kind_produces_a_conforming_file` |
+| L11 arbre profond, héritage | partiel : `overlay.rs::inherited_media_box_is_read` ; `conformance/pages.rs::moving_pages_across_page_tree_nodes_produces_conforming_files` ; unitaire `pages/reorder.rs::reorder_kids_copies_inherited_attributes_before_reparenting` |
+| L12 `/UserUnit` | `metadata.rs::user_unit_is_reported`, `user_unit_accepts_reals_and_is_bounded` |
+| L13 destinations nommées | `pages.rs::merging_two_rich_catalogs_keeps_bookmarks_attachments_fields_and_links`, `moving_a_page_keeps_its_links_tagging_and_the_bookmarks_to_it` |
+| L14 encodages de police | partiel : `document.rs::glyphs_without_unicode_keep_their_place`, `astral_characters_are_extracted_searchable_and_copied`, `opentype_cff_cid_text_is_extracted` |
+| L15 annotations tierces | `annotations.rs::reads_third_party_annotations`, `third_party_free_text_is_shown_but_not_editable`, `popups_are_not_listed` ; `attachments.rs::file_attachment_annotations_are_listed_with_their_page_and_extracted` |
+| L16 `/StmF /Identity` | `encrypted.rs::identity_filtered_file_keeps_its_encrypt_dictionary_and_attachment_bytes_after_watermark`, `identity_pass_keeps_the_encrypt_dictionary_unchanged` |
+| L17 métadonnées | `metadata.rs::title_falls_back_to_xmp_dc_title_when_info_is_absent` ; unitaire `properties::pdfdoc_encoding_bullet_euro_and_ligatures` |
+| L18 signatures | `digital_signature.rs::rfc3161_subfilter_is_reported_as_a_document_timestamp`, `second_signature_keeps_the_first_valid`, `third_party_pades_signature_verifies` |
+| L19 corpus réel | partiel, sous `MEGA_CORPUS` : `document.rs::astral_characters_in_the_corpus`, `opentype_cff_cid_corpus_file_has_text`, `arabic_corpus_file_has_word_spaces` |
+| E20 remesures | a : `pages.rs::moving_a_page_keeps_its_links_tagging_and_the_bookmarks_to_it` ; b : `cleanup.rs::deleting_one_of_two_marked_objects_prunes_its_mcid_from_the_structure_tree` ; c : `cleanup.rs::bookmarks_to_a_deleted_page_lose_their_destination_but_remain` ; d : `pages.rs::a_merged_parent_kid_form_keeps_its_field` ; e : unitaire `properties::utf8_bom_text_is_decoded` |

@@ -425,35 +425,15 @@ xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:pdf=\"http://ns.adobe.com/pdf/1
     assemble_pdf(&objects, "<< /Title (Ancien) /Author (Alice) >>")
 }
 
-/// Variantes de métadonnées pour les tests d'encodage et de repli XMP. `kind` : `xmp-only`
-/// (XMP sans `/Info`), `pdfdoc-e9`, `pdfdoc-80-a0`, `utf8-raw` (titre `/Info` aux octets
-/// bruts correspondants).
+/// Le PDF de [`xmp_pdf`] **sans** dictionnaire `/Info` : seul le XMP (`dc:title` « Ancien »,
+/// `dc:creator` « Alice »…) porte les métadonnées, comme chez un producteur PDF 2.0 qui
+/// n'écrit plus `/Info` (ISO 32000-2 §14.3.3).
 ///
-/// Elles existent pour que le banc de l'audit et les vrais tests partagent les mêmes octets.
-pub fn metadata_variant_pdf(kind: &str) -> Vec<u8> {
-    let mut doc;
-    if kind == "xmp-only" {
-        doc = lopdf::Document::load_mem(&xmp_pdf()).expect("squelette XMP");
-        doc.trailer.remove(b"Info");
-    } else {
-        let title: Vec<u8> = match kind {
-            "pdfdoc-e9" => vec![b'C', b'a', b'f', 0xE9],
-            "pdfdoc-80-a0" => vec![0x80, b' ', 0xA0],
-            _ => "Café".as_bytes().to_vec(),
-        };
-        doc = lopdf::Document::load_mem(&sample_pdf(1, "x")).expect("squelette");
-        let info_id = doc
-            .trailer
-            .get(b"Info")
-            .and_then(lopdf::Object::as_reference)
-            .expect("/Info du squelette");
-        doc.get_dictionary_mut(info_id)
-            .expect("dictionnaire /Info")
-            .set(
-                "Title",
-                lopdf::Object::String(title, lopdf::StringFormat::Literal),
-            );
-    }
+/// Pourquoi : vérifier que les propriétés se replient sur le XMP quand `/Info` manque
+/// (audit L12).
+pub fn xmp_only_pdf() -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&xmp_pdf()).expect("squelette XMP");
+    doc.trailer.remove(b"Info");
     let mut out = Vec::new();
     doc.save_to(&mut out).expect("sérialisation lopdf");
     out
@@ -2475,8 +2455,8 @@ fn cid_keyed_otf(cid: u16) -> Vec<u8> {
 /// son `Popup`.
 ///
 /// Pourquoi : un fichier venu d'un autre logiciel ne ressemble jamais à ce que nous écrivons ;
-/// ce PDF sert au banc de compatibilité et aux tests qui vérifient que ces annotations sont
-/// lues sans être abîmées (audit L11, L15).
+/// ce PDF sert aux tests qui vérifient que ces annotations sont lues sans être abîmées
+/// (audit L11, expérience L15 du banc de mesure).
 pub fn third_party_annots_pdf() -> Vec<u8> {
     let stream = |dict: &str, content: &str| {
         format!(

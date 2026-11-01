@@ -23,7 +23,8 @@
 //!   l'extraction et à la scission ;
 //! - `pages` : fusion, scission, extraction, déplacements dans l'arbre des pages ;
 //! - `signature` : signatures numériques, visibles ou non, sur des structures inhabituelles ;
-//! - `corpus` : fichiers abîmés, corpus de PDF réels, veraPDF.
+//! - `corpus` : fichiers abîmés, corpus de PDF réels, veraPDF ;
+//! - `xmp` : XMP compressé (F21-5) après signature et dans un fichier à flux d'objets.
 //!
 //! \[Apprentissage\] **Un test d'intégration en plusieurs fichiers.** Cargo compile chaque
 //! fichier `tests/*.rs` en un binaire séparé, et aussi chaque dossier `tests/<nom>/main.rs` :
@@ -39,6 +40,7 @@ mod edits;
 mod encrypted;
 mod pages;
 mod signature;
+mod xmp;
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

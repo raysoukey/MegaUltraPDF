@@ -115,12 +115,10 @@ impl Document {
             return Err(CoreError::FileTooLarge { bytes: size });
         }
         let file_bytes = bytes.clone();
-        // Constat F21-5 : PDFium reçoit une copie dont les XMP compressés sont décodés (il en
-        // retirerait le `/Filter` en gardant les octets compressés) ; `file_bytes` reste
-        // l'original. Le cas courant est écarté en lisant les octets, sans analyse.
-        let bytes = crate::crypt::unfiltered_metadata_copy(&bytes).unwrap_or(bytes);
         let guard = engine::guard();
-        let inner = match engine::load_bytes(&guard, bytes, password) {
+        // `file_bytes` reste l'original ; PDFium reçoit peut-être une copie aux XMP décodés
+        // (constat F21-5, voir `load_file_bytes`).
+        let inner = match load_file_bytes(&guard, bytes, password) {
             // Chiffrement par certificat : aucun mot de passe ne l'ouvrira (C9, Lot 13).
             Err(_) if uses_certificate_encryption(&file_bytes) => {
                 return Err(CoreError::UnsupportedEncryption(
@@ -414,9 +412,79 @@ fn uses_certificate_encryption(bytes: &[u8]) -> bool {
     contains(b"/Adobe.PubSec") && !contains(b"/Standard")
 }
 
+/// Charge dans PDFium les octets d'un **fichier** (ouverture, rechargement après signature,
+/// annuler / rétablir) : seul chemin par lequel des octets venus d'ailleurs que de PDFium lui
+/// sont confiés.
+///
+/// Constat F21-5 : PDFium retire le `/Filter` d'un XMP compressé en gardant ses octets
+/// compressés. Il reçoit donc, quand c'est sûr, une copie aux XMP décodés
+/// ([`crate::crypt::unfiltered_metadata_copy`], un balayage d'octets dans le cas courant) ;
+/// s'il la refuse, il reçoit l'original ([`load_preferring`]).
+pub(crate) fn load_file_bytes(
+    guard: &engine::PdfiumGuard,
+    bytes: Vec<u8>,
+    password: Option<&str>,
+) -> CoreResult<PdfDocument<'static>> {
+    let copy = crate::crypt::unfiltered_metadata_copy(&bytes);
+    load_preferring(copy, bytes, |bytes| {
+        engine::load_bytes(guard, bytes, password)
+    })
+}
+
+/// Essaie `load` sur `copy` s'il y en a une ; si elle est refusée (ou absente), sur
+/// `original`. Le refus de la copie est noté au journal de diagnostic : ce serait un défaut de
+/// notre réécriture, que l'utilisateur ne doit pas payer d'un fichier qui ne s'ouvre plus.
+///
+/// \[Apprentissage\] **Une fonction générique** (`<T, E>`) et une fermeture `impl FnMut` : la
+/// même logique de repli sert au vrai chargement PDFium et au test, qui passe une fermeture
+/// simulant un refus, sans PDF ni PDFium.
+fn load_preferring<T, E: std::fmt::Display>(
+    copy: Option<Vec<u8>>,
+    original: Vec<u8>,
+    mut load: impl FnMut(Vec<u8>) -> Result<T, E>,
+) -> Result<T, E> {
+    if let Some(copy) = copy {
+        match load(copy) {
+            Ok(loaded) => return Ok(loaded),
+            Err(e) => crate::diagnostic::warn(&format!(
+                "copie aux XMP décodés refusée par PDFium ({e}) : fichier d'origine chargé"
+            )),
+        }
+    }
+    load(original)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Relecture de la tâche 21b : si PDFium refuse la copie aux XMP décodés, l'original est
+    /// chargé ; sans copie, seul l'original est essayé.
+    #[test]
+    fn a_refused_copy_falls_back_to_the_original_bytes() {
+        let mut tried = Vec::new();
+        let loaded = load_preferring(Some(b"copie".to_vec()), b"original".to_vec(), |bytes| {
+            tried.push(bytes.clone());
+            if bytes == b"copie" {
+                Err("refusée")
+            } else {
+                Ok(bytes)
+            }
+        });
+        assert_eq!(loaded.unwrap(), b"original");
+        assert_eq!(tried, [b"copie".to_vec(), b"original".to_vec()]);
+        let mut tried = 0;
+        let loaded = load_preferring(None, b"original".to_vec(), |bytes| {
+            tried += 1;
+            Ok::<_, &str>(bytes)
+        });
+        assert_eq!(loaded.unwrap(), b"original");
+        assert_eq!(tried, 1);
+        let loaded = load_preferring(Some(b"copie".to_vec()), b"original".to_vec(), |bytes| {
+            Ok::<_, &str>(bytes)
+        });
+        assert_eq!(loaded.unwrap(), b"copie");
+    }
 
     /// La lecture `lopdf` se fait une seule fois : deux lectures de la page réutilisent le
     /// même document gardé, et une modification l'oublie.

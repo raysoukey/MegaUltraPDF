@@ -869,10 +869,11 @@ impl Document {
             .into_checked(self.needs_cleanup, "enregistrement refusé")
     }
 
-    /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.
+    /// Recharge le document depuis des octets (annuler / rétablir, après une signature ou une
+    /// passe `lopdf`) en gardant son chemin, par `document::load_file_bytes` (constat F21-5).
     pub(crate) fn reload_from_bytes(&mut self, bytes: Vec<u8>) -> CoreResult<()> {
         let guard = engine::guard();
-        let inner = engine::load_bytes(&guard, bytes, self.password())?;
+        let inner = crate::document::load_file_bytes(&guard, bytes, self.password())?;
         self.replace_inner(inner);
         Ok(())
     }

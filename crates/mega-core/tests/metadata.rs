@@ -826,3 +826,41 @@ fn an_unchanged_document_with_a_compressed_xmp_keeps_its_original_bytes() {
     doc.save_as(&path).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), source);
 }
+
+/// Relecture de la tâche 21b : à travers la copie aux XMP décodés, PDFium voit le même
+/// document que dans le fichier d'origine (pages, signets, pièces jointes), et c'est bien la
+/// copie qu'il a reçue (le XMP compressé survit à une édition).
+#[test]
+fn pdfium_sees_the_same_document_through_the_decoded_copy() {
+    let original = mega_core::testing::rich_catalog_pdf("1.7", None);
+    let mut compressed = lopdf::Document::load_mem(&original).unwrap();
+    compressed.compress();
+    let mut bytes = Vec::new();
+    compressed.save_to(&mut bytes).unwrap();
+    let plain = Document::from_bytes(original, None).unwrap();
+    let mut copy = Document::from_bytes(bytes, None).unwrap();
+    assert_eq!(copy.page_count(), plain.page_count());
+    let titles = |doc: &Document| -> Vec<String> {
+        doc.outline()
+            .unwrap()
+            .into_iter()
+            .map(|node| node.title)
+            .collect()
+    };
+    assert_eq!(titles(&copy), titles(&plain));
+    assert!(!titles(&copy).is_empty());
+    let names = |doc: &Document| -> Vec<String> {
+        doc.attachments()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect()
+    };
+    assert_eq!(names(&copy), names(&plain));
+    assert_eq!(names(&copy), ["notes.txt"]);
+    copy.rotate_pages(&[0], 1).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("riche.pdf");
+    copy.save_as(&path).unwrap();
+    assert!(xmp_of(&std::fs::read(&path).unwrap()).contains(">Riche</rdf:li>"));
+}

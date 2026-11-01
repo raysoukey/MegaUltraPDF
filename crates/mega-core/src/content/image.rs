@@ -151,10 +151,12 @@ struct JpegHeader {
     /// Nombre de composantes : 1 gris, 3 couleur, 4 CMJN.
     components: u8,
     /// Vrai pour trois composantes nommées `R`, `G`, `B` (identifiants du SOF) **sans**
-    /// marqueur Adobe (APP14) : la convention de libjpeg pour un JPEG codé en RVB. Sans le
-    /// dire (`/ColorTransform 0`), un lecteur PDF appliquerait la conversion YCbCr → RVB par
-    /// défaut à trois composantes (ISO 32000-1, tableau 13) et fausserait les couleurs. Avec
-    /// un marqueur Adobe, c'est lui qui décide, pour le lecteur comme pour nous.
+    /// marqueur JFIF (APP0) ni Adobe (APP14) : la convention de libjpeg pour un JPEG codé en
+    /// RVB. Sans le dire (`/ColorTransform 0`), un lecteur PDF appliquerait la conversion
+    /// YCbCr → RVB par défaut à trois composantes (ISO 32000-1, tableau 13) et fausserait les
+    /// couleurs. Un marqueur JFIF impose YCbCr quels que soient les identifiants, et un marqueur
+    /// Adobe décide à la place : dans les deux cas le décodeur n'écoute pas les identifiants,
+    /// nous non plus.
     rgb_coded: bool,
 }
 
@@ -178,8 +180,9 @@ fn jpeg_header(bytes: &[u8]) -> Option<JpegHeader> {
     if !bytes.starts_with(&[0xFF, 0xD8]) {
         return None;
     }
-    // Un marqueur Adobe (APP14) vu avant le SOF.
-    let mut adobe = false;
+    // Un marqueur JFIF (APP0) ou Adobe (APP14) vu avant le SOF : les identifiants de
+    // composantes ne comptent plus.
+    let mut ids_overridden = false;
     let mut i = 2;
     // Chaque tour avance d'au moins un octet : la boucle se termine toujours.
     while i < bytes.len() {
@@ -207,16 +210,21 @@ fn jpeg_header(bytes: &[u8]) -> Option<JpegHeader> {
                         let components = *bytes.get(i + 9)?;
                         let ids = [bytes.get(i + 10), bytes.get(i + 13), bytes.get(i + 16)];
                         let rgb_coded = components == 3
-                            && !adobe
+                            && !ids_overridden
                             && ids == [Some(&b'R'), Some(&b'G'), Some(&b'B')];
                         return (precision == 8).then_some(JpegHeader {
                             components,
                             rgb_coded,
                         });
                     }
+                    // APP0 : `JFIF` suivi d'un octet nul en tête de ses données.
+                    0xE0 => {
+                        ids_overridden |= bytes.get(i + 4..i + 9) == Some(b"JFIF\0".as_slice());
+                        i += 2 + length;
+                    }
                     // APP14 : `Adobe` en tête de ses données.
                     0xEE => {
-                        adobe |= bytes.get(i + 4..i + 9) == Some(b"Adobe".as_slice());
+                        ids_overridden |= bytes.get(i + 4..i + 9) == Some(b"Adobe".as_slice());
                         i += 2 + length;
                     }
                     // Autres SOF (sans perte, hiérarchique, arithmétique), début des données
@@ -453,7 +461,8 @@ mod tests {
     }
 
     /// Revue de la partie D : identifiants `R`, `G`, `B` sans marqueur Adobe → codé en RVB ;
-    /// un marqueur Adobe (APP14) décide à la place.
+    /// un marqueur Adobe (APP14) décide à la place, et un marqueur JFIF (APP0) impose YCbCr
+    /// (règle de libjpeg) ; un autre segment APP ne change rien.
     #[test]
     fn rgb_component_ids_mean_rgb_coding() {
         let header = |bytes: &[u8]| jpeg_header(bytes).unwrap();
@@ -463,10 +472,13 @@ mod tests {
         app14.extend_from_slice(b"Adobe");
         app14.extend_from_slice(&[0, 100, 0, 0, 0, 0, 0]);
         assert!(!header(&sof(&app14, b"RGB")).rgb_coded);
-        // Un autre segment APP (JFIF) ne change rien.
+        // Un marqueur JFIF impose YCbCr : les identifiants ne comptent plus.
         let mut app0 = vec![0xFF, 0xE0, 0x00, 0x07];
         app0.extend_from_slice(b"JFIF\0");
-        assert!(header(&sof(&app0, b"RGB")).rgb_coded);
+        assert!(!header(&sof(&app0, b"RGB")).rgb_coded);
+        // Un autre segment APP (ici un APP1 quelconque) ne change rien.
+        let app1 = vec![0xFF, 0xE1, 0x00, 0x04, 0x41, 0x42];
+        assert!(header(&sof(&app1, b"RGB")).rgb_coded);
     }
 
     /// Revue de la partie D : un JPEG CMJN (quatre composantes) n'est pas gardé tel quel, il

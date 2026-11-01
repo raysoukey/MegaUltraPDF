@@ -864,6 +864,9 @@ fn plan_subset(c: &Candidates, file: ObjectId, drawn: &BTreeSet<u16>) -> Option<
 /// qui le décrit est en place. Qui voudrait un jour ajouter ici une étape faillible doit
 /// d'abord tout préparer dans [`Plan`] (c'est son rôle), pas interrompre cette écriture.
 fn apply_plan(doc: &mut Document, c: &Candidates, file: ObjectId, plan: Plan) {
+    // Les `if let Ok` ci-dessous ne sautent jamais rien : chaque objet a été trouvé dans ce
+    // même document par `collect_usage`, et rien n'a été retiré depuis. Ils évitent seulement
+    // un `expect`.
     for (cid_font, map) in plan.maps {
         let map_id = doc.add_object(compressed(Dictionary::new(), map));
         if let Ok(dict) = doc.get_dictionary_mut(cid_font) {

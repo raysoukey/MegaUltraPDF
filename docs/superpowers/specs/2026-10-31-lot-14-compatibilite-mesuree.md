@@ -12,7 +12,7 @@ enregistré** (rien de supprimé qui survive, rien de perdu qu'il n'ait pas dema
 déclarations de conformité respectées), et que le texte lu soit celui que les autres lecteurs
 lisent. Release **v0.14.0** à la fin.
 
-Le banc de mesure `crates/mega-core/tests/audit_compat.rs` (21 expériences `#[ignore]`) reste le
+Le banc de mesure `crates/mega-core/tests/audit_compat.rs` (20 expériences `#[ignore]`) reste le
 juge : chaque correction convertit l'expérience correspondante en **vrai test** (assertion), dans le
 fichier de test du module concerné ; le banc est supprimé à la fin du lot, une fois tous ses
 points couverts.

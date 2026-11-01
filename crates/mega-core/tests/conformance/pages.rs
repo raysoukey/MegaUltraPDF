@@ -136,3 +136,34 @@ fn moving_pages_across_page_tree_nodes_produces_conforming_files() {
         }
     }
 }
+
+/// Expérience L11 du banc de l'audit : une page qui **hérite** `/Rotate 90` et sa `/MediaBox`
+/// d'un nœud `/Pages` (§7.7.3.4) est lue tournée (600 × 400 affichés) ; la pivoter d'un quart
+/// de tour l'amène à 180° (rotation héritée + ajoutée, pas ajoutée seule), et le fichier
+/// enregistré passe `qpdf --check`.
+#[test]
+fn rotating_a_page_with_an_inherited_rotation_adds_to_it() {
+    use mega_core::Rotation;
+    let size = |doc: &Document| {
+        let s = doc.page_size(0).unwrap();
+        (s.width_pt, s.height_pt)
+    };
+    let mut doc = Document::from_bytes(mega_core::testing::two_level_pages_pdf(), None).unwrap();
+    assert_eq!(doc.page_rotation(0).unwrap(), Rotation::Cw90);
+    assert_eq!(size(&doc), (600.0, 400.0));
+    let json = serde_json::json!({"kind": "rotate_pages", "pages": [0], "quarter_turns": 1});
+    let command: EditCommand = serde_json::from_value(json).unwrap();
+    doc.apply(&command).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("tournee.pdf");
+    doc.save_as(&out).unwrap();
+    let reopened = Document::open(&out, None).unwrap();
+    assert_eq!(reopened.page_rotation(0).unwrap(), Rotation::Cw180);
+    assert_eq!(size(&reopened), (400.0, 600.0));
+    assert!(reopened.page_text(0).unwrap().contains("Page 1"));
+    // La page 2, qui hérite du même nœud, n'a pas bougé.
+    assert_eq!(reopened.page_rotation(1).unwrap(), Rotation::Cw90);
+    if let Some(qpdf) = qpdf() {
+        assert_conforms(&qpdf, &out, None, "rotation ajoutée à une rotation héritée");
+    }
+}

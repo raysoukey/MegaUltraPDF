@@ -615,3 +615,26 @@ fn the_fallback_sees_a_direct_edit() {
         "{a:?} puis {b:?}"
     );
 }
+
+/// Expérience L14 du banc de l'audit : une police Helvetica dont `/Differences` renomme le
+/// code 0x41 (« A ») en `/eacute` ; PDFium suit le nom de glyphe, le texte extrait est « é ».
+#[test]
+fn a_differences_encoding_is_followed_for_a_standard_font() {
+    let doc = Document::from_bytes(mega_core::testing::differences_helvetica_pdf(), None).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().trim(), "é");
+}
+
+/// Expérience L14, **limite assumée** (audit L4, ADR-0018) : une police TrueType incorporée,
+/// déclarée symbolique, avec `/Differences [65 /B]` et sans `/ToUnicode`. ISO 32000-1 §9.10.2
+/// (code → nom de glyphe → Unicode) donnerait « B » ; PDFium rend le code brut « A », comme il
+/// lit le glyphe d'une police symbolique par son code. Le test fige ce comportement : s'il
+/// change, la limite documentée est à revoir.
+#[test]
+fn a_symbolic_truetype_font_is_read_by_its_code() {
+    let doc = Document::from_bytes(
+        mega_core::testing::symbolic_truetype_differences_pdf(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(doc.page_text(0).unwrap().trim(), "A");
+}

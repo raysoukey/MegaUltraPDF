@@ -2262,6 +2262,118 @@ pub fn opentype_cff_cid_pdf_with(cid: u16, rotate: i64) -> Vec<u8> {
     out
 }
 
+/// Une page qui écrit le code 0x41 (« A ») avec une police Helvetica dont l'encodage
+/// `/Differences [65 /eacute]` renomme ce code : le glyphe dessiné est « é ».
+///
+/// Pourquoi : vérifier que l'extraction suit le nom de glyphe d'un `/Differences` (expérience
+/// L14 du banc de l'audit, retiré au Lot 14).
+pub fn differences_helvetica_pdf() -> Vec<u8> {
+    use lopdf::{Dictionary, Object};
+    simple_font_pdf(|_| {
+        Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Font".to_vec())),
+            ("Subtype", Object::Name(b"Type1".to_vec())),
+            ("BaseFont", Object::Name(b"Helvetica".to_vec())),
+            (
+                "Encoding",
+                Object::Dictionary(Dictionary::from_iter(vec![
+                    ("Type", Object::Name(b"Encoding".to_vec())),
+                    ("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec())),
+                    (
+                        "Differences",
+                        Object::Array(vec![65.into(), Object::Name(b"eacute".to_vec())]),
+                    ),
+                ])),
+            ),
+        ])
+    })
+}
+
+/// Une page qui écrit le code 0x41 (« A ») avec une police **TrueType incorporée** (DejaVu
+/// Sans, entière) déclarée **symbolique** (`/Flags 4`), un encodage `/Differences [65 /B]` et
+/// **sans** `/ToUnicode`.
+///
+/// Pourquoi : mesurer ce que l'extraction rend quand seul le nom de glyphe dit « B » (ISO
+/// 32000-1 §9.10.2) : PDFium rend le code « A », limite assumée (audit L4, expérience L14).
+pub fn symbolic_truetype_differences_pdf() -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    simple_font_pdf(|doc| {
+        let font = crate::fonts::unicode::DEJAVU_SANS;
+        let file = doc.add_object(Stream::new(
+            Dictionary::from_iter(vec![(
+                "Length1",
+                Object::Integer(i64::try_from(font.len()).expect("police de moins de 2 Go")),
+            )]),
+            font.to_vec(),
+        ));
+        let descriptor = doc.add_object(Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"FontDescriptor".to_vec())),
+            ("FontName", Object::Name(b"DejaVuSans".to_vec())),
+            ("Flags", Object::Integer(4)),
+            (
+                "FontBBox",
+                Object::Array(vec![
+                    (-1021).into(),
+                    (-463).into(),
+                    1793.into(),
+                    1232.into(),
+                ]),
+            ),
+            ("ItalicAngle", Object::Integer(0)),
+            ("Ascent", Object::Integer(928)),
+            ("Descent", Object::Integer(-236)),
+            ("CapHeight", Object::Integer(700)),
+            ("StemV", Object::Integer(80)),
+            ("FontFile2", Object::Reference(file)),
+        ]));
+        Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Font".to_vec())),
+            ("Subtype", Object::Name(b"TrueType".to_vec())),
+            ("BaseFont", Object::Name(b"DejaVuSans".to_vec())),
+            ("FirstChar", Object::Integer(65)),
+            ("LastChar", Object::Integer(66)),
+            ("Widths", Object::Array(vec![684.into(), 686.into()])),
+            ("FontDescriptor", Object::Reference(descriptor)),
+            (
+                "Encoding",
+                Object::Dictionary(Dictionary::from_iter(vec![
+                    ("Type", Object::Name(b"Encoding".to_vec())),
+                    (
+                        "Differences",
+                        Object::Array(vec![65.into(), Object::Name(b"B".to_vec())]),
+                    ),
+                ])),
+            ),
+        ])
+    })
+}
+
+/// Une page A4 qui écrit `(A) Tj` en 24 pt avec la police `/F1` que `font` construit (elle
+/// peut ajouter ses propres objets, programme de police ou descripteur, au document).
+fn simple_font_pdf(font: impl FnOnce(&mut lopdf::Document) -> lopdf::Dictionary) -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    let mut doc = lopdf::Document::load_mem(&blank_pdf(595.0, 842.0)).expect("squelette lisible");
+    let font = font(&mut doc);
+    let font = doc.add_object(font);
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 24 Tf 72 700 Td (A) Tj ET".to_vec(),
+    ));
+    let page_id = *doc.get_pages().get(&1).expect("une page");
+    let page = doc.get_dictionary_mut(page_id).expect("page");
+    page.set("Contents", Object::Reference(content));
+    page.set(
+        "Resources",
+        Object::Dictionary(Dictionary::from_iter(vec![(
+            "Font",
+            Object::Dictionary(Dictionary::from_iter(vec![("F1", Object::Reference(font))])),
+        )])),
+    );
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation");
+    out
+}
+
 /// Un nombre dans un dictionnaire ou une chaîne de caractères CFF : forme la plus courte.
 fn cff_int(v: i32) -> Vec<u8> {
     match v {

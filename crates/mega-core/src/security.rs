@@ -284,14 +284,15 @@ impl Document {
         declare_aes256_extension(&mut doc);
         let mut out = Vec::new();
         doc.save_to(&mut out)?;
-        // Plus aucun refus possible avant le rechargement : la modification est certaine.
-        self.mark_changed();
         let previous = self.password().map(str::to_string);
         self.set_password((!p.user_password.is_empty()).then(|| p.user_password.clone()));
         if let Err(e) = self.reload_from_bytes(out) {
             self.set_password(previous);
             return Err(e);
         }
+        // Rechargé protégé : la modification est faite. Un échec de rechargement laisse le
+        // document tel quel, non marqué (aucune garde de refus ne suit).
+        self.mark_changed();
         Ok(())
     }
 
@@ -299,7 +300,6 @@ impl Document {
     /// propriétaire). Un document chiffré ouvert sans mot de passe (protection propriétaire
     /// seule) ne peut pas prouver le droit de le faire : `WrongPassword`.
     pub fn unprotect(&mut self) -> CoreResult<()> {
-        self.mark_changed();
         self.unprotect_with(None)
     }
 
@@ -307,7 +307,6 @@ impl Document {
     /// de l'ouverture) : c'est ainsi qu'on déprotège un fichier à mot de passe propriétaire
     /// seul, qui s'ouvre sans rien demander. Un mot de passe faux donne `WrongPassword`.
     pub fn unprotect_with(&mut self, typed: Option<&str>) -> CoreResult<()> {
-        self.mark_changed();
         if !self.security()?.encrypted {
             return Err(invalid("le document n'est pas protégé"));
         }
@@ -344,6 +343,9 @@ impl Document {
             self.set_password(Some(password));
             return Err(e);
         }
+        // Document rechargé sans protection : la modification est faite (après toutes les
+        // gardes de refus, CLAUDE.md).
+        self.mark_changed();
         Ok(())
     }
 }

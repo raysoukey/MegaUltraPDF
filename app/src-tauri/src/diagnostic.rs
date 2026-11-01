@@ -122,7 +122,7 @@ pub fn init(dir: PathBuf) {
 }
 
 /// Ligne du journal pour un avertissement de `mega-core`, masquée comme les erreurs.
-pub fn core_warning_line(message: &str) -> String {
+fn core_warning_line(message: &str) -> String {
     format!("avertissement du cœur : {}", sanitize(message))
 }
 

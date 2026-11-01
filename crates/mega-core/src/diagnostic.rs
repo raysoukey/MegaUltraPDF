@@ -34,3 +34,34 @@ pub(crate) fn warn(message: &str) {
         None => eprintln!("avertissement : {message}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    /// Ce que la fonction de réception du test a reçu (d'autres tests du crate peuvent y
+    /// ajouter leurs avertissements : on cherche le nôtre, sans compter).
+    static RECEIVED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    fn receive(message: &str) {
+        RECEIVED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(message.to_string());
+    }
+
+    fn other(_: &str) {}
+
+    /// La fonction installée reçoit les avertissements ; une seconde installation est refusée.
+    /// Seul test du crate qui installe une fonction (la `static` vaut pour tout le processus).
+    #[test]
+    fn the_installed_sink_receives_warnings_and_cannot_be_replaced() {
+        assert!(set_warning_sink(receive));
+        assert!(!set_warning_sink(other), "une seule installation");
+        warn("avertissement de test 21b");
+        let received = RECEIVED.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(received.iter().any(|m| m == "avertissement de test 21b"));
+    }
+}

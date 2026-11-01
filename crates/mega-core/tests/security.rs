@@ -499,3 +499,33 @@ fn refused_protect_leaves_the_document_unchanged() {
         "mots de passe vides : intact"
     );
 }
+
+/// Comme pour `protect` : un `unprotect` refusé (document non protégé, mot de passe faux) ne
+/// marque pas le document modifié ; enregistrer recopie les octets d'origine.
+#[test]
+fn refused_unprotect_leaves_the_document_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = sample_pdf(1, "intact");
+    let mut doc = Document::from_bytes(plain.clone(), None).unwrap();
+    assert!(matches!(
+        doc.unprotect(),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    let path = dir.path().join("clair.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), plain, "non protégé : intact");
+
+    let source = fixture("encrypted.pdf");
+    let mut doc = Document::from_bytes(source.clone(), Some("secret")).unwrap();
+    assert!(matches!(
+        doc.unprotect_with(Some("faux")),
+        Err(CoreError::WrongPassword)
+    ));
+    let path = dir.path().join("chiffre.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        source,
+        "mot de passe faux : intact"
+    );
+}

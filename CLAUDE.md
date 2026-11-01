@@ -246,7 +246,9 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   avant toute réécriture) ; chiffrer = `EncryptionVersion::V5` + `Aes256CryptFilter` + clé
   `rand` ; PDFium écrit `/Metadata` en clair dans un document chiffré : `to_bytes` (et la
   seconde sortie de `rewritten_bytes`) rechiffre ce seul flux (`crypt::seal_metadata`) ;
-  jamais `encrypt_metadata: false` (PDFium retire aussi le `/Filter` d'un XMP compressé en
-  gardant ses octets : réparé dans un document chiffré, constat ouvert sinon) ; les instantanés d'historique portent le mot de passe ; pièces jointes listées dans
-  l'ordre de l'arbre de noms (clés triées) ; `cargo clippy --all-targets` échoue tant qu'un
-  fichier de test ne compile pas : ne jamais enchaîner `task-done` après un gate qui a échoué.
+  jamais `encrypt_metadata: false` ; PDFium retire aussi le `/Filter` d'un XMP compressé en
+  gardant ses octets (F21-5) : `from_bytes` lui confie une copie aux XMP décodés
+  (`crypt::unfiltered_metadata_copy`, `file_bytes` intacts) ; les instantanés d'historique
+  portent le mot de passe ; pièces jointes listées dans l'ordre de l'arbre de noms (clés
+  triées) ; `cargo clippy --all-targets` échoue tant qu'un fichier de test ne compile pas :
+  ne jamais enchaîner `task-done` après un gate qui a échoué.

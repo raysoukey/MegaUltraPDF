@@ -61,17 +61,22 @@ fn qpdf_encrypted_files_keep_their_xmp_through_edits() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("riche.pdf");
     std::fs::write(&source, rich_catalog_pdf("1.7", None)).unwrap();
-    let ciphers: [(&str, &[&str]); 4] = [
-        ("AES-256", &["256"]),
-        ("AES-128", &["128", "--use-aes=y"]),
-        ("RC4 128", &["128", "--use-aes=n"]),
-        ("RC4 40", &["40"]),
+    // (nom, options de qpdf, options de `--encrypt`)
+    let ciphers: [(&str, &[&str], &[&str]); 5] = [
+        ("AES-256", &[], &["256"]),
+        // Flux d'objets et table de références en flux (relecture de la tâche 21b).
+        ("AES-256 objstm", &["--object-streams=generate"], &["256"]),
+        ("AES-128", &[], &["128", "--use-aes=y"]),
+        ("RC4 128", &[], &["128", "--use-aes=n"]),
+        ("RC4 40", &[], &["40"]),
     ];
-    for (what, args) in ciphers {
+    for (what, options, args) in ciphers {
         let encrypted = dir.path().join(format!("{}.pdf", what.replace(' ', "-")));
         let mut cmd = Command::new(&qpdf);
         // RC4 et les clés de 40 bits sont refusés par défaut depuis qpdf 11.
-        cmd.args(["--allow-weak-crypto", "--encrypt", "secret", "proprio"])
+        cmd.arg("--allow-weak-crypto")
+            .args(options)
+            .args(["--encrypt", "secret", "proprio"])
             .args(args)
             .arg("--")
             .arg(&source)
@@ -82,6 +87,13 @@ fn qpdf_encrypted_files_keep_their_xmp_through_edits() {
             "{what} : chiffrement par qpdf\n{}",
             output_text(&out)
         );
+        if !options.is_empty() {
+            let raw = std::fs::read(&encrypted).unwrap();
+            assert!(
+                raw.windows(7).any(|w| w == b"/ObjStm"),
+                "{what} : la source a des flux d'objets"
+            );
+        }
         assert_xmp_intact(&encrypted, "secret", &format!("{what} (source)"));
         let mut doc = Document::open(&encrypted, Some("secret")).unwrap();
         let saved = dir

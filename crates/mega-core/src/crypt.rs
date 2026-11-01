@@ -16,7 +16,10 @@
 //! (le champ devient `None`) et nous le confie ; c'est nous qui le rendrons au chiffrement
 //! dans [`LopdfSession::finish`]. Un seul propriétaire à la fois, jamais de copie oubliée.
 
+use std::sync::Arc;
+
 use lopdf::encryption::EncryptionState;
+use lopdf::encryption::crypt_filters::{CryptFilter, Rc4CryptFilter};
 use lopdf::{Document as LoDocument, LoadOptions, Object, ObjectId, Stream};
 
 use crate::error::{CoreError, CoreResult};
@@ -313,7 +316,7 @@ impl LopdfSession {
         if let Some(state) = &state
             && matches!(check_crypt_filters(&doc, state)?, FilterCheck::Passthrough)
         {
-            return Self::passthrough(state, bytes, repair);
+            return Self::passthrough(bytes, repair);
         }
         Ok(LopdfSession {
             doc,
@@ -327,17 +330,8 @@ impl LopdfSession {
     /// que l'élagage le garde ; `/ID` n'est pas touché, et les objets ne doivent pas être
     /// renumérotés (`keeps_object_numbers`). `finish` n'a rien à rechiffrer : ce qui est
     /// chiffré (les pièces jointes) n'a jamais été lu en clair.
-    fn passthrough(state: &EncryptionState, bytes: &[u8], repair: bool) -> CoreResult<Self> {
-        let hidden = hide_encrypt_entry(bytes).ok_or_else(refuse)?;
-        let loaded = if repair {
-            load_limited(&hidden, None)
-        } else {
-            load_exact(&hidden, None)
-        };
-        let mut doc = loaded.map_err(|e| {
-            CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
-        })?;
-        let id = state.encrypt_object_id().ok_or_else(refuse)?;
+    fn passthrough(bytes: &[u8], repair: bool) -> CoreResult<Self> {
+        let (doc, id) = load_undecrypted(bytes, repair)?;
         let is_standard = doc
             .get_dictionary(id)
             .ok()
@@ -346,9 +340,6 @@ impl LopdfSession {
         if !is_standard {
             return Err(refuse());
         }
-        // La clé rebaptisée n'a plus de raison d'être : elle ne doit pas se retrouver écrite.
-        doc.trailer.remove(b"Encrypx");
-        doc.trailer.set("Encrypt", Object::Reference(id));
         Ok(LopdfSession {
             doc,
             state: None,
@@ -369,56 +360,72 @@ impl LopdfSession {
     }
 }
 
-/// Débuts possibles d'un paquet XMP **en clair** : l'enveloppe `<?xpacket … ?>` est
-/// facultative (ISO 16684-1, §7.3), le paquet peut commencer directement par `<x:xmpmeta`.
-const XMP_STARTS: [&[u8]; 2] = [b"<?xpacket", b"<x:xmpmeta"];
+/// Marques d'un paquet XMP **en clair** : l'enveloppe `<?xpacket … ?>` est facultative
+/// (ISO 16684-1, §7.3), le paquet peut commencer par `<x:xmpmeta`, ou même directement par
+/// `<rdf:RDF`.
+const XMP_MARKERS: [&[u8]; 3] = [b"<?xpacket", b"<x:xmpmeta", b"<rdf:RDF"];
 
-/// Vrai si `data` commence, après d'éventuels blancs, par un paquet XMP lisible : du XML en
-/// clair. Un flux chiffré (ou abîmé par une relecture antérieure) n'en a que la probabilité
-/// d'octets aléatoires, nulle en pratique.
-fn is_clear_xmp(data: &[u8]) -> bool {
-    let start = data
-        .iter()
-        .position(|b| !b.is_ascii_whitespace())
-        .unwrap_or(data.len());
-    XMP_STARTS
-        .iter()
-        .any(|marker| data[start..].starts_with(marker))
+/// Nombre d'octets lus au début d'un flux pour y chercher une marque XMP : un prologue
+/// `<?xml …?>`, des commentaires ou des blancs peuvent la précéder.
+const XMP_HEAD: usize = 1024;
+
+/// Marque d'ordre des octets UTF-8, que certains producteurs placent devant le paquet.
+const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
+
+/// Taille décompressée maximale d'un XMP examiné ou décompressé ici (16 Mio) : un XMP réel
+/// pèse quelques Ko, au pire quelques centaines (vignettes incorporées).
+const XMP_LIMIT: usize = 16 << 20;
+
+/// Vrai si `data` est un paquet XMP lisible : du XML en clair, dont le premier Kio (après une
+/// éventuelle marque d'ordre UTF-8) contient une marque de [`XMP_MARKERS`]. Un flux chiffré
+/// (ou abîmé par une relecture antérieure) n'en a que la probabilité d'octets aléatoires,
+/// nulle en pratique.
+///
+/// Limite assumée : un XMP en UTF-16 ou UTF-32 (permis par ISO 16684-1, jamais rencontré dans
+/// un PDF) n'est pas reconnu ; il serait laissé tel quel, comme avant la tâche 21b.
+pub(crate) fn is_clear_xmp(data: &[u8]) -> bool {
+    let data = data.strip_prefix(UTF8_BOM).unwrap_or(data);
+    let head = &data[..data.len().min(XMP_HEAD)];
+    XMP_MARKERS.iter().any(|marker| contains(head, marker))
 }
 
-/// Si le flux `stream` est un XMP lisible **sans déchiffrement**, le contenu qu'il doit porter
-/// avant d'être chiffré ; `None` sinon (déjà chiffré, ou abîmé). Trois formes :
+/// Si le flux `stream` est un XMP lisible **sans déchiffrement**, ce qu'il faut en faire ;
+/// `None` sinon (déjà chiffré, ou abîmé). Trois formes :
 ///
-/// 1. du XML en clair : ce contenu tel quel ;
-/// 2. des octets compressés en clair, `/Filter` déclaré : ce contenu tel quel (le filtre
-///    s'applique après déchiffrement, §7.6.2) ;
+/// 1. du XML en clair : [`ClearXmp::AsIs`] ;
+/// 2. des octets compressés en clair, `/Filter` déclaré : [`ClearXmp::AsIs`] aussi (le
+///    filtre s'applique après déchiffrement, §7.6.2) ;
 /// 3. des octets Flate en clair **sans** `/Filter` : PDFium retire le filtre d'un XMP
-///    compressé mais en recopie les octets compressés (mesuré, tâche 21b ; qpdf compresse
-///    par défaut les flux qui ne l'étaient pas, XMP compris). Le contenu rendu est alors le
-///    XMP décompressé, la forme que PDFium voulait écrire.
+///    compressé mais en recopie les octets compressés (mesuré, tâche 21b ; qpdf compresse les
+///    flux quand il chiffre, XMP compris). [`ClearXmp::Inflated`] porte alors le XMP
+///    décompressé, la forme que PDFium voulait écrire.
 ///
 /// Des octets chiffrés ne se décompressent pas en XML ; au pire, un décodeur tolérant rend des
 /// octets aléatoires, refusés eux aussi.
-fn clear_xmp_content(stream: &Stream) -> Option<Vec<u8>> {
+fn clear_xmp_content(stream: &Stream) -> Option<ClearXmp> {
     if is_clear_xmp(&stream.content) {
-        return Some(stream.content.clone());
+        return Some(ClearXmp::AsIs);
     }
     let filtered = stream.filters().is_ok_and(|filters| !filters.is_empty());
     if filtered {
-        let decoded = stream
-            .decompressed_content_with_limit(MAX_DECOMPRESSED)
-            .ok()?;
-        return is_clear_xmp(&decoded).then(|| stream.content.clone());
+        let decoded = stream_bytes_within(stream, XMP_LIMIT)?;
+        return is_clear_xmp(&decoded).then_some(ClearXmp::AsIs);
     }
     // Forme 3 : on essaie Flate sur une copie à laquelle on rend son filtre.
     let mut probe = stream.clone();
     probe
         .dict
         .set("Filter", Object::Name(b"FlateDecode".to_vec()));
-    let inflated = probe
-        .decompressed_content_with_limit(MAX_DECOMPRESSED)
-        .ok()?;
-    is_clear_xmp(&inflated).then_some(inflated)
+    let inflated = stream_bytes_within(&probe, XMP_LIMIT)?;
+    is_clear_xmp(&inflated).then_some(ClearXmp::Inflated(inflated))
+}
+
+/// Un flux de métadonnées lisible sans clé (voir [`clear_xmp_content`]).
+enum ClearXmp {
+    /// Son contenu est bon tel quel (XML en clair, ou compressé avec son `/Filter`).
+    AsIs,
+    /// PDFium a retiré son `/Filter` : voici le XMP décompressé à écrire à la place.
+    Inflated(Vec<u8>),
 }
 
 /// Vrai si `needle` apparaît dans `haystack`.
@@ -446,26 +453,84 @@ fn trailer_declares_encrypt(bytes: &[u8]) -> bool {
     contains(&rest[..end], b"/Encrypt")
 }
 
-/// Vrai si le dictionnaire `/Encrypt` laisse les métadonnées en clair : `/EncryptMetadata
-/// false`, ou flux en clair par construction (`/StmF` absent ou `Identity`). Ces deux clés
-/// n'existent qu'à partir de la version 4 ; avant, tout flux est chiffré en RC4. Lu avant la
-/// dérivation de la clé, qui coûte cher en révision 6.
-fn metadata_left_clear(encrypt: &lopdf::Dictionary) -> bool {
+/// Ce que le dictionnaire `/Encrypt` impose aux flux de métadonnées.
+enum MetadataCipher {
+    /// Laissés en clair : `/EncryptMetadata false`, ou filtre de flux `Identity` (`/StmF`
+    /// absent, nommé `Identity`, ou entrée de `/CF` de méthode `Identity`).
+    Clear,
+    /// Chiffrés par ce filtre : RC4 avant la version 4, l'entrée `/StmF` de `/CF` ensuite.
+    ///
+    /// \[Apprentissage\] **`Arc<dyn CryptFilter>`, un objet-trait** : `dyn CryptFilter` désigne
+    /// « une valeur d'un type qui implémente le trait `CryptFilter` », sans dire lequel. Le
+    /// choix se fait **à l'exécution**, d'après le fichier (RC4, AES-128 ou AES-256), et les
+    /// appels `compute_key` / `encrypt` vont à l'implémentation de ce type-là : l'algorithme
+    /// de clé de chaque objet change avec lui. `Arc` partage la valeur sans la copier (lopdf
+    /// rend ses filtres sous cette forme).
+    Encrypt(Arc<dyn CryptFilter>),
+}
+
+/// Lit dans `/Encrypt` le sort des flux de métadonnées, **avant** la dérivation de la clé (qui
+/// coûte cher en révision 6). `/EncryptMetadata` et `/StmF` n'existent qu'à partir de la
+/// version 4 ; avant, tout flux est chiffré en RC4.
+///
+/// Un `/StmF` qui n'est pas une entrée de `/CF` que lopdf sait employer (entrée absente, ou
+/// méthode `/CFM` inconnue de lui, comme `/None`) est une erreur : se rabattre sur RC4, comme
+/// le fait lopdf, chiffrerait le XMP d'une façon qu'aucun lecteur ne déferait.
+fn metadata_cipher(doc: &LoDocument, encrypt: &lopdf::Dictionary) -> CoreResult<MetadataCipher> {
     let version = encrypt.get(b"V").and_then(Object::as_i64).unwrap_or(0);
     if version < 4 {
-        return false;
+        return Ok(MetadataCipher::Encrypt(Arc::new(Rc4CryptFilter)));
     }
     let declared_clear = matches!(
         encrypt.get(b"EncryptMetadata").and_then(Object::as_bool),
         Ok(false)
     );
-    declared_clear || is_identity(encrypt.get(b"StmF").and_then(Object::as_name).ok())
+    let name = encrypt.get(b"StmF").and_then(Object::as_name).ok();
+    if declared_clear || is_identity(name) {
+        return Ok(MetadataCipher::Clear);
+    }
+    let filter = name
+        .and_then(|name| doc.get_crypt_filters().get(name).cloned())
+        .ok_or_else(|| {
+            metadata_error("filtre de flux /StmF absent de /CF ou non pris en charge")
+        })?;
+    if filter.method() == b"Identity" {
+        return Ok(MetadataCipher::Clear);
+    }
+    Ok(MetadataCipher::Encrypt(filter))
 }
 
 /// Erreur d'un rechiffrement du XMP impossible (jamais montrée telle quelle à l'utilisateur :
 /// [`seal_metadata`] la note au journal et garde les octets de PDFium).
 fn metadata_error(detail: &str) -> CoreError {
-    CoreError::InvalidOperation(format!("rechiffrement du XMP : {detail}"))
+    CoreError::UnsupportedEncryption(format!("rechiffrement du XMP : {detail}"))
+}
+
+/// Lit `bytes` **sans rien déchiffrer** : la référence `/Encrypt` de la remorque est masquée
+/// ([`hide_encrypt_entry`]) le temps de la lecture, puis remise en mémoire. Rend le document
+/// (objets tels qu'écrits, chaînes et flux encore chiffrés) et le numéro du dictionnaire
+/// `/Encrypt`. `repair` choisit [`load_limited`] (remorque réparée) ou [`load_exact`].
+///
+/// Sert à la session passe-plat (filtres `Identity`) et au rechiffrement du XMP : deux passes
+/// qui ne doivent toucher qu'à quelques objets, jamais déchiffrer tout le fichier.
+fn load_undecrypted(bytes: &[u8], repair: bool) -> CoreResult<(LoDocument, ObjectId)> {
+    let hidden = hide_encrypt_entry(bytes).ok_or_else(refuse)?;
+    let loaded = if repair {
+        load_limited(&hidden, None)
+    } else {
+        load_exact(&hidden, None)
+    };
+    let mut doc = loaded
+        .map_err(|e| CoreError::InvalidOperation(format!("structure du PDF illisible : {e}")))?;
+    let id = doc
+        .trailer
+        .get(b"Encrypx")
+        .and_then(Object::as_reference)
+        .map_err(|_| refuse())?;
+    // La clé rebaptisée n'a plus de raison d'être : elle ne doit pas se retrouver écrite.
+    doc.trailer.remove(b"Encrypx");
+    doc.trailer.set("Encrypt", Object::Reference(id));
+    Ok((doc, id))
 }
 
 /// Rechiffre le XMP que PDFium a écrit **en clair** dans un document chiffré (constat F21-4,
@@ -473,18 +538,19 @@ fn metadata_error(detail: &str) -> CoreError {
 /// document non chiffré, aucun XMP en clair, XMP déclaré en clair (`/EncryptMetadata false`)
 /// ou flux en clair par construction (filtre `Identity`).
 ///
-/// Pourquoi : PDFium écrit toujours le flux `/Metadata` en clair, sans poser
+/// Pourquoi : PDFium écrit toujours les flux `/Metadata` en clair, sans poser
 /// `/EncryptMetadata false` ; à la relecture (chaque enregistrement, chaque instantané
-/// d'historique relit sa sortie), il le « déchiffre » en octets aléatoires. Seuls ces flux
-/// sont touchés : chiffrés avec la clé du fichier et le filtre de flux déclaré (`/StmF`, RC4
-/// avant la version 4), sous **leur** numéro d'objet, comme l'exige §7.6.2.
+/// d'historique relit sa sortie), il les « déchiffre » en octets aléatoires. Seuls ces flux
+/// sont touchés, chiffrés avec le filtre de flux déclaré (`/StmF`, RC4 avant la version 4).
+/// En RC4 et en AES-128, la clé de chaque objet mêle la clé du fichier à **son** numéro
+/// d'objet (§7.6.2, algorithme 1) ; en AES-256, la clé du fichier sert telle quelle
+/// (algorithme 1.A).
 ///
-/// Le fichier est lu sans être déchiffré (`/Encrypt` masqué, comme pour une session
-/// passe-plat) : aucun autre objet n'est déchiffré ni rechiffré, aucun n'est renuméroté. Un
-/// flux qui n'est pas du XML lisible sans clé, compressé ou non (déjà chiffré, ou abîmé par une
-/// relecture antérieure), est laissé tel quel : jamais chiffré deux fois. Tous les flux
-/// `/Type /Metadata` sont concernés, pas seulement celui du catalogue : lopdf, comme PDFium,
-/// applique `/EncryptMetadata` à chacun.
+/// Le fichier est lu sans être déchiffré ([`load_undecrypted`]) : aucun autre objet n'est
+/// déchiffré ni rechiffré, aucun n'est renuméroté. Un flux qui n'est pas du XML lisible sans
+/// clé, compressé ou non (déjà chiffré, ou abîmé par une relecture antérieure), est laissé tel
+/// quel : jamais chiffré deux fois. Tous les flux `/Type /Metadata` sont concernés, pas
+/// seulement celui du catalogue : PDFium les écrit tous en clair (mesuré).
 pub(crate) fn reencrypt_metadata(
     bytes: &[u8],
     password: Option<&str>,
@@ -494,19 +560,15 @@ pub(crate) fn reencrypt_metadata(
     if !trailer_declares_encrypt(bytes) || !contains(bytes, b"/Metadata") {
         return Ok(None);
     }
-    let hidden = hide_encrypt_entry(bytes)
-        .ok_or_else(|| metadata_error("remorque sans référence /Encrypt"))?;
-    let mut doc = load_limited(&hidden, None)
-        .map_err(|e| metadata_error(&format!("structure illisible ({e})")))?;
-    let encrypt_id = doc
-        .trailer
-        .get(b"Encrypx")
-        .and_then(Object::as_reference)
-        .map_err(|_| metadata_error("référence /Encrypt illisible"))?;
-    doc.trailer.remove(b"Encrypx");
-    doc.trailer.set("Encrypt", Object::Reference(encrypt_id));
+    let (mut doc, encrypt_id) = load_undecrypted(bytes, true)?;
+    let encrypt = doc
+        .get_dictionary(encrypt_id)
+        .map_err(|_| metadata_error("dictionnaire /Encrypt illisible"))?;
+    let MetadataCipher::Encrypt(filter) = metadata_cipher(&doc, encrypt)? else {
+        return Ok(None);
+    };
     // Chaque flux à chiffrer et le contenu en clair qu'il doit porter.
-    let targets: Vec<(ObjectId, Vec<u8>)> = doc
+    let targets: Vec<(ObjectId, Option<Vec<u8>>)> = doc
         .objects
         .iter()
         .filter_map(|(id, object)| {
@@ -520,13 +582,13 @@ pub(crate) fn reencrypt_metadata(
             if !is_metadata || own_crypt {
                 return None;
             }
-            clear_xmp_content(stream).map(|content| (*id, content))
+            match clear_xmp_content(stream)? {
+                ClearXmp::AsIs => Some((*id, None)),
+                ClearXmp::Inflated(xmp) => Some((*id, Some(xmp))),
+            }
         })
         .collect();
-    let encrypt = doc
-        .get_dictionary(encrypt_id)
-        .map_err(|_| metadata_error("dictionnaire /Encrypt illisible"))?;
-    if targets.is_empty() || metadata_left_clear(encrypt) {
+    if targets.is_empty() {
         return Ok(None);
     }
     let password = password.unwrap_or("");
@@ -540,14 +602,14 @@ pub(crate) fn reencrypt_metadata(
     // illisible pour toujours (une seule dérivation, coûteuse en révision 6).
     let state = EncryptionState::decode(&doc, &sanitized)
         .map_err(|e| metadata_error(&format!("clé du fichier ({e})")))?;
-    let filter = state.get_stream_filter();
-    for (id, content) in targets {
+    for (id, inflated) in targets {
         let key = filter
             .compute_key(state.file_encryption_key(), id)
             .map_err(|e| metadata_error(&format!("clé de l'objet ({e})")))?;
         if let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) {
+            let clear = inflated.as_deref().unwrap_or(&stream.content);
             let sealed = filter
-                .encrypt(&key, &content)
+                .encrypt(&key, clear)
                 .map_err(|e| metadata_error(&format!("chiffrement ({e})")))?;
             stream.set_content(sealed);
         }
@@ -688,50 +750,120 @@ mod metadata_tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use lopdf::encryption::crypt_filters::{Aes256CryptFilter, CryptFilter};
+    use lopdf::encryption::crypt_filters::{Aes128CryptFilter, Aes256CryptFilter, CryptFilter};
     use lopdf::encryption::{EncryptionVersion, Permissions};
 
     use super::*;
     use crate::Document;
 
-    /// `rich_catalog_pdf` (XMP « Riche ») chiffré par lopdf en AES-256, mot de passe `u` ;
-    /// `encrypt_metadata` dit si le XMP est chiffré lui aussi, `compress` si les flux sont
-    /// compressés (comme le fait qpdf), `page_xmp` si la page 1 porte son propre XMP (titre
-    /// « PageXmp »).
-    fn encrypted_rich(encrypt_metadata: bool, compress: bool, page_xmp: bool) -> Vec<u8> {
+    /// Chiffrement du fichier source.
+    #[derive(Clone, Copy, Debug)]
+    enum Cipher {
+        Aes256,
+        Aes128,
+        Rc4,
+    }
+
+    /// Réglages du fichier source : `rich_catalog_pdf` (XMP « Riche ») chiffré par lopdf,
+    /// mots de passe `u` (utilisateur) et `o` (propriétaire).
+    #[derive(Clone, Copy)]
+    struct Source {
+        cipher: Cipher,
+        /// Le XMP est-il chiffré (`/EncryptMetadata`) ?
+        encrypt_metadata: bool,
+        /// Flux compressés, comme le fait qpdf en chiffrant ?
+        compress: bool,
+        /// La page 1 porte-t-elle son propre XMP (titre « PageXmp ») ?
+        page_xmp: bool,
+        /// Octets placés devant le paquet XMP du catalogue (BOM, prologue XML).
+        prefix: &'static [u8],
+    }
+
+    const AES256: Source = Source {
+        cipher: Cipher::Aes256,
+        encrypt_metadata: true,
+        compress: false,
+        page_xmp: false,
+        prefix: b"",
+    };
+
+    const PAGE_XMP: &str = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+        <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF \
+        xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+        <rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\
+        <dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">PageXmp</rdf:li></rdf:Alt>\
+        </dc:title></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+
+    fn encrypted(source: Source) -> Vec<u8> {
         let mut doc = LoDocument::load_mem(&crate::testing::rich_catalog_pdf("1.7", None)).unwrap();
-        if page_xmp {
-            let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
-                <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF \
-                xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
-                <rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\
-                <dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">PageXmp</rdf:li></rdf:Alt>\
-                </dc:title></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+        if !source.prefix.is_empty() {
+            let id = doc
+                .catalog()
+                .unwrap()
+                .get(b"Metadata")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            let stream = doc.get_object_mut(id).unwrap().as_stream_mut().unwrap();
+            let mut content = source.prefix.to_vec();
+            content.extend_from_slice(&stream.content);
+            stream.set_content(content);
+        }
+        if source.page_xmp {
             let mut dict = lopdf::Dictionary::new();
             dict.set("Type", Object::Name(b"Metadata".to_vec()));
             dict.set("Subtype", Object::Name(b"XML".to_vec()));
-            let id = doc.add_object(Stream::new(dict, xmp.as_bytes().to_vec()));
+            let id = doc.add_object(Stream::new(dict, PAGE_XMP.as_bytes().to_vec()));
             let page = doc.page_iter().next().unwrap();
             doc.get_dictionary_mut(page)
                 .unwrap()
                 .set("Metadata", Object::Reference(id));
         }
-        if compress {
+        if source.compress {
             doc.compress();
         }
-        let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
-        filters.insert(b"StdCF".to_vec(), Arc::new(Aes256CryptFilter));
-        let state = EncryptionState::try_from(EncryptionVersion::V5 {
-            encrypt_metadata,
-            crypt_filters: filters,
-            file_encryption_key: &[3u8; 32],
-            stream_filter: b"StdCF".to_vec(),
-            string_filter: b"StdCF".to_vec(),
-            owner_password: "o",
-            user_password: "u",
-            permissions: Permissions::all(),
-        })
-        .unwrap();
+        if doc.trailer.get(b"ID").is_err() {
+            let id = Object::String(
+                b"0123456789abcdef".to_vec(),
+                lopdf::StringFormat::Hexadecimal,
+            );
+            doc.trailer.set("ID", Object::Array(vec![id.clone(), id]));
+        }
+        let filters = |filter: Arc<dyn CryptFilter>| {
+            let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
+            filters.insert(b"StdCF".to_vec(), filter);
+            filters
+        };
+        let version = match source.cipher {
+            Cipher::Aes256 => EncryptionVersion::V5 {
+                encrypt_metadata: source.encrypt_metadata,
+                crypt_filters: filters(Arc::new(Aes256CryptFilter)),
+                file_encryption_key: &[3u8; 32],
+                stream_filter: b"StdCF".to_vec(),
+                string_filter: b"StdCF".to_vec(),
+                owner_password: "o",
+                user_password: "u",
+                permissions: Permissions::all(),
+            },
+            Cipher::Aes128 => EncryptionVersion::V4 {
+                document: &doc,
+                encrypt_metadata: source.encrypt_metadata,
+                crypt_filters: filters(Arc::new(Aes128CryptFilter)),
+                stream_filter: b"StdCF".to_vec(),
+                string_filter: b"StdCF".to_vec(),
+                owner_password: "o",
+                user_password: "u",
+                permissions: Permissions::all(),
+            },
+            Cipher::Rc4 => EncryptionVersion::V2 {
+                document: &doc,
+                owner_password: "o",
+                user_password: "u",
+                key_length: 128,
+                permissions: Permissions::all(),
+            },
+        };
+        let state = EncryptionState::try_from(version).unwrap();
         doc.encrypt(&state).unwrap();
         let mut out = Vec::new();
         doc.save_to(&mut out).unwrap();
@@ -745,7 +877,7 @@ mod metadata_tests {
         doc.inner().save_to_bytes().unwrap()
     }
 
-    /// Le XMP du catalogue, déchiffré avec `password`.
+    /// Le XMP du catalogue, déchiffré avec `password` et décompressé.
     fn catalog_xmp(bytes: &[u8], password: &str) -> Vec<u8> {
         let doc = load_limited(bytes, Some(password)).unwrap();
         let id = doc
@@ -755,21 +887,47 @@ mod metadata_tests {
             .unwrap()
             .as_reference()
             .unwrap();
-        doc.get_object(id)
-            .unwrap()
-            .as_stream()
-            .unwrap()
-            .content
-            .clone()
+        stream_bytes(doc.get_object(id).unwrap().as_stream().unwrap()).unwrap()
+    }
+
+    fn has(bytes: &[u8], needle: &[u8]) -> bool {
+        bytes.windows(needle.len()).any(|w| w == needle)
     }
 
     fn has_clear_xmp(bytes: &[u8]) -> bool {
-        bytes.windows(10).any(|w| w == b"<x:xmpmeta")
+        has(bytes, b"<x:xmpmeta")
+    }
+
+    /// Le XMP du catalogue de `fixed` se relit (titre « Riche »).
+    fn assert_riche(fixed: &[u8], what: &str) {
+        let xmp = catalog_xmp(fixed, "u");
+        assert!(
+            has(&xmp, b">Riche</rdf:li>"),
+            "{what} : XMP relu {:?}",
+            String::from_utf8_lossy(&xmp)
+                .chars()
+                .take(60)
+                .collect::<String>()
+        );
+    }
+
+    /// Copie de `bytes` dont le dictionnaire `/Encrypt` est modifié par `edit` (lu sans
+    /// déchiffrement).
+    fn with_encrypt_dict(bytes: &[u8], edit: impl Fn(&mut lopdf::Dictionary)) -> Vec<u8> {
+        let hidden = hide_encrypt_entry(bytes).unwrap();
+        let mut doc = load_limited(&hidden, None).unwrap();
+        let id = doc.trailer.get(b"Encrypx").unwrap().as_reference().unwrap();
+        doc.trailer.remove(b"Encrypx");
+        doc.trailer.set("Encrypt", Object::Reference(id));
+        edit(doc.get_dictionary_mut(id).unwrap());
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
     }
 
     #[test]
     fn clear_xmp_of_an_encrypted_output_is_encrypted_again_once() {
-        let out = pdfium_output(encrypted_rich(true, false, false), "u");
+        let out = pdfium_output(encrypted(AES256), "u");
         assert!(
             has_clear_xmp(&out),
             "constat F21-4 : PDFium écrit le XMP en clair"
@@ -778,38 +936,55 @@ mod metadata_tests {
             .unwrap()
             .expect("XMP rechiffré");
         assert!(!has_clear_xmp(&fixed), "plus de XMP en clair");
-        let xmp = catalog_xmp(&fixed, "u");
-        assert!(
-            xmp.starts_with(b"<?xpacket") && xmp.windows(5).any(|w| w == b"Riche"),
-            "XMP relu : {:?}",
-            String::from_utf8_lossy(&xmp)
-                .chars()
-                .take(40)
-                .collect::<String>()
-        );
+        assert_riche(&fixed, "AES-256");
         let reopened = Document::from_bytes(fixed.clone(), Some("u")).unwrap();
         assert_eq!(reopened.page_count(), 3);
         // Jamais deux fois : un XMP déjà chiffré n'est pas du XML en clair, on n'y touche pas.
         assert!(reencrypt_metadata(&fixed, Some("u")).unwrap().is_none());
     }
 
-    /// qpdf compresse le XMP par défaut : PDFium le réécrit compressé **et** en clair, des
-    /// octets Flate qui ne commencent pas par `<?xpacket` mais se décompressent en XMP.
+    /// Relecture de la tâche 21b : un XMP précédé d'un BOM UTF-8 ou d'un prologue `<?xml …?>`
+    /// est du XMP en clair lui aussi.
+    #[test]
+    fn a_bom_or_an_xml_prologue_before_the_packet_is_recognized() {
+        let prefixes: [&'static [u8]; 2] = [
+            b"\xEF\xBB\xBF",
+            b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+        ];
+        for cipher in [Cipher::Aes256, Cipher::Rc4] {
+            for prefix in prefixes {
+                let what = format!("{cipher:?}, préfixe {:?}", String::from_utf8_lossy(prefix));
+                let source = Source {
+                    cipher,
+                    prefix,
+                    ..AES256
+                };
+                let out = pdfium_output(encrypted(source), "u");
+                let fixed = reencrypt_metadata(&out, Some("u"))
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{what} : XMP non reconnu"));
+                assert!(!has_clear_xmp(&fixed), "{what}");
+                assert_riche(&fixed, &what);
+                assert!(catalog_xmp(&fixed, "u").starts_with(prefix), "{what}");
+                assert!(reencrypt_metadata(&fixed, Some("u")).unwrap().is_none());
+            }
+        }
+    }
+
+    /// qpdf compresse les flux quand il chiffre : PDFium réécrit alors un XMP compressé **et**
+    /// en clair, des octets Flate qui ne commencent pas par `<?xpacket` mais se décompressent
+    /// en XMP.
     #[test]
     fn compressed_clear_xmp_is_encrypted_again() {
-        let out = pdfium_output(encrypted_rich(true, true, false), "u");
+        let source = Source {
+            compress: true,
+            ..AES256
+        };
+        let out = pdfium_output(encrypted(source), "u");
         let fixed = reencrypt_metadata(&out, Some("u"))
             .unwrap()
             .expect("XMP compressé rechiffré");
-        let xmp = catalog_xmp(&fixed, "u");
-        assert!(
-            xmp.starts_with(b"<?xpacket") && xmp.windows(5).any(|w| w == b"Riche"),
-            "XMP relu : {:?}",
-            String::from_utf8_lossy(&xmp)
-                .chars()
-                .take(40)
-                .collect::<String>()
-        );
+        assert_riche(&fixed, "compressé");
         assert!(reencrypt_metadata(&fixed, Some("u")).unwrap().is_none());
     }
 
@@ -817,7 +992,11 @@ mod metadata_tests {
     fn nothing_to_do_without_encryption_or_with_a_declared_cleartext_xmp() {
         let plain = crate::testing::rich_catalog_pdf("1.7", None);
         assert!(reencrypt_metadata(&plain, None).unwrap().is_none());
-        let declared_clear = pdfium_output(encrypted_rich(false, false, false), "u");
+        let source = Source {
+            encrypt_metadata: false,
+            ..AES256
+        };
+        let declared_clear = pdfium_output(encrypted(source), "u");
         assert!(has_clear_xmp(&declared_clear));
         assert!(
             reencrypt_metadata(&declared_clear, Some("u"))
@@ -828,9 +1007,55 @@ mod metadata_tests {
     }
 
     #[test]
-    fn a_wrong_password_is_an_error() {
-        let out = pdfium_output(encrypted_rich(true, false, false), "u");
+    fn a_wrong_password_is_an_error_and_never_blocks_a_save() {
+        let out = pdfium_output(encrypted(AES256), "u");
         assert!(reencrypt_metadata(&out, Some("faux")).is_err());
+        // `seal_metadata` rend alors les octets de PDFium tels quels.
+        assert_eq!(seal_metadata(out.clone(), Some("faux")), out);
+    }
+
+    /// Relecture de la tâche 21b : un `/StmF` absent de `/CF` ou une méthode `/CFM` que lopdf
+    /// ne connaît pas (`/None`) ne retombent pas en silence sur RC4 (qui détruirait le XMP) :
+    /// c'est une erreur, et les octets de PDFium restent tels quels.
+    #[test]
+    fn an_unknown_stream_filter_is_an_error() {
+        let out = pdfium_output(
+            encrypted(Source {
+                cipher: Cipher::Aes128,
+                ..AES256
+            }),
+            "u",
+        );
+        let missing = with_encrypt_dict(&out, |encrypt| {
+            encrypt.set("StmF", Object::Name(b"Absent".to_vec()));
+        });
+        assert!(reencrypt_metadata(&missing, Some("u")).is_err());
+        assert_eq!(seal_metadata(missing.clone(), Some("u")), missing);
+        let cfm_none = with_encrypt_dict(&out, |encrypt| {
+            let filters = encrypt.get_mut(b"CF").unwrap().as_dict_mut().unwrap();
+            let std_cf = filters.get_mut(b"StdCF").unwrap().as_dict_mut().unwrap();
+            std_cf.set("CFM", Object::Name(b"None".to_vec()));
+        });
+        assert!(reencrypt_metadata(&cfm_none, Some("u")).is_err());
+    }
+
+    /// Un filtre de flux dont la méthode est `/Identity` laisse les flux en clair : rien à
+    /// chiffrer.
+    #[test]
+    fn an_identity_stream_filter_leaves_the_xmp_alone() {
+        let out = pdfium_output(
+            encrypted(Source {
+                cipher: Cipher::Aes128,
+                ..AES256
+            }),
+            "u",
+        );
+        let identity = with_encrypt_dict(&out, |encrypt| {
+            let filters = encrypt.get_mut(b"CF").unwrap().as_dict_mut().unwrap();
+            let std_cf = filters.get_mut(b"StdCF").unwrap().as_dict_mut().unwrap();
+            std_cf.set("CFM", Object::Name(b"Identity".to_vec()));
+        });
+        assert!(reencrypt_metadata(&identity, Some("u")).unwrap().is_none());
     }
 
     /// Mesuré (tâche 21b) : PDFium écrit en clair **tout** flux `/Type /Metadata`, celui d'une
@@ -838,8 +1063,11 @@ mod metadata_tests {
     /// et survit à deux enregistrements.
     #[test]
     fn a_page_level_xmp_is_encrypted_again_too() {
-        let source = encrypted_rich(true, false, true);
-        let has_page_xmp = |bytes: &[u8]| bytes.windows(7).any(|w| w == b"PageXmp");
+        let source = encrypted(Source {
+            page_xmp: true,
+            ..AES256
+        });
+        let has_page_xmp = |bytes: &[u8]| has(bytes, b"PageXmp");
         assert!(has_page_xmp(&pdfium_output(source.clone(), "u")));
         let mut doc = Document::from_bytes(source, Some("u")).unwrap();
         let dir = tempfile::tempdir().unwrap();

@@ -715,3 +715,24 @@ fn owner_only_document_keeps_an_encrypted_xmp() {
         "propriétaire seul, rouvert",
     );
 }
+
+/// Relecture de la tâche 21b : un document ouvert avec le mot de passe **propriétaire** garde
+/// son XMP (en RC4 et AES-128, la clé se déduit du mot de passe utilisateur, que lopdf
+/// retrouve depuis `/O`).
+#[test]
+fn a_document_opened_with_the_owner_password_keeps_its_xmp() {
+    for cipher in [
+        Cipher::Aes256,
+        Cipher::Aes128,
+        Cipher::Rc4128,
+        Cipher::Rc440,
+    ] {
+        let what = format!("{cipher:?}, mot de passe propriétaire");
+        let mut doc = Document::from_bytes(lopdf_encrypted_rich(cipher), Some("o")).unwrap();
+        doc.rotate_pages(&[0], 1).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proprio.pdf");
+        doc.save_as(&path).unwrap();
+        assert_xmp_intact(&std::fs::read(&path).unwrap(), "u", &what);
+    }
+}

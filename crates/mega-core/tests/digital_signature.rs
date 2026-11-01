@@ -931,3 +931,102 @@ fn visible_stamp_with_undrawable_text_is_refused() {
     };
     doc.sign_to(&path, &rsa(), &invisible).unwrap();
 }
+
+/// Audit E14 : un document certifié (`/DocMDP /P 1`) modifié après coup n'est plus « intègre ».
+#[test]
+fn a_certified_document_modified_afterwards_is_reported() {
+    use mega_core::digital_signature::SigIssue;
+    let list = signatures(&mega_core::testing::certified_then_modified_pdf()).unwrap();
+    assert_eq!(
+        only(list).status,
+        SignatureStatus::Invalid(SigIssue::CertifiedThenModified)
+    );
+}
+
+/// Audit E14 : un horodatage de document (`ETSI.RFC3161`) n'est pas une signature inconnue.
+#[test]
+fn rfc3161_subfilter_is_reported_as_a_document_timestamp() {
+    use mega_core::digital_signature::SigIssue;
+    let list = signatures(&mega_core::testing::sig_subfilter_pdf("ETSI.RFC3161")).unwrap();
+    assert_eq!(
+        only(list).status,
+        SignatureStatus::Unsupported(SigIssue::DocumentTimestamp)
+    );
+    for sf in ["adbe.pkcs7.sha1", "adbe.x509.rsa_sha1"] {
+        let list = signatures(&mega_core::testing::sig_subfilter_pdf(sf)).unwrap();
+        assert_eq!(
+            only(list).status,
+            SignatureStatus::Unsupported(SigIssue::UnsupportedFormat),
+            "{sf}"
+        );
+    }
+}
+
+/// Calcule une vraie signature CMS (RSA de test) sur le `/ByteRange` d'un fichier de test dont
+/// `/Contents` est un espace réservé de zéros, et l'y recopie en hexadécimal.
+fn sign_placeholder(mut bytes: Vec<u8>) -> Vec<u8> {
+    let tag = b"/ByteRange [";
+    let at = bytes.windows(tag.len()).position(|w| w == tag).unwrap() + tag.len();
+    let end = at + bytes[at..].iter().position(|&c| c == b']').unwrap();
+    let range: Vec<usize> = String::from_utf8_lossy(&bytes[at..end])
+        .split_whitespace()
+        .map(|n| n.parse().unwrap())
+        .collect();
+    let (a, b, c) = (range[1], range[2], range[3]);
+    let mut signed = bytes[..a].to_vec();
+    signed.extend_from_slice(&bytes[b..b + c]);
+    let der = cms::sign_digest(&rsa(), &sha256(&signed), WHEN).unwrap();
+    let hex: String = der.iter().map(|byte| format!("{byte:02X}")).collect();
+    assert!(hex.len() <= b - a - 2, "espace réservé trop petit");
+    bytes[a + 1..a + 1 + hex.len()].copy_from_slice(hex.as_bytes());
+    bytes
+}
+
+/// Revue de la partie C (I4) : après la plage signée d'une certification `/P 1`, seuls des
+/// blancs PDF et du bourrage NUL sont tolérés ; tout autre octet (révision ou déchets) donne
+/// `CertifiedThenModified`. Une certification qui permet des modifications (`/P 2`) ne le
+/// donne pas.
+#[test]
+fn certification_is_violated_by_any_byte_but_blanks_after_the_signature() {
+    use mega_core::digital_signature::SigIssue;
+    let certified = sign_placeholder(mega_core::testing::certified_field_pdf(1));
+    let info = only(signatures(&certified).unwrap());
+    assert_eq!(info.status, SignatureStatus::Intact);
+    assert!(info.covers_whole_document);
+
+    // Bourrage NUL après `%%EOF` (fréquent après un transfert) : aucune révision.
+    let mut padded = certified.clone();
+    padded.extend_from_slice(&[0u8; 64]);
+    assert_eq!(
+        only(signatures(&padded).unwrap()).status,
+        SignatureStatus::Intact
+    );
+
+    // Tout autre octet compte comme une modification (on échoue fermé : une révision
+    // tronquée ou maquillée n'a pas forcément de `startxref`).
+    let mut junk = certified.clone();
+    junk.extend_from_slice(b"garbage");
+    assert_eq!(
+        only(signatures(&junk).unwrap()).status,
+        SignatureStatus::Invalid(SigIssue::CertifiedThenModified)
+    );
+
+    // `/P 2` permet des révisions (formulaires, signatures) : pas de violation déclarée.
+    let p2 = mega_core::testing::append_revision(sign_placeholder(
+        mega_core::testing::certified_field_pdf(2),
+    ));
+    let info = only(signatures(&p2).unwrap());
+    assert_ne!(
+        info.status,
+        SignatureStatus::Invalid(SigIssue::CertifiedThenModified)
+    );
+    assert_eq!(info.status, SignatureStatus::Intact);
+    assert!(!info.covers_whole_document);
+
+    // `/P 1` suivi d'une révision : violation.
+    let modified = mega_core::testing::append_revision(certified);
+    assert_eq!(
+        only(signatures(&modified).unwrap()).status,
+        SignatureStatus::Invalid(SigIssue::CertifiedThenModified)
+    );
+}

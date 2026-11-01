@@ -301,18 +301,32 @@ pub fn checkbox_states_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
-/// Un document avec des métadonnées **XMP** non compressées (`/Metadata` du catalogue) :
-/// titre « Ancien », auteur « Alice », date de modification 2020.
 /// Une page qui **déclare** la conformité PDF/A-2B : identification `pdfaid` dans les
 /// métadonnées XMP (attributs, comme l'écrivent Acrobat et LibreOffice) et `/OutputIntents`
 /// (profil de sortie). Le fichier n'est pas réellement conforme (police non incorporée) :
 /// seule compte la déclaration, que l'application signale et doit conserver (Lot 13, C6).
 pub fn pdfa_pdf() -> Vec<u8> {
-    let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+    pdfa_part_pdf(2)
+}
+
+/// [`pdfa_pdf`] déclaré en partie `part` de PDF/A : niveau `B` pour les parties 1 à 3, aucun
+/// niveau pour la partie 4 (qui n'en a plus, ISO 19005-4).
+///
+/// Pourquoi : PDF/A-1 interdit toute transparence et PDF/A-4 tout `/Info` ; ce que l'on écrit
+/// dépend de la partie déclarée (Lot 14).
+pub fn pdfa_part_pdf(part: u8) -> Vec<u8> {
+    let conformance = if part < 4 {
+        " pdfaid:conformance=\"B\""
+    } else {
+        ""
+    };
+    let xmp = format!(
+        "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
 <rdf:Description rdf:about=\"\" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\" \
-pdfaid:part=\"2\" pdfaid:conformance=\"B\"/>\
-</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+pdfaid:part=\"{part}\"{conformance}/>\
+</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>"
+    );
     let content = "BT /F1 24 Tf 72 700 Td (Archive) Tj ET";
     let objects = vec![
         "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R /OutputIntents [6 0 R] >>".to_string(),
@@ -388,6 +402,8 @@ endcmap CMapName currentdict /CMap defineresource pop end end";
     assemble_pdf(&objects, "<< /Title (Astral) >>")
 }
 
+/// Un document avec des métadonnées **XMP** non compressées (`/Metadata` du catalogue) :
+/// titre « Ancien », auteur « Alice », date de modification 2020.
 pub fn xmp_pdf() -> Vec<u8> {
     let xmp = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
@@ -1314,6 +1330,108 @@ pub fn certified_pdf(p: i64) -> Vec<u8> {
         ),
     ];
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
+/// Un champ de signature dont le `/SubFilter` est `sub_filter`, avec un `/ByteRange` cohérent
+/// et un `/Contents` factice (zéros).
+///
+/// Pourquoi : mesurer comment le vérificateur classe chaque format (`adbe.pkcs7.sha1`,
+/// `ETSI.RFC3161`…) sans fabriquer de vraie signature.
+pub fn sig_subfilter_pdf(sub_filter: &str) -> Vec<u8> {
+    signature_field_pdf(sub_filter, "", 128)
+}
+
+/// Un champ de signature **certifiant** (`/DocMDP` dans `/Reference`, niveau `p` : 1 aucune modification permise, 2
+/// formulaires et signatures, 3 aussi les annotations). La signature est un espace réservé
+/// (zéros) assez grand pour une vraie signature CMS RSA, que les tests calculent sur le
+/// `/ByteRange` (déjà cohérent).
+///
+/// Pourquoi : distinguer des octets ajoutés après la certification (révision ou déchets :
+/// verdict `CertifiedThenModified`) d'un bourrage NUL ou de blancs, qui ne modifient pas le
+/// document (revue de la partie C du Lot 14).
+pub fn certified_field_pdf(p: u8) -> Vec<u8> {
+    let reference = format!(
+        "/Reference [<< /Type /SigRef /TransformMethod /DocMDP \
+         /TransformParams << /Type /TransformParams /P {p} /V /1.2 >> >>]"
+    );
+    signature_field_pdf("adbe.pkcs7.detached", &reference, 16_384)
+}
+
+/// `bytes` suivis d'une révision incrémentale (un nouveau `/Info`, objet 7 de
+/// [`certified_field_pdf`]) : une vraie modification après la signature.
+pub fn append_revision(mut bytes: Vec<u8>) -> Vec<u8> {
+    // Ancienne table : le nombre qui suit le dernier `startxref`.
+    let marker = b"startxref\n";
+    let at = bytes
+        .windows(marker.len())
+        .rposition(|w| w == marker)
+        .map_or(0, |p| p + marker.len());
+    let previous: usize = String::from_utf8_lossy(&bytes[at..])
+        .lines()
+        .next()
+        .and_then(|l| l.trim().parse().ok())
+        .unwrap_or(0);
+    // L'objet 7 est le `/Info` posé par `assemble_pdf` (six objets + Info).
+    let object = "7 0 obj\n<< /Producer (modifie apres certification) >>\nendobj\n";
+    let offset = bytes.len();
+    let update = format!(
+        "{object}xref\n7 1\n{offset:010} 00000 n \n\
+         trailer\n<< /Size 8 /Root 1 0 R /Info 7 0 R /Prev {previous} >>\n\
+         startxref\n{}\n%%EOF\n",
+        offset + object.len()
+    );
+    bytes.extend_from_slice(update.as_bytes());
+    bytes
+}
+
+/// Un document **certifié** (`/DocMDP /P 1` : aucune modification permise) puis modifié par une
+/// révision incrémentale (un nouveau `/Info`) : la signature ne couvre plus tout le fichier.
+///
+/// Pourquoi : une certification violée ne doit pas être rapportée « intègre » (audit E14).
+/// La signature est factice mais son `/ByteRange` est cohérent ; le verdict de certification
+/// ne dépend pas du CMS.
+pub fn certified_then_modified_pdf() -> Vec<u8> {
+    append_revision(certified_field_pdf(1))
+}
+
+/// Le PDF à un champ de signature commun à [`sig_subfilter_pdf`] et [`certified_field_pdf`] ;
+/// `extra` s'ajoute au dictionnaire `/Sig`, `/Contents` réserve `hex_digits` chiffres.
+fn signature_field_pdf(sub_filter: &str, extra: &str, hex_digits: usize) -> Vec<u8> {
+    let zeros = "0".repeat(hex_digits);
+    let content = "0 0 1 rg 10 10 50 50 re f";
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] /SigFlags 3 >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [5 0 R] /Contents 4 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Annot /Subtype /Widget /FT /Sig /T (Sig1) /V 6 0 R /Rect [0 0 0 0] /F 132 /P 3 0 R >>"
+            .to_string(),
+        format!(
+            "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /{sub_filter} {extra} \
+             /ByteRange [0 0000000000 0000000000 0000000000] /Contents <{zeros}> \
+             /M (D:20261031000000Z) >>"
+        ),
+    ];
+    let mut bytes = assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>");
+    let marker = b"/Contents <";
+    let Some(p) = bytes.windows(marker.len()).position(|w| w == marker) else {
+        return bytes;
+    };
+    let start = p + marker.len() - 1;
+    let end = start + bytes[start..].iter().position(|&c| c == b'>').unwrap_or(0) + 1;
+    let total = bytes.len();
+    let range = format!("[0 {start:010} {end:010} {:010}]", total - end);
+    let tag = b"/ByteRange ";
+    if let Some(q) = bytes.windows(tag.len()).position(|w| w == tag) {
+        let q = q + tag.len();
+        bytes[q..q + range.len()].copy_from_slice(range.as_bytes());
+    }
+    bytes
 }
 
 /// Une note qui contient `secret`, avec son popup **hors** de la note, une réponse (`/IRT`)

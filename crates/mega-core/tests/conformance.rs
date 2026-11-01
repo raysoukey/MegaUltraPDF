@@ -612,3 +612,137 @@ fn moving_pages_across_page_tree_nodes_produces_conforming_files() {
         }
     }
 }
+
+/// veraPDF et le corpus, s'ils sont fournis (`MEGA_VERAPDF` : script `verapdf` ou `.bat` ;
+/// `MEGA_CORPUS` : dossier `fixtures/corpus`). Sans eux, les tests veraPDF sont sautés.
+fn verapdf_setup() -> Option<(PathBuf, PathBuf)> {
+    let verapdf = std::env::var_os("MEGA_VERAPDF").filter(|v| !v.is_empty())?;
+    let corpus = std::env::var_os("MEGA_CORPUS").filter(|v| !v.is_empty())?;
+    Some((PathBuf::from(verapdf), PathBuf::from(corpus)))
+}
+
+/// Rapport veraPDF (`--format text`) d'un fichier pour un profil, et son verdict : vrai si la
+/// sortie commence par `PASS`.
+fn verapdf_report(verapdf: &Path, flavour: &str, file: &Path) -> (bool, String) {
+    let report = Command::new(verapdf)
+        .args(["--flavour", flavour, "--format", "text", "--verbose"])
+        .arg(file)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&report.stdout).into_owned();
+    (text.starts_with("PASS"), text)
+}
+
+/// Profil veraPDF d'un fichier du corpus : `0` (déduit de la déclaration XMP) pour PDF/A,
+/// `ua1` / `ua2` d'après le nom pour PDF/UA.
+fn flavour_of(name: &str) -> &'static str {
+    if name.starts_with("pdfua-1") {
+        "ua1"
+    } else if name.starts_with("pdfua-2") {
+        "ua2"
+    } else {
+        "0"
+    }
+}
+
+/// Le filigrane du contrôle : translucide (0,3), pour exercer l'opacité et la transparence.
+fn draft_watermark() -> mega_core::overlay::Watermark {
+    mega_core::overlay::Watermark {
+        text: "BROUILLON".to_string(),
+        size: 40.0,
+        opacity: 0.3,
+        angle_deg: 45.0,
+        color: mega_core::Color {
+            r: 200,
+            g: 30,
+            b: 30,
+        },
+        pages: None,
+    }
+}
+
+/// Un filigrane et une numérotation ne cassent la conformité d'**aucun** fichier conforme du
+/// corpus : PDF/UA (artefacts), PDF/A-1 (ni transparence ni opacité), PDF/A-2 à 4 (couleur
+/// indépendante du périphérique, groupe de transparence) — audit E6. Les échecs sont tous
+/// listés avant l'assertion, pour voir d'un coup ce qui reste à corriger.
+#[test]
+fn watermark_and_page_numbers_keep_the_conformance_of_every_corpus_file() {
+    let Some((verapdf, corpus)) = verapdf_setup() else {
+        eprintln!("MEGA_VERAPDF / MEGA_CORPUS absents : contrôle veraPDF sauté");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for folder in ["pdfa", "pdfua"] {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(corpus.join(folder))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "pdf"))
+            .collect();
+        files.sort();
+        for source in files {
+            let name = source.file_name().unwrap().to_string_lossy().into_owned();
+            let mut doc = Document::open(&source, None).unwrap();
+            doc.add_watermark(&draft_watermark()).unwrap();
+            doc.add_page_numbers(&mega_core::overlay::PageNumbering {
+                template: "Page {n} / {total}".to_string(),
+                corner: mega_core::overlay::Corner::BottomCenter,
+                margin: 20.0,
+                size: 10.0,
+                start: 1,
+                pages: None,
+            })
+            .unwrap();
+            let out = dir.path().join(&name);
+            doc.save_as(&out).unwrap();
+            let flavour = flavour_of(&name);
+            let (pass, report) = verapdf_report(&verapdf, flavour, &out);
+            checked += 1;
+            if !pass {
+                failures.push(format!(
+                    "{name} (veraPDF {flavour})
+{report}"
+                ));
+            }
+        }
+    }
+    assert!(checked > 0, "corpus vide");
+    assert!(
+        failures.is_empty(),
+        "{} fichier(s) sur {checked} ne passent plus :
+{}",
+        failures.len(),
+        failures.join(
+            "
+"
+        )
+    );
+}
+
+/// Changer le titre d'un fichier PDF/A-4 n'écrit que le XMP : PDF/A-4 interdit `/Info`
+/// (6.1.3-t4/t5), hors `/ModDate` existant (audit E6).
+#[test]
+fn retitling_a_pdfa4_file_keeps_its_conformance() {
+    let Some((verapdf, corpus)) = verapdf_setup() else {
+        eprintln!("MEGA_VERAPDF / MEGA_CORPUS absents : contrôle veraPDF sauté");
+        return;
+    };
+    let source = corpus.join("pdfa").join("pdfa-4-6-1-2-t01-pass-a.pdf");
+    let mut doc = Document::open(&source, None).unwrap();
+    doc.set_metadata(&mega_core::properties::MetadataPatch {
+        title: Some("Nouveau titre".to_string()),
+        author: Some("Ève".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("titre.pdf");
+    doc.save_as(&out).unwrap();
+    let (pass, report) = verapdf_report(&verapdf, "0", &out);
+    assert!(
+        pass,
+        "PDF/A-4 retitré : veraPDF
+{report}"
+    );
+}

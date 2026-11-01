@@ -81,6 +81,10 @@ pub enum SigIssue {
     ContentsInvalid,
     /// Signature de droits d'utilisation (UR3), non vérifiée.
     UsageRights,
+    /// Document certifié (`/DocMDP`, aucune modification permise) modifié après coup.
+    CertifiedThenModified,
+    /// Horodatage de document (`ETSI.RFC3161`), non vérifié.
+    DocumentTimestamp,
 }
 
 impl SigIssue {
@@ -117,6 +121,8 @@ impl SigIssue {
             SigIssue::ByteRangeInvalid => "/ByteRange absent ou mal formé",
             SigIssue::ContentsInvalid => "valeur /Contents illisible ou mal placée",
             SigIssue::UsageRights => "signature de droits d'utilisation (UR3), non vérifiée",
+            SigIssue::CertifiedThenModified => "document certifié puis modifié",
+            SigIssue::DocumentTimestamp => "horodatage de document (non vérifié)",
         }
     }
 }

@@ -534,3 +534,108 @@ fn cyrillic_field_value_is_utf16() {
         Some("Привет")
     );
 }
+
+// --- Lot 14 : /NeedAppearances retiré quand les apparences existent (audit E7) ------------
+
+/// `/NeedAppearances` du `/AcroForm` d'un PDF enregistré (`None` s'il est absent).
+fn need_appearances_in(bytes: &[u8]) -> Option<bool> {
+    let lo = lopdf::Document::load_mem(bytes).unwrap();
+    let (_, acro) = lo
+        .dereference(lo.catalog().unwrap().get(b"AcroForm").ok()?)
+        .ok()?;
+    acro.as_dict()
+        .ok()?
+        .get(b"NeedAppearances")
+        .ok()?
+        .as_bool()
+        .ok()
+}
+
+#[test]
+fn need_appearances_is_dropped_when_every_widget_has_an_appearance() {
+    let fixture = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/form.pdf"),
+    )
+    .unwrap();
+    for (source, bytes) in [
+        ("form.pdf", fixture),
+        ("sans /NeedAppearances", form_pdf_without_need_appearances()),
+    ] {
+        for render_first in [false, true] {
+            let what = format!("{source}, rendu avant : {render_first}");
+            let mut doc = Document::from_bytes(bytes.clone(), None).unwrap();
+            doc.set_field_value(0, 0, &text("Dupont")).unwrap();
+            if render_first {
+                doc.render_page(0, 0.5).unwrap();
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let out = dir.path().join("sortie.pdf");
+            doc.save_as(&out).unwrap();
+            let saved = std::fs::read(&out).unwrap();
+            assert_eq!(need_appearances_in(&saved), None, "{what}");
+            let again = Document::from_bytes(saved, None).unwrap();
+            assert_eq!(
+                again.form_fields(0).unwrap()[0].value.as_deref(),
+                Some("Dupont"),
+                "{what}"
+            );
+        }
+    }
+}
+
+/// Contenu décodé de tous les flux `/AP /N` des widgets d'un PDF (octets enregistrés).
+fn widget_appearance_text(bytes: &[u8]) -> String {
+    let lo = lopdf::Document::load_mem(bytes).unwrap();
+    let mut out = String::new();
+    for object in lo.objects.values() {
+        let Ok(dict) = object.as_dict() else { continue };
+        if dict.get(b"Subtype").and_then(lopdf::Object::as_name).ok() != Some(b"Widget") {
+            continue;
+        }
+        let Some((_, ap)) = dict.get(b"AP").ok().and_then(|a| lo.dereference(a).ok()) else {
+            continue;
+        };
+        let Some((_, n)) = ap
+            .as_dict()
+            .ok()
+            .and_then(|a| a.get(b"N").ok())
+            .and_then(|n| lo.dereference(n).ok())
+        else {
+            continue;
+        };
+        if let Ok(stream) = n.as_stream() {
+            let data = stream
+                .decompressed_content()
+                .unwrap_or_else(|_| stream.content.clone());
+            out.push_str(&String::from_utf8_lossy(&data));
+        }
+    }
+    out
+}
+
+/// Un champ rempli dont l'`/AP` date d'avant la valeur : seul « Enregistrer » régénère les
+/// apparences et retire `/NeedAppearances` ; extraire, scinder ou fusionner gardent la clé (et
+/// l'apparence périmée), que le lecteur ouvrant le résultat régénérera (audit E7).
+#[test]
+fn only_save_drops_need_appearances_when_an_appearance_is_out_of_date() {
+    let mut doc =
+        Document::from_bytes(mega_core::testing::form_with_appearances_pdf(), None).unwrap();
+    doc.set_field_value(0, 0, &text("Salut")).unwrap();
+    let extracted = doc.extract_pages(&[0]).unwrap();
+    let merged = mega_core::pages::merge(&[&doc, &doc]).unwrap();
+    for (what, bytes) in [("extraction", &extracted), ("fusion", &merged)] {
+        assert_eq!(need_appearances_in(bytes), Some(true), "{what}");
+        assert!(
+            widget_appearance_text(bytes).contains("Bonjour"),
+            "{what} : apparence périmée gardée"
+        );
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sortie.pdf");
+    doc.save_as(&out).unwrap();
+    let saved = std::fs::read(&out).unwrap();
+    assert_eq!(need_appearances_in(&saved), None);
+    let appearance = widget_appearance_text(&saved);
+    assert!(appearance.contains("Salut"), "{appearance}");
+    assert!(!appearance.contains("Bonjour"), "{appearance}");
+}

@@ -280,6 +280,7 @@ impl Document {
         doc.encrypt(&state)
             .map_err(|e| CoreError::InvalidOperation(format!("chiffrement : {e}")))?;
         complete_encrypt_dictionary(&mut doc);
+        declare_aes256_extension(&mut doc);
         let mut out = Vec::new();
         doc.save_to(&mut out)?;
         let previous = self.password().map(str::to_string);
@@ -341,5 +342,154 @@ impl Document {
             return Err(e);
         }
         Ok(())
+    }
+}
+
+/// Déclare que le fichier utilise l'AES-256 (révision 6), absent de PDF 1.7 : l'en-tête monte
+/// à 1.7 au moins (une version plus haute reste) et le catalogue reçoit
+/// `/Extensions << /ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >> >>` (Adobe Supplement to
+/// ISO 32000-1 ; ISO 32000-2, 7.6.4). Sans cela, un lecteur strict ne sait pas lire le fichier.
+fn declare_aes256_extension(doc: &mut lopdf::Document) {
+    use lopdf::dictionary;
+    if crate::crypt::parse_version(doc.version.as_bytes()).is_none_or(|v| v < (1, 7)) {
+        doc.version = "1.7".to_string();
+    }
+    let Some(root) = doc
+        .trailer
+        .get(b"Root")
+        .ok()
+        .and_then(|r| r.as_reference().ok())
+    else {
+        return;
+    };
+    let Ok(catalog) = doc.get_dictionary(root) else {
+        return;
+    };
+    // Une table `/Extensions` peut être un objet indirect : on la complète là où elle vit.
+    let indirect = catalog
+        .get(b"Extensions")
+        .and_then(lopdf::Object::as_reference)
+        .ok()
+        .filter(|id| doc.get_dictionary(*id).is_ok());
+    let existing = match indirect {
+        Some(id) => doc.get_dictionary(id).ok(),
+        None => catalog
+            .get(b"Extensions")
+            .and_then(lopdf::Object::as_dict)
+            .ok(),
+    };
+    // Une extension d'Adobe de niveau 8 ou plus (plus récente, qui inclut la nôtre) reste.
+    if existing.is_some_and(|ext| adobe_extension_level(doc, ext).is_some_and(|l| l >= 8)) {
+        return;
+    }
+    let adbe = dictionary! {
+        "BaseVersion" => lopdf::Object::Name(b"1.7".to_vec()),
+        "ExtensionLevel" => 8,
+    };
+    // Une table `/Extensions` existante est complétée, pas remplacée (autres développeurs).
+    if let Some(id) = indirect {
+        if let Ok(extensions) = doc.get_dictionary_mut(id) {
+            extensions.set("ADBE", adbe);
+        }
+        return;
+    }
+    let Ok(catalog) = doc.get_dictionary_mut(root) else {
+        return;
+    };
+    if let Ok(existing) = catalog.get_mut(b"Extensions").and_then(|e| e.as_dict_mut()) {
+        existing.set("ADBE", adbe);
+    } else {
+        catalog.set("Extensions", dictionary! { "ADBE" => adbe });
+    }
+}
+
+/// Plus haut `/ExtensionLevel` de l'entrée `/ADBE` d'une table `/Extensions` : un dictionnaire,
+/// ou (PDF 2.0, §7.12.3) un tableau de dictionnaires ; références suivies.
+fn adobe_extension_level(doc: &lopdf::Document, extensions: &lopdf::Dictionary) -> Option<i64> {
+    let level = |entry: &lopdf::Object| -> Option<i64> {
+        let (_, entry) = doc.dereference(entry).ok()?;
+        let raw = entry.as_dict().ok()?.get(b"ExtensionLevel").ok()?;
+        doc.dereference(raw).ok()?.1.as_i64().ok()
+    };
+    let (_, adbe) = doc.dereference(extensions.get(b"ADBE").ok()?).ok()?;
+    match adbe {
+        lopdf::Object::Array(items) => items.iter().filter_map(level).max(),
+        other => level(other),
+    }
+}
+
+#[cfg(test)]
+mod extension_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use lopdf::{Object, dictionary};
+
+    /// Un catalogue dont `/Extensions` vaut `extensions` (objet 3 si `indirect`).
+    fn doc_with(extensions: lopdf::Dictionary, indirect: bool) -> lopdf::Document {
+        let mut doc = lopdf::Document::with_version("1.7");
+        let value = if indirect {
+            Object::Reference(doc.add_object(extensions))
+        } else {
+            Object::Dictionary(extensions)
+        };
+        let root = doc.add_object(dictionary! { "Type" => "Catalog", "Extensions" => value });
+        doc.trailer.set("Root", root);
+        doc
+    }
+
+    /// Le dictionnaire `/Extensions` du catalogue, déréférencé.
+    fn extensions(doc: &lopdf::Document) -> lopdf::Dictionary {
+        let ext = doc.catalog().unwrap().get(b"Extensions").unwrap();
+        doc.dereference(ext).unwrap().1.as_dict().unwrap().clone()
+    }
+
+    fn level(ext: &lopdf::Dictionary) -> i64 {
+        ext.get(b"ADBE")
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"ExtensionLevel")
+            .unwrap()
+            .as_i64()
+            .unwrap()
+    }
+
+    /// Revue de la partie C : un `/Extensions` indirect est complété là où il vit, ses autres
+    /// entrées gardées.
+    #[test]
+    fn an_indirect_extensions_dictionary_is_completed() {
+        let other =
+            dictionary! { "BaseVersion" => Object::Name(b"1.7".to_vec()), "ExtensionLevel" => 1 };
+        let mut doc = doc_with(dictionary! { "XYZ" => other }, true);
+        declare_aes256_extension(&mut doc);
+        assert!(
+            doc.catalog()
+                .unwrap()
+                .get(b"Extensions")
+                .unwrap()
+                .as_reference()
+                .is_ok(),
+            "la référence reste"
+        );
+        let ext = extensions(&doc);
+        assert!(ext.has(b"XYZ"), "{ext:?}");
+        assert_eq!(level(&ext), 8);
+    }
+
+    /// Un `/ADBE` de niveau 8 ou plus (une extension plus récente d'Adobe) est gardé ; un
+    /// niveau inférieur est remplacé.
+    #[test]
+    fn a_higher_adobe_extension_level_is_kept() {
+        let adbe = |n: i64| {
+            dictionary! { "ADBE" => dictionary! {
+                "BaseVersion" => Object::Name(b"1.7".to_vec()), "ExtensionLevel" => n
+            } }
+        };
+        let mut high = doc_with(adbe(11), false);
+        declare_aes256_extension(&mut high);
+        assert_eq!(level(&extensions(&high)), 11);
+        let mut low = doc_with(adbe(3), true);
+        declare_aes256_extension(&mut low);
+        assert_eq!(level(&extensions(&low)), 8);
     }
 }

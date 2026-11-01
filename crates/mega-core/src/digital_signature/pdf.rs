@@ -298,7 +298,12 @@ fn contents_bytes(bytes: &[u8], a: usize, b: usize) -> Result<Vec<u8>, &'static 
 type DigestCache = HashMap<(usize, usize, usize, cms::DigestAlgorithm), Vec<u8>>;
 
 /// Vérifie une signature (dictionnaire `/V`) contre les octets du fichier.
-fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> SignatureInfo {
+fn check_one(
+    doc: &LoDocument,
+    bytes: &[u8],
+    field: &SigField<'_>,
+    digests: &mut DigestCache,
+) -> SignatureInfo {
     let value = field.value;
     let sub_filter = value
         .get(b"SubFilter")
@@ -316,6 +321,11 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
         status: SignatureStatus::Unsupported(SigIssue::CmsUnreadable),
         covers_whole_document: false,
     };
+    if sub_filter == "ETSI.RFC3161" {
+        // Horodatage de document (ISO 32000-2, 12.8.5) : ce n'est pas une signature de personne.
+        info.status = SignatureStatus::Unsupported(SigIssue::DocumentTimestamp);
+        return info;
+    }
     if sub_filter != "adbe.pkcs7.detached" && sub_filter != "ETSI.CAdES.detached" {
         info.status = SignatureStatus::Unsupported(SigIssue::UnsupportedFormat);
         return info;
@@ -327,6 +337,18 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
             return info;
         }
     };
+    // Ce qui suit la seconde plage signée, examiné une fois : rien que des blancs PDF ou du
+    // bourrage NUL (la signature couvre tout le fichier), ou autre chose. On échoue **fermé** :
+    // tout autre octet compte comme une modification, sans exiger de `startxref` (une
+    // révision tronquée ou maquillée n'en a pas forcément ; revue de sécurité du Lot 14).
+    let tail_is_blank = bytes[b + c..].iter().all(|byte| is_pdf_whitespace(*byte));
+    let later_bytes = !tail_is_blank;
+    // Document certifié sans modification permise (`/DocMDP /P 1`) : des octets ajoutés après
+    // la signature violent la certification, quel que soit le reste du verdict.
+    if certified_without_changes(doc, value) && later_bytes {
+        info.status = SignatureStatus::Invalid(SigIssue::CertifiedThenModified);
+        return info;
+    }
     let der = match contents_bytes(bytes, a, b) {
         Ok(der) => der,
         Err(_) => {
@@ -362,8 +384,15 @@ fn check_one(bytes: &[u8], field: &SigField<'_>, digests: &mut DigestCache) -> S
     }
     info.status = check.status;
     // Couvre tout le fichier si rien ne suit la seconde plage, sinon des blancs seulement.
-    info.covers_whole_document = bytes[b + c..].iter().all(u8::is_ascii_whitespace);
+    info.covers_whole_document = tail_is_blank;
     info
+}
+
+/// Blanc au sens PDF (ISO 32000-1, §7.2.2, tableau 1) : NUL, tabulation, fin de ligne, saut
+/// de page, retour chariot, espace. `u8::is_ascii_whitespace` ignore NUL, qu'un transfert
+/// ajoute parfois en bourrage après `%%EOF`.
+fn is_pdf_whitespace(byte: u8) -> bool {
+    matches!(byte, 0x00 | b'\t' | b'\n' | 0x0C | b'\r' | b' ')
 }
 
 /// Les signatures de ce fichier PDF, vérifiées (aucune : liste vide). Un PDF chiffré par mot
@@ -383,7 +412,7 @@ fn signatures_with(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<Signa
     let mut digests = DigestCache::new();
     let mut list: Vec<SignatureInfo> = signature_fields(&doc)
         .iter()
-        .map(|field| check_one(bytes, field, &mut digests))
+        .map(|field| check_one(&doc, bytes, field, &mut digests))
         .collect();
     list.extend(usage_rights(&doc));
     Ok(list)
@@ -443,6 +472,30 @@ fn top_level_names(doc: &LoDocument) -> Vec<String> {
         .filter_map(|f| dict(doc, f))
         .filter_map(|d| text_of(d.get(b"T").ok()))
         .collect()
+}
+
+/// Vrai si le dictionnaire de signature porte une référence `/DocMDP` de niveau `P = 1`
+/// (certification : aucune modification permise).
+fn certified_without_changes(doc: &LoDocument, value: &Dictionary) -> bool {
+    value
+        .get(b"Reference")
+        .ok()
+        .and_then(|r| resolve(doc, r))
+        .and_then(|r| r.as_array().ok())
+        .is_some_and(|refs| {
+            refs.iter().filter_map(|r| dict(doc, r)).any(|r| {
+                r.get(b"TransformMethod")
+                    .ok()
+                    .and_then(|m| m.as_name().ok())
+                    .is_some_and(|m| m == b"DocMDP")
+                    && r.get(b"TransformParams")
+                        .ok()
+                        .and_then(|t| dict(doc, t))
+                        .and_then(|t| t.get(b"P").ok())
+                        .and_then(|p| p.as_i64().ok())
+                        == Some(1)
+            })
+        })
 }
 
 /// Refus propres à la signature : document chiffré, formulaire XFA, document certifié qui
@@ -539,16 +592,6 @@ fn push_to_array(
     Ok(())
 }
 
-/// `M.m` → `(M, m)` (chiffres uniques, comme le sont toutes les versions PDF).
-fn parse_version(text: &[u8]) -> Option<(u8, u8)> {
-    match text {
-        [major, b'.', minor, ..] if major.is_ascii_digit() && minor.is_ascii_digit() => {
-            Some((major - b'0', minor - b'0'))
-        }
-        _ => None,
-    }
-}
-
 /// Position unique de `needle` dans `haystack` à partir de `from` ; `None` si absente ou
 /// présente plusieurs fois (un espace réservé ambigu ne doit jamais être réécrit).
 fn find_unique(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -597,7 +640,7 @@ pub(crate) fn sign_bytes(
         .ok()
         .and_then(|c| c.get(b"Version").ok())
         .and_then(|v| v.as_name().ok())
-        .and_then(parse_version);
+        .and_then(crate::crypt::parse_version);
     // L'en-tête peut suivre des octets parasites (§7.5.2, note) : `crypt::header_version` le
     // cherche dans les 1024 premiers octets.
     let effective_version = crate::crypt::header_version(base).max(catalog_version);

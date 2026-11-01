@@ -131,7 +131,7 @@ fn xmp_of(bytes: &[u8]) -> String {
     let data = stream
         .decompressed_content()
         .unwrap_or_else(|_| stream.content.clone());
-    String::from_utf8(data).unwrap()
+    String::from_utf8_lossy(&data).into_owned()
 }
 
 #[test]
@@ -720,29 +720,109 @@ fn saving_creates_the_xmp_dates_when_absent() {
     assert!(xmp.contains("xmlns:xmp="), "{xmp}");
 }
 
-/// Constat de la tâche 21b du Lot 14 (pas encore corrigé hors chiffrement) : PDFium retire
-/// `/Filter /FlateDecode` d'un XMP compressé mais en recopie les octets compressés. Le XMP de
-/// tout fichier dont les métadonnées sont compressées (qpdf le fait par défaut) devient alors
-/// illisible au premier enregistrement. Dans un document chiffré, `Document::to_bytes` le
-/// répare en même temps qu'il le rechiffre (`crypt::reencrypt_metadata`) ; un document non
-/// chiffré n'y passe pas (pour qu'un document non chiffré ne paie aucune relecture `lopdf`).
-#[test]
-#[ignore = "constat 21b (Lot 14) : XMP compressé non chiffré dépouillé de son filtre par PDFium"]
-fn a_compressed_xmp_survives_a_save() {
-    let mut source =
-        lopdf::Document::load_mem(&mega_core::testing::rich_catalog_pdf("1.7", None)).unwrap();
-    source.compress();
+/// XMP de [`compressed_xmp_pdf`] : titre, auteur (`dc:creator`) et déclaration PDF/A-2B.
+const COMPRESSED_XMP: &str = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
+xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\">\
+<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Compressé</rdf:li></rdf:Alt></dc:title>\
+<dc:creator><rdf:Seq><rdf:li>Alice</rdf:li></rdf:Seq></dc:creator>\
+<pdfaid:part>2</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance>\
+</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+
+/// Une page, sans titre dans `/Info`, et un XMP **compressé** (`/Filter /FlateDecode`), comme
+/// l'écrivent qpdf (en chiffrant), Ghostscript ou des producteurs PDF/A : le titre ne se lit
+/// que dans le XMP.
+fn compressed_xmp_pdf() -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&sample_pdf(1, "xmp")).unwrap();
+    let info = doc.trailer.get(b"Info").unwrap().as_reference().unwrap();
+    doc.get_dictionary_mut(info).unwrap().remove(b"Title");
+    let mut dict = lopdf::Dictionary::new();
+    dict.set("Type", lopdf::Object::Name(b"Metadata".to_vec()));
+    dict.set("Subtype", lopdf::Object::Name(b"XML".to_vec()));
+    let id = doc.add_object(lopdf::Stream::new(dict, COMPRESSED_XMP.as_bytes().to_vec()));
+    let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    doc.get_dictionary_mut(root)
+        .unwrap()
+        .set("Metadata", lopdf::Object::Reference(id));
+    doc.compress();
     let mut bytes = Vec::new();
-    source.save_to(&mut bytes).unwrap();
-    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    doc.save_to(&mut bytes).unwrap();
+    let stream_dict = lopdf::Document::load_mem(&bytes)
+        .unwrap()
+        .get_object(id)
+        .unwrap()
+        .as_stream()
+        .unwrap()
+        .dict
+        .clone();
+    assert!(stream_dict.has(b"Filter"), "le XMP source est compressé");
+    bytes
+}
+
+/// Constat F21-5 (tâche 21b du Lot 14) : PDFium retire `/Filter /FlateDecode` d'un XMP
+/// compressé mais en recopie les octets compressés ; le XMP devenait illisible dès la
+/// première édition (titre perdu avant même d'enregistrer). Le document est désormais confié à
+/// PDFium avec ses flux de métadonnées décompressés, à l'ouverture.
+#[test]
+fn a_compressed_xmp_survives_an_edit_and_a_save() {
+    let mut doc = Document::from_bytes(compressed_xmp_pdf(), None).unwrap();
+    assert_eq!(
+        doc.properties().unwrap().title.as_deref(),
+        Some("Compressé")
+    );
     doc.rotate_pages(&[0], 1).unwrap();
+    let props = doc.properties().unwrap();
+    assert_eq!(
+        props.title.as_deref(),
+        Some("Compressé"),
+        "après une édition"
+    );
+    assert_eq!(
+        props.pdfa.as_deref(),
+        Some("PDF/A-2B"),
+        "déclaration PDF/A gardée"
+    );
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("xmp.pdf");
     doc.save_as(&path).unwrap();
     let xmp = xmp_of(&std::fs::read(&path).unwrap());
     assert!(
-        xmp.contains(">Riche</rdf:li>"),
+        xmp.contains(">Compressé</rdf:li>") && xmp.contains("<pdfaid:part>2</pdfaid:part>"),
         "XMP détruit : {:?}",
         xmp.chars().take(40).collect::<String>()
     );
+}
+
+/// Changer le titre d'un document à XMP compressé garde les autres propriétés du XMP (ici
+/// `dc:creator`) : avant la correction, `edit_xmp` échouait en silence sur des octets zlib.
+#[test]
+fn retitling_a_compressed_xmp_keeps_its_other_properties() {
+    let mut doc = Document::from_bytes(compressed_xmp_pdf(), None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    doc.set_metadata(&title("Nouveau")).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("xmp.pdf");
+    doc.save_as(&path).unwrap();
+    let xmp = xmp_of(&std::fs::read(&path).unwrap());
+    assert!(xmp.contains(">Nouveau</rdf:li>"), "{xmp}");
+    assert!(
+        xmp.contains("<rdf:li>Alice</rdf:li>"),
+        "dc:creator gardé : {xmp}"
+    );
+    assert!(xmp.contains("<pdfaid:part>2</pdfaid:part>"), "{xmp}");
+}
+
+/// La correction ne touche qu'à la copie confiée à PDFium : un document à XMP compressé ouvert
+/// puis enregistré sans modification garde ses octets d'origine (signatures intactes).
+#[test]
+fn an_unchanged_document_with_a_compressed_xmp_keeps_its_original_bytes() {
+    let source = compressed_xmp_pdf();
+    let doc = Document::from_bytes(source.clone(), None).unwrap();
+    assert_eq!(doc.file_bytes(), source.as_slice());
+    let mut doc = doc;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("intact.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), source);
 }

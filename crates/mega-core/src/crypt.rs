@@ -428,9 +428,30 @@ enum ClearXmp {
     Inflated(Vec<u8>),
 }
 
+/// Position de la première occurrence de `needle` dans `haystack`.
+///
+/// On cherche d'abord un octet repère de `needle` (une boucle simple, que le compilateur sait
+/// accélérer), puis on compare le motif entier seulement là : bien plus rapide que de comparer
+/// une fenêtre entière à chaque position, et ces recherches parcourent des fichiers entiers.
+/// Le repère est le deuxième octet d'un nom PDF (`/Metadata` → `M`) : la barre oblique, qui
+/// ouvre chaque nom du fichier, arrêterait la boucle sans cesse.
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let anchor = usize::from(needle.len() > 1 && needle[0] == b'/');
+    let marker = *needle.get(anchor)?;
+    let mut from = anchor;
+    while let Some(offset) = haystack.get(from..)?.iter().position(|&b| b == marker) {
+        let at = from + offset - anchor;
+        if haystack[at..].starts_with(needle) {
+            return Some(at);
+        }
+        from += offset + 1;
+    }
+    None
+}
+
 /// Vrai si `needle` apparaît dans `haystack`.
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
+    find(haystack, needle).is_some()
 }
 
 /// Vrai si la **dernière** remorque classique de `bytes` (entre le mot-clé `trailer` et
@@ -564,10 +585,9 @@ pub(crate) fn reencrypt_metadata(
     let encrypt = doc
         .get_dictionary(encrypt_id)
         .map_err(|_| metadata_error("dictionnaire /Encrypt illisible"))?;
-    let MetadataCipher::Encrypt(filter) = metadata_cipher(&doc, encrypt)? else {
-        return Ok(None);
-    };
-    // Chaque flux à chiffrer et le contenu en clair qu'il doit porter.
+    let cipher = metadata_cipher(&doc, encrypt)?;
+    // Chaque flux de métadonnées lisible sans clé, avec son XMP décompressé si PDFium en a
+    // retiré le `/Filter`.
     let targets: Vec<(ObjectId, Option<Vec<u8>>)> = doc
         .objects
         .iter()
@@ -588,9 +608,13 @@ pub(crate) fn reencrypt_metadata(
             }
         })
         .collect();
-    if targets.is_empty() {
-        return Ok(None);
-    }
+    let filter = match cipher {
+        _ if targets.is_empty() => return Ok(None),
+        MetadataCipher::Encrypt(filter) => filter,
+        // Métadonnées en clair par déclaration : rien à chiffrer, mais un XMP dont PDFium a
+        // retiré le `/Filter` (constat F21-5) doit être réécrit décompressé.
+        MetadataCipher::Clear => return inflate_metadata(doc, targets),
+    };
     let password = password.unwrap_or("");
     let algorithm = lopdf::encryption::PasswordAlgorithm::try_from(&doc)
         .map_err(|e| metadata_error(&format!("chiffrement illisible ({e})")))?;
@@ -632,6 +656,110 @@ pub(crate) fn seal_metadata(bytes: Vec<u8>, password: Option<&str>) -> Vec<u8> {
             bytes
         }
     }
+}
+
+/// Réécrit décompressés, **en clair**, les XMP dont PDFium a retiré le `/Filter`
+/// (`Some(xmp)` dans `targets`) d'un document lu sans déchiffrement dont les métadonnées sont
+/// en clair par déclaration. `Ok(None)` s'il n'y en a aucun.
+fn inflate_metadata(
+    mut doc: LoDocument,
+    targets: Vec<(ObjectId, Option<Vec<u8>>)>,
+) -> CoreResult<Option<Vec<u8>>> {
+    let mut changed = false;
+    for (id, inflated) in targets {
+        if let (Some(xmp), Some(Object::Stream(stream))) = (inflated, doc.objects.get_mut(&id)) {
+            stream.set_content(xmp);
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut out = Vec::new();
+    doc.save_to(&mut out)?;
+    Ok(Some(out))
+}
+
+/// Vrai si `bytes` contient peut-être un flux `/Type /Metadata` muni d'un `/Filter` : lecture
+/// des seuls octets, sans analyse. Pour chaque nom `/Metadata` qui suit `/Type`, le passage
+/// entre le mot-clé `obj` qui le précède et le mot-clé `stream` qui le suit (le dictionnaire
+/// du flux, toujours en clair) doit contenir `/Filter`. Un faux positif ne coûte qu'une
+/// lecture `lopdf` ; un faux négatif est impossible pour un flux (jamais dans un flux d'objets).
+fn may_have_filtered_metadata(bytes: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(found) = find(&bytes[from..], b"/Metadata") {
+        let at = from + found;
+        from = at + b"/Metadata".len();
+        // [Apprentissage] `trim_ascii_end` retire les blancs ASCII de fin d'une tranche
+        // d'octets, sans copie : `/Type /Metadata` et `/Type/Metadata` se reconnaissent pareil.
+        if !bytes[..at].trim_ascii_end().ends_with(b"/Type") {
+            continue;
+        }
+        let start = bytes[..at]
+            .windows(3)
+            .rposition(|window| window == b"obj")
+            .unwrap_or(0);
+        let end = find(&bytes[at..], b"stream").map_or(bytes.len(), |end| at + end);
+        if contains(&bytes[start..end], b"/Filter") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Constat F21-5 (relecture de la tâche 21b) : PDFium retire `/Filter` d'un flux de
+/// métadonnées compressé mais en recopie les octets compressés. Dès la première édition, le XMP
+/// d'un tel fichier devenait illisible (titre, auteur, déclaration PDF/A perdus).
+///
+/// À l'ouverture d'un document **non chiffré**, cette fonction rend la copie à confier à
+/// PDFium : chaque flux `/Type /Metadata` filtré dont le décodage (plafonné à 16 Mio) est un
+/// XMP y est stocké décodé, sans `/Filter` ni `/DecodeParms` ; PDFium l'écrit alors tel quel.
+/// `None` s'il n'y a rien à faire (cas courant, reconnu en lisant les octets) ou si la
+/// réécriture ne passe pas le contrôle de [`crate::cleanup::rewrite_is_sane`] : PDFium reçoit
+/// alors le fichier d'origine. Les octets du fichier (`file_bytes`) ne changent pas : un
+/// document ouvert puis enregistré sans modification garde ses octets exacts.
+///
+/// Un document chiffré n'y passe pas : PDFium le lit déchiffré, et c'est
+/// [`seal_metadata`] qui répare sa sortie.
+pub(crate) fn unfiltered_metadata_copy(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !may_have_filtered_metadata(bytes) {
+        return None;
+    }
+    // Un document chiffré est écarté après lecture : sans mot de passe, lopdf n'en analyse
+    // aucun objet ; avec le mot de passe vide, il le déchiffre (`was_encrypted`).
+    let mut doc = load_limited(bytes, None).ok()?;
+    if doc.is_encrypted() || doc.was_encrypted() {
+        return None;
+    }
+    let decoded: Vec<(ObjectId, Vec<u8>)> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, object)| {
+            let stream = object.as_stream().ok()?;
+            let is_metadata = stream.dict.get(b"Type").and_then(Object::as_name).ok()
+                == Some(b"Metadata".as_slice());
+            let filtered = stream.filters().is_ok_and(|filters| !filters.is_empty());
+            if !is_metadata || !filtered {
+                return None;
+            }
+            let xmp = stream_bytes_within(stream, XMP_LIMIT)?;
+            is_clear_xmp(&xmp).then_some((*id, xmp))
+        })
+        .collect();
+    if decoded.is_empty() {
+        return None;
+    }
+    let pages = doc.get_pages().len();
+    for (id, xmp) in decoded {
+        if let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) {
+            stream.dict.remove(b"Filter");
+            stream.dict.remove(b"DecodeParms");
+            stream.set_content(xmp);
+        }
+    }
+    let mut out = Vec::new();
+    doc.save_to(&mut out).ok()?;
+    crate::cleanup::rewrite_is_sane(pages, &out, None).then_some(out)
 }
 
 /// Version `(majeur, mineur)` annoncée par l'en-tête `%PDF-M.n`, cherché dans les 1024
@@ -988,6 +1116,26 @@ mod metadata_tests {
         assert!(reencrypt_metadata(&fixed, Some("u")).unwrap().is_none());
     }
 
+    /// Constat F21-5 (relecture de la tâche 21b) : avec `/EncryptMetadata false` et un XMP
+    /// compressé, PDFium retire le `/Filter` en gardant les octets zlib ; le XMP est rendu
+    /// décompressé, **en clair** comme le fichier le déclare.
+    #[test]
+    fn a_declared_cleartext_compressed_xmp_is_inflated_not_encrypted() {
+        let source = Source {
+            encrypt_metadata: false,
+            compress: true,
+            ..AES256
+        };
+        let out = pdfium_output(encrypted(source), "u");
+        assert!(!has_clear_xmp(&out), "octets zlib sans /Filter");
+        let fixed = reencrypt_metadata(&out, Some("u"))
+            .unwrap()
+            .expect("XMP décompressé");
+        assert!(has_clear_xmp(&fixed), "toujours en clair");
+        assert_riche(&fixed, "/EncryptMetadata false");
+        assert!(reencrypt_metadata(&fixed, Some("u")).unwrap().is_none());
+    }
+
     #[test]
     fn nothing_to_do_without_encryption_or_with_a_declared_cleartext_xmp() {
         let plain = crate::testing::rich_catalog_pdf("1.7", None);
@@ -1089,5 +1237,42 @@ mod metadata_tests {
             let xmp = stream_bytes(read.get_object(id).unwrap().as_stream().unwrap()).unwrap();
             assert!(has_page_xmp(&xmp), "tour {round} : XMP de page détruit");
         }
+    }
+}
+
+#[cfg(test)]
+mod filtered_metadata_tests {
+    use super::*;
+
+    /// Le repérage par octets de F21-5 : un flux `/Type /Metadata` filtré, quel que soit
+    /// l'ordre des clés et l'espacement ; ni la référence `/Metadata` du catalogue ni un XMP
+    /// non compressé ne le déclenchent.
+    #[test]
+    fn filtered_metadata_streams_are_spotted_from_the_bytes() {
+        let filtered_after =
+            b"4 0 obj\n<< /Type /Metadata /Subtype /XML /Filter /FlateDecode /Length 3 >>\nstream\nabc";
+        let filtered_before = b"4 0 obj<</Filter/FlateDecode/Length 3/Type/Metadata>>stream\nabc";
+        let plain = b"1 0 obj\n<< /Type /Catalog /Metadata 4 0 R >>\nendobj\n\
+            4 0 obj\n<< /Type /Metadata /Subtype /XML /Length 3 >>\nstream\nabc\nendstream\nendobj\n\
+            5 0 obj\n<< /Filter /FlateDecode /Length 3 >>\nstream\nxyz";
+        assert!(may_have_filtered_metadata(filtered_after));
+        assert!(may_have_filtered_metadata(filtered_before));
+        assert!(!may_have_filtered_metadata(plain));
+    }
+}
+
+#[cfg(test)]
+mod find_tests {
+    use super::*;
+
+    #[test]
+    fn find_locates_names_and_keywords() {
+        assert_eq!(find(b"<< /Type /Metadata >>", b"/Metadata"), Some(9));
+        assert_eq!(find(b"/Metadata", b"/Metadata"), Some(0));
+        assert_eq!(find(b"//Metadata", b"/Metadata"), Some(1));
+        assert_eq!(find(b"/Metadat", b"/Metadata"), None);
+        assert_eq!(find(b"xx stream", b"stream"), Some(3));
+        assert_eq!(find(b"", b"/Metadata"), None);
+        assert!(contains(b"MMetadata /Metadata", b"/Metadata"));
     }
 }

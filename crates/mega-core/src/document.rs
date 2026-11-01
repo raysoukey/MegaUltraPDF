@@ -115,6 +115,10 @@ impl Document {
             return Err(CoreError::FileTooLarge { bytes: size });
         }
         let file_bytes = bytes.clone();
+        // Constat F21-5 : PDFium reçoit une copie dont les XMP compressés sont décodés (il en
+        // retirerait le `/Filter` en gardant les octets compressés) ; `file_bytes` reste
+        // l'original. Le cas courant est écarté en lisant les octets, sans analyse.
+        let bytes = crate::crypt::unfiltered_metadata_copy(&bytes).unwrap_or(bytes);
         let guard = engine::guard();
         let inner = match engine::load_bytes(&guard, bytes, password) {
             // Chiffrement par certificat : aucun mot de passe ne l'ouvrira (C9, Lot 13).

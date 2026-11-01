@@ -340,7 +340,6 @@ impl Document {
     /// Recadre les pages visées (`/CropBox`) par marges depuis la MediaBox, en points
     /// affichés ; quatre marges nulles retirent le recadrage.
     pub fn crop_pages(&mut self, c: &CropSpec) -> CoreResult<()> {
-        self.mark_changed();
         if c.margins.iter().any(|m| !m.is_finite() || *m < 0.0) {
             return Err(invalid("les marges doivent être positives ou nulles"));
         }
@@ -358,11 +357,15 @@ impl Document {
                 })
                 .collect()
         };
+        // Deux temps : calculer (et refuser) le recadrage de **chaque** page d'abord, puis
+        // seulement les poser. Un refus sur la troisième page ne laisse pas la première
+        // recadrée.
+        let mut crops = Vec::with_capacity(pages.len());
         {
             let _guard = engine::guard();
             for page in pages {
                 let index = self.checked_index_unlocked(page)?;
-                let mut pdf_page = self.inner().pages().get(index)?;
+                let pdf_page = self.inner().pages().get(index)?;
                 let rotate = pdf_page
                     .rotation()
                     .map(Rotation::from_pdfium)
@@ -404,7 +407,15 @@ impl Document {
                     w,
                     h,
                 };
-                let crop = frame.to_user_space(displayed);
+                crops.push((index, frame.to_user_space(displayed)));
+            }
+        }
+        // Après les gardes : un refus laisse le document intact.
+        self.mark_changed();
+        {
+            let _guard = engine::guard();
+            for (index, crop) in crops {
+                let mut pdf_page = self.inner().pages().get(index)?;
                 pdf_page.boundaries_mut().set_crop(to_pdf_rect(&crop))?;
             }
         }

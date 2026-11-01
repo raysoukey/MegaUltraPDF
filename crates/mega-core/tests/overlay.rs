@@ -934,3 +934,42 @@ fn refused_page_numbers_leave_the_document_unchanged() {
         assert!(saved_bytes(&mut doc) == source, "{what} : octets d'origine");
     }
 }
+
+/// Un recadrage refusé ne touche **aucune** page, même quand le refus vient d'une page
+/// plus loin dans la liste : `two_level_pages_pdf` a une page 1 de 600 pt de large (affichée)
+/// et une page 3 de 595 pt ; 597 pt de marges laissent 3 pt à la première et rien à la
+/// seconde. Toutes les pages sont vérifiées avant d'en recadrer une.
+#[test]
+fn a_refused_crop_leaves_every_page_untouched() {
+    let source = mega_core::testing::two_level_pages_pdf();
+    for (what, spec) in [
+        (
+            "marges trop grandes pour la page 3",
+            CropSpec {
+                margins: [0.0, 0.0, 597.0, 0.0],
+                pages: Some(vec![0, 2]),
+            },
+        ),
+        (
+            "page absente",
+            CropSpec {
+                margins: [10.0, 10.0, 10.0, 10.0],
+                pages: Some(vec![0, 9]),
+            },
+        ),
+        (
+            "marge négative",
+            CropSpec {
+                margins: [-1.0, 0.0, 0.0, 0.0],
+                pages: None,
+            },
+        ),
+    ] {
+        let mut doc = Document::from_bytes(source.clone(), None).unwrap();
+        assert!(doc.crop_pages(&spec).is_err(), "{what} : refusé");
+        let lo = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+        let first = lo.get_dictionary(lo.get_pages()[&1]).unwrap();
+        assert!(!first.has(b"CropBox"), "{what} : page 1 recadrée");
+        assert!(saved_bytes(&mut doc) == source, "{what} : octets d'origine");
+    }
+}

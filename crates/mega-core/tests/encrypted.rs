@@ -41,7 +41,7 @@ fn is_encrypted(bytes: &[u8]) -> bool {
 #[test]
 fn encrypted_document_is_cleaned_and_stays_encrypted() {
     let bytes = fixture("encrypted.pdf");
-    let out = before_save(&bytes, Some("secret")).unwrap();
+    let out = before_save(&bytes, Some("secret"), None).unwrap().bytes;
     assert_ne!(out, bytes, "le document a été réécrit (nettoyé)");
     assert!(mod_date(&out, "secret").is_some(), "/ModDate posé");
     assert!(is_encrypted(&out));
@@ -57,7 +57,7 @@ fn encrypted_document_is_cleaned_and_stays_encrypted() {
 #[test]
 fn owner_only_document_is_cleaned_and_stays_protected() {
     let bytes = fixture("owner-only.pdf");
-    let out = before_save(&bytes, None).unwrap();
+    let out = before_save(&bytes, None, None).unwrap().bytes;
     assert_ne!(out, bytes, "réécrit");
     assert!(mod_date(&out, "").is_some(), "/ModDate posé");
     assert!(
@@ -91,7 +91,7 @@ fn aes256_cleanup_keeps_password_and_permissions() {
         .unwrap()
         .security()
         .unwrap();
-    let out = before_save(&bytes, Some("u")).unwrap();
+    let out = before_save(&bytes, Some("u"), None).unwrap().bytes;
     assert!(mod_date(&out, "u").is_some(), "nettoyé");
     assert!(!String::from_utf8_lossy(&out).contains("TitreConfidentiel"));
     let reopened = Document::from_bytes(out, Some("u")).unwrap();
@@ -148,7 +148,7 @@ fn rc4_and_aes128_documents_are_cleaned_and_reopen() {
             Document::from_bytes(bytes.clone(), Some("u")).is_ok(),
             "fixture lisible"
         );
-        let out = before_save(&bytes, Some("u")).unwrap();
+        let out = before_save(&bytes, Some("u"), None).unwrap().bytes;
         assert!(mod_date(&out, "u").is_some(), "aes={aes} : nettoyé");
         let doc = Document::from_bytes(out, Some("u")).unwrap();
         assert!(doc.page_text(0).unwrap().contains("Page 1"), "aes={aes}");
@@ -267,27 +267,170 @@ fn attachments_only_encryption_is_not_corrupted() {
         doc.page_text(0).unwrap().contains("Hello Identity"),
         "fixture lisible"
     );
-    let out = before_save(&bytes, None).unwrap();
+    let out = before_save(&bytes, None, None).unwrap().bytes;
     let reopened = Document::from_bytes(out, None).unwrap();
     assert!(reopened.page_text(0).unwrap().contains("Hello Identity"));
     assert_eq!(reopened.title().as_deref(), Some("Plain title"));
-    // Une passe lopdf (filigrane) refuse clairement au lieu d'abîmer le fichier.
+    // Une passe lopdf (filigrane) passe désormais par la session « passe-plat » (audit L16).
     let mut doc = Document::from_bytes(bytes, None).unwrap();
-    let result = doc.add_watermark(&Watermark {
+    doc.add_watermark(&Watermark {
         text: "X".to_string(),
         size: 40.0,
         opacity: 0.5,
         angle_deg: 0.0,
         color: Color { r: 0, g: 0, b: 0 },
         pages: None,
-    });
-    match result {
-        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffr"), "{m}"),
-        Ok(()) => {
-            let again = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
-            assert!(again.page_text(0).unwrap().contains("Hello Identity"));
-            assert_eq!(again.title().as_deref(), Some("Plain title"));
-        }
-        Err(other) => panic!("{other:?}"),
+    })
+    .unwrap();
+    let again = Document::from_bytes(doc.to_bytes().unwrap(), None).unwrap();
+    assert!(again.page_text(0).unwrap().contains("Hello Identity"));
+    assert_eq!(again.title().as_deref(), Some("Plain title"));
+}
+
+/// Octets bruts du flux `/EF /F` de la première pièce jointe. Le fichier est lu **sans**
+/// déchiffrement (`/Encrypt` rebaptisé, même longueur) : lopdf appliquerait sinon RC4 aux
+/// flux d'un fichier `/StmF /Identity`.
+fn without_encrypt(bytes: &[u8]) -> lopdf::Document {
+    let mut raw = bytes.to_vec();
+    let hits: Vec<usize> = (0..raw.len().saturating_sub(9))
+        .filter(|&i| raw[i..].starts_with(b"/Encrypt "))
+        .collect();
+    for at in hits {
+        raw[at + 7] = b'x';
     }
+    lopdf::Document::load_mem(&raw).unwrap()
+}
+
+fn embedded_file_stream_bytes(bytes: &[u8]) -> Vec<u8> {
+    let doc = without_encrypt(bytes);
+    let dict_at = |obj: &lopdf::Object| doc.dereference(obj).unwrap().1.clone();
+    let root = dict_at(doc.trailer.get(b"Root").unwrap());
+    let names = dict_at(root.as_dict().unwrap().get(b"Names").unwrap());
+    let embedded = dict_at(names.as_dict().unwrap().get(b"EmbeddedFiles").unwrap());
+    let list = embedded
+        .as_dict()
+        .unwrap()
+        .get(b"Names")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let spec = dict_at(&list[1]);
+    let ef = dict_at(spec.as_dict().unwrap().get(b"EF").unwrap());
+    let file = dict_at(ef.as_dict().unwrap().get(b"F").unwrap());
+    file.as_stream().unwrap().content.clone()
+}
+
+/// Audit L16 : un fichier dont seules les pièces jointes sont chiffrées se filigrane et se
+/// réécrit ; son `/Encrypt`, son `/ID` et les octets (chiffrés) de la pièce jointe restent
+/// ceux d'origine.
+#[test]
+fn identity_filtered_file_keeps_its_encrypt_dictionary_and_attachment_bytes_after_watermark() {
+    let input = mega_core::testing::attachments_only_encrypted_with_file_pdf();
+    let ef_before = embedded_file_stream_bytes(&input);
+    assert_eq!(ef_before, b"CIPHERTEXT-ABC123");
+    let mut doc = Document::from_bytes(input.clone(), None).unwrap();
+    doc.add_watermark(&Watermark {
+        text: "x".to_string(),
+        size: 40.0,
+        opacity: 0.5,
+        angle_deg: 0.0,
+        color: Color { r: 0, g: 0, b: 0 },
+        pages: None,
+    })
+    .unwrap();
+    let pdfium_bytes = doc.to_bytes().unwrap();
+    let out = before_save(&pdfium_bytes, None, None).unwrap().bytes;
+    assert_eq!(embedded_file_stream_bytes(&out), ef_before);
+    assert!(out.windows(9).any(|w| w == b"/Encrypt "));
+    assert!(!out.windows(8).any(|w| w == b"/Encrypx"));
+    let id_of = |bytes: &[u8]| without_encrypt(bytes).trailer.get(b"ID").unwrap().clone();
+    // PDFium écrit lui-même un nouveau second élément de `/ID` : la passe ne doit rien changer.
+    assert_eq!(id_of(&out), id_of(&pdfium_bytes));
+    assert_eq!(
+        id_of(&out).as_array().unwrap()[0],
+        id_of(&input).as_array().unwrap()[0]
+    );
+    let reopened = Document::from_bytes(out, None).unwrap();
+    assert!(reopened.page_text(0).unwrap().contains("Hello Identity"));
+}
+
+/// Numéro d'objet et octets bruts du flux `/EF /F` de la première pièce jointe.
+fn embedded_file_stream(bytes: &[u8]) -> (lopdf::ObjectId, Vec<u8>) {
+    let doc = without_encrypt(bytes);
+    let dict_at = |obj: &lopdf::Object| doc.dereference(obj).unwrap().1.clone();
+    let root = dict_at(doc.trailer.get(b"Root").unwrap());
+    let names = dict_at(root.as_dict().unwrap().get(b"Names").unwrap());
+    let embedded = dict_at(names.as_dict().unwrap().get(b"EmbeddedFiles").unwrap());
+    let list = embedded
+        .as_dict()
+        .unwrap()
+        .get(b"Names")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let spec = dict_at(&list[1]);
+    let ef = dict_at(spec.as_dict().unwrap().get(b"EF").unwrap());
+    let file = ef.as_dict().unwrap().get(b"F").unwrap();
+    let id = file.as_reference().unwrap();
+    (id, dict_at(file).as_stream().unwrap().content.clone())
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Le numéro d'un objet chiffré entre dans sa clé (RC4 et AES) : supprimer une note numérotée
+/// avant la pièce jointe ne doit pas renuméroter le flux de celle-ci.
+#[test]
+fn deleting_a_lower_numbered_note_keeps_the_attachment_object_number() {
+    let input = mega_core::testing::attachments_only_encrypted_with_note_pdf();
+    let before = embedded_file_stream(&input);
+    assert_eq!(before.0, (10, 0));
+    let mut doc = Document::from_bytes(input, None).unwrap();
+    doc.delete_annotation(0, 0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("o.pdf");
+    doc.save_as(&path).unwrap();
+    let out = std::fs::read(&path).unwrap();
+    assert!(!contains(&out, b"SECRET-NOTE"), "la note ne survit pas");
+    assert!(!contains(&out, b"/Encrypx"), "aucune clé rebaptisée écrite");
+    assert_eq!(embedded_file_stream(&out), before);
+}
+
+/// Seule la remorque est lue pour cacher `/Encrypt` : un contenu de page non compressé qui
+/// cite le même texte reste intact.
+#[test]
+fn a_page_content_quoting_the_encrypt_reference_is_not_altered() {
+    // Passe directe : PDFium, lui, recompresse les contenus qu'il réécrit.
+    let input = mega_core::testing::attachments_only_encrypted_with_note_pdf();
+    assert!(contains(&input, b"% /Encrypt 12 0 R"));
+    let out = before_save(&input, None, None).unwrap();
+    assert!(out.cleaned);
+    assert!(contains(&out.bytes, b"% /Encrypt 12 0 R"));
+    assert!(!contains(&out.bytes, b"/Encrypx"));
+}
+
+/// Le dictionnaire `/Encrypt` écrit est celui d'origine, sans le moindre changement.
+#[test]
+fn identity_pass_keeps_the_encrypt_dictionary_unchanged() {
+    let input = mega_core::testing::attachments_only_encrypted_with_file_pdf();
+    let out = before_save(&input, None, None).unwrap();
+    assert!(out.cleaned);
+    assert!(!contains(&out.bytes, b"/Encrypx"));
+    let encrypt_of = |bytes: &[u8]| {
+        let doc = without_encrypt(bytes);
+        let reference = doc.trailer.get(b"Encrypx").unwrap();
+        doc.dereference(reference).unwrap().1.clone()
+    };
+    let (original, written) = (encrypt_of(&input), encrypt_of(&out.bytes));
+    for key in [
+        "O", "U", "P", "CF", "EFF", "V", "R", "StmF", "StrF", "Length",
+    ] {
+        assert_eq!(
+            original.as_dict().unwrap().get(key.as_bytes()).unwrap(),
+            written.as_dict().unwrap().get(key.as_bytes()).unwrap(),
+            "{key}"
+        );
+    }
+    assert_eq!(original, written);
 }

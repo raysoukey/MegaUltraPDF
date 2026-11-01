@@ -105,7 +105,8 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
 - Octets du fichier (Lot 8) : `Document` garde les octets chargés ou enregistrés
   (`file_bytes`) et un drapeau `changed` ; `save_as` écrit ces octets tels quels tant que
   rien n'a changé (signatures préservées), et les signatures se vérifient toujours sur eux. **Toute nouvelle
-  méthode publique qui modifie le document appelle `self.mark_changed()` en tête** (en plus
+  méthode publique qui modifie le document appelle `self.mark_changed()` dès que la modification
+  est certaine : après les gardes de refus (`ensure_cleanable`, validation), jamais avant** (en plus
   de `apply`), sinon une modification directe (chemin du CLI) serait perdue à l'enregistrement.
 - OCR et signature (ADR-0013) : modules derrière les features `ocr` / `signature` de
   `mega-core` (le CLI les active par défaut, l'app toujours). Tesseract est un processus
@@ -186,6 +187,14 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   scénarios. Copie : `logic/clipboard.ts` (repli et avis). Enregistrement : erreurs
   `FileReadOnly` / `FileLocked` / `FolderNotWritable`, dossier canonique (chemins > 260 car.).
   **Jamais** de vraie souris ni de vrai clavier simulés sur le poste (l'utilisateur s'en sert).
+- Compatibilité mesurée (Lot 14) : toute opération qui **retire** une information (annotation, page,
+  objet, texte remplacé, pièce jointe, caviardage) appelle `ensure_cleanable()?` avant `mark_changed()`,
+  ce qui pose `needs_cleanup`. `before_save` rend un `Saved` : le lire par `into_checked` (refus si le
+  nettoyage a été sauté après une suppression). Filtres `Identity` : session passe-plat, élaguée **sans
+  renumérotation** ; l'en-tête est reposé depuis `file_version` (PDFium n'écrit que 1.x). Report du
+  catalogue : `pages/carry` (jamais de JavaScript, `/AA`, `/MarkInfo`) ; `move_pages` réordonne `/Kids`
+  par `lopdf`. MCID orphelins (`cleanup/mcid`) : rien pour un `/MCR` à `/Stm` ni une page qui dessine
+  un XObject formulaire.
 - Fermeture (correctif 0.12.1) : avec un `onCloseRequested` dans l'interface, Tauri ne ferme plus la
   fenêtre lui-même, l'API JS appelle `window.destroy()` : la capacité **`core:window:allow-destroy`**
   est obligatoire (test `window-close.test.ts`), sinon la fenêtre ne se ferme jamais. Les scénarios
@@ -202,7 +211,8 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
 - Les métadonnées d'un PDF sont du texte PDFDocEncoding ou UTF-16BE+BOM, jamais de l'UTF-8 brut.
 - PDFium rapporte la taille d'une page **après** `/Rotate` : ne pas réappliquer la rotation
   enregistrée côté interface (seule la rotation d'affichage `doc.rotation` est appliquée).
-- `pdfium-render` 0.9 n'expose pas `FPDF_MovePages` : `move_pages` copie puis supprime.
+- `pdfium-render` 0.9 n'expose pas `FPDF_MovePages` : depuis le Lot 14, `move_pages` réordonne les
+  `/Kids` de l'arbre des pages avec `lopdf` (`pages/reorder.rs`) ; la page reste le même objet.
 - Annotations (ADR-0008) : **jamais `stroke_color()`/`fill_color()` sur une annotation**
   (pdfium-render 0.9.4 transtype le handle dès qu'un `/AP` existe → comportement indéfini,
   et PDFium génère un `/AP` au premier rendu) : la couleur se lit dans les objets ; couleurs

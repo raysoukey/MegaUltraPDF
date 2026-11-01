@@ -816,6 +816,7 @@ impl Document {
         self.history.saved_position = Some(self.history.position);
         self.file_bytes = bytes;
         self.changed = false;
+        self.needs_cleanup = false;
     }
 
     /// Le document réécrit tel que « Enregistrer » l'écrirait (sans l'écrire) : PDFium, puis
@@ -834,7 +835,11 @@ impl Document {
             bytes
         };
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
-        crate::cleanup::before_save(&bytes, self.password())
+        // Si une suppression a eu lieu et que le nettoyage n'a pas pu retirer ses restes,
+        // écrire les octets de PDFium ferait survivre ce que l'utilisateur a supprimé : refus
+        // (audit E1).
+        crate::cleanup::before_save(&bytes, self.password(), self.file_version())?
+            .into_checked(self.needs_cleanup, "enregistrement refusé")
     }
 
     /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.

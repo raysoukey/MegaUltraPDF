@@ -44,6 +44,16 @@ pub struct Document {
     /// Vrai dès qu'une modification éloigne le document de `file_bytes` ; redevient faux à
     /// l'enregistrement, ou quand annuler / rétablir ramène à l'état enregistré.
     pub(crate) changed: bool,
+    /// Une opération qui retire une information (annotation, page, objet, texte, pièce jointe,
+    /// caviardage) a eu lieu depuis le dernier enregistrement : `rewritten_bytes` refuse alors
+    /// d'écrire si le nettoyage `lopdf` n'a pas pu s'appliquer, car les restes de ce qui a été
+    /// supprimé survivraient dans le fichier (audit E1).
+    ///
+    /// Drapeau **prudent** : `ensure_cleanable` le pose avant que l'opération ne valide ses
+    /// arguments (une opération refusée ensuite le laisse levé), et annuler ne le baisse pas
+    /// (l'instantané rechargé peut lui aussi porter des orphelins). Seul l'enregistrement le
+    /// remet à faux.
+    pub(crate) needs_cleanup: bool,
     /// Compte rendu du caviardage que la dernière édition vient d'appliquer (sinon `None`) :
     /// l'interface le reçoit avec l'état de l'historique pour avertir l'utilisateur.
     pub(crate) last_redaction: Option<crate::content::redact::RedactReport>,
@@ -121,6 +131,7 @@ impl Document {
             history: crate::edit::History::new(crate::edit::HistoryLimits::default()),
             file_bytes,
             changed: false,
+            needs_cleanup: false,
             last_redaction: None,
             unicode_font: None,
         })
@@ -201,16 +212,62 @@ impl Document {
     }
 
     /// Le document ne correspond plus aux octets du fichier : le prochain enregistrement le
-    /// réécrira. Appelée en tête de **toute** méthode publique qui modifie le document
-    /// (appels directs du CLI compris), en plus de `apply`.
+    /// réécrira. Appelée par **toute** méthode publique qui modifie le document (appels
+    /// directs du CLI compris), en plus de `apply`, dès que la modification est certaine :
+    /// après les gardes de refus (`ensure_cleanable`, validation préalable), jamais avant.
     pub(crate) fn mark_changed(&mut self) {
         self.changed = true;
+    }
+
+    /// Refuse une opération qui supprime ou remplace du contenu si le nettoyage à
+    /// l'enregistrement ne pourra pas retirer ce qui est supprimé (audit E1).
+    ///
+    /// Pose aussi `needs_cleanup` : l'opération suit, `rewritten_bytes` vérifiera à
+    /// l'enregistrement que le nettoyage a eu lieu.
+    ///
+    /// À appeler **avant** `engine::guard()` : `to_bytes` prend le verrou, non réentrant.
+    pub(crate) fn ensure_cleanable(&mut self) -> CoreResult<()> {
+        match crate::cleanup::check_cleanable(&self.to_bytes()?, self.password()) {
+            Ok(()) => {
+                // L'appelant va supprimer : l'enregistrement devra vérifier que le nettoyage a
+                // eu lieu.
+                self.needs_cleanup = true;
+                Ok(())
+            }
+            // La cause est gardée (ADR-0005), sans répéter le préfixe « Opération impossible ».
+            Err(cause) => {
+                let cause = match cause {
+                    CoreError::InvalidOperation(message) => message,
+                    other => other.to_string(),
+                };
+                Err(CoreError::InvalidOperation(format!(
+                    "ce fichier ne pourrait pas être nettoyé après une suppression : la \
+                     suppression est refusée, l'ajout reste possible ({cause})"
+                )))
+            }
+        }
+    }
+
+    /// Vrai si une opération qui retire une information a eu lieu depuis le dernier
+    /// enregistrement (voir le champ `needs_cleanup`).
+    ///
+    /// Exposée uniquement pour les tests d'intégration, comme `cleanup::can_clean`.
+    #[doc(hidden)]
+    pub fn needs_cleanup(&self) -> bool {
+        self.needs_cleanup
     }
 
     /// Octets du fichier tel qu'il a été chargé ou enregistré, même si le document a été
     /// modifié depuis : c'est sur eux que se vérifient les signatures numériques.
     pub fn file_bytes(&self) -> &[u8] {
         &self.file_bytes
+    }
+
+    /// Version `(majeur, mineur)` de l'en-tête des octets du fichier (`file_bytes`), pas de
+    /// celle de PDFium qui ne sait écrire que 1.0 à 1.7 : elle sert de plancher à
+    /// `cleanup::before_save` pour que l'édition d'un PDF 2.0 reste un PDF 2.0 (audit E2).
+    pub(crate) fn file_version(&self) -> Option<(u8, u8)> {
+        crate::crypt::header_version(&self.file_bytes)
     }
 
     /// Remplace le document PDFium sous-jacent (annuler / rétablir) ; l'ancien est libéré
@@ -280,4 +337,22 @@ impl Document {
 fn uses_certificate_encryption(bytes: &[u8]) -> bool {
     let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
     contains(b"/Adobe.PubSec") && !contains(b"/Standard")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Le drapeau `needs_cleanup` monte avec une suppression et retombe à l'enregistrement.
+    #[test]
+    fn needs_cleanup_is_set_by_a_deletion_and_cleared_by_a_save() {
+        let mut doc =
+            Document::from_bytes(crate::testing::note_with_popup_pdf("SECRET-ZX9"), None).unwrap();
+        assert!(!doc.needs_cleanup);
+        doc.delete_annotation(0, 0).unwrap();
+        assert!(doc.needs_cleanup);
+        let dir = tempfile::tempdir().unwrap();
+        doc.save_as(dir.path().join("o.pdf")).unwrap();
+        assert!(!doc.needs_cleanup);
+    }
 }

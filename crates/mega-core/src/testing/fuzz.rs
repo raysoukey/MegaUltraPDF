@@ -113,7 +113,7 @@ pub fn exercise(bytes: Vec<u8>) -> bool {
     #[cfg(feature = "signature")]
     let _ = doc.signatures();
     if let Ok(saved) = doc.to_bytes() {
-        let _ = crate::cleanup::before_save(&saved, None);
+        let _ = crate::cleanup::before_save(&saved, None, None);
     }
     true
 }

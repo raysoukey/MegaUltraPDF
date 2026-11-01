@@ -18,6 +18,9 @@ use crate::error::{CoreError, CoreResult};
 use crate::geometry::Rotation;
 use crate::pagespec::PageSpec;
 
+mod carry;
+mod reorder;
+
 impl Document {
     /// Rotation **enregistrée** dans le fichier pour la page `index` (distincte de la
     /// rotation d'affichage choisie par l'utilisateur).
@@ -47,6 +50,7 @@ impl Document {
 
     /// Supprime les pages `pages`. Refuse de supprimer la dernière page du document.
     pub fn delete_pages(&mut self, pages: &[u16]) -> CoreResult<()> {
+        self.ensure_cleanable()?;
         self.mark_changed();
         let _guard = engine::guard();
         let indices = self.unique_indices_unlocked(pages)?;
@@ -100,32 +104,74 @@ impl Document {
     /// Déplace les pages `pages` (dans l'ordre du document) pour qu'elles commencent à
     /// l'index `to`, **compté une fois ces pages retirées** (`0..=page_count - pages.len()`).
     ///
-    /// PDFium n'expose pas de déplacement : on copie les pages depuis une copie du document
-    /// chargée des mêmes octets, puis on supprime les originales. Les signets qui visaient
-    /// une page déplacée peuvent être perdus (limite connue, voir la spec du Lot 2).
+    /// PDFium n'expose pas de déplacement, et une copie de page serait un nouvel objet que plus
+    /// rien ne viserait (signets, liens, balisage, formulaire : audit E4). Depuis le Lot 14, on
+    /// réordonne donc l'arbre des pages avec `lopdf` (`reorder::reorder_kids`) : la page reste
+    /// le même objet. Le document est déchiffré puis rechiffré à l'identique
+    /// (`crypt::LopdfSession`) et rechargé dans PDFium.
+    ///
+    /// Tout est vérifié et calculé **avant** de marquer le document modifié : un déplacement
+    /// refusé laisse `changed` faux, sinon l'enregistrement suivant réécrirait le fichier (et
+    /// romprait une signature).
     pub fn move_pages(&mut self, pages: &[u16], to: u16) -> CoreResult<()> {
+        let bytes = self.reordered_bytes(pages, to)?;
         self.mark_changed();
-        let guard = engine::guard();
-        let moved = self.unique_indices_unlocked(pages)?;
-        let remaining = self.count_unlocked() as usize - moved.len();
-        if to as usize > remaining {
-            return Err(CoreError::PageOutOfRange {
-                index: to,
-                count: remaining as u16,
-            });
+        self.reload_from_bytes(bytes)
+    }
+
+    /// Octets du document une fois les pages déplacées (voir [`Document::move_pages`]), sans
+    /// toucher au document.
+    fn reordered_bytes(&self, pages: &[u16], to: u16) -> CoreResult<Vec<u8>> {
+        let count = {
+            let _guard = engine::guard();
+            let moved = self.unique_indices_unlocked(pages)?;
+            let count = self.count_unlocked();
+            let remaining = usize::from(count) - moved.len();
+            if usize::from(to) > remaining {
+                return Err(CoreError::PageOutOfRange {
+                    index: to,
+                    count: u16::try_from(remaining).unwrap_or(u16::MAX),
+                });
+            }
+            count
+        };
+        // `to_bytes` et `reload_from_bytes` prennent eux-mêmes le jeton (non réentrant).
+        let mut session = crate::crypt::LopdfSession::load(&self.to_bytes()?, self.password())?;
+        // Index de PDFium et de lopdf doivent désigner les mêmes pages.
+        if session.doc.get_pages().len() != usize::from(count) {
+            return Err(CoreError::InvalidOperation(
+                "déplacement impossible : lopdf ne voit pas les mêmes pages que PDFium".to_string(),
+            ));
         }
-        let snapshot = engine::load_bytes(&guard, self.inner().save_to_bytes()?, self.password())?;
-        for i in moved.iter().rev() {
-            self.inner().pages().get(*i)?.delete()?;
-        }
-        copy_pages(self.inner_mut(), &snapshot, &moved, PdfPageIndex::from(to))
+        reorder::reorder_kids(&mut session.doc, pages, to)?;
+        session.finish()
     }
 
     /// Nouveau document composé des pages `pages` (dans l'ordre donné) ; l'original est intact.
-    /// Le résultat passe par le nettoyage d'enregistrement (`cleanup::before_save`) : une note
-    /// caviardée encore citée par une réponse ne doit pas revenir dans l'extrait (relecture du
-    /// Lot 9). Sert aussi à la scission.
+    /// Formulaire, signets, pièces jointes, étiquettes, calques et métadonnées du catalogue qui
+    /// concernent ces pages sont reportés (`carry`, audit E3). Le résultat passe par le
+    /// nettoyage d'enregistrement (`cleanup::before_save`) : une note caviardée encore citée
+    /// par une réponse ne doit pas revenir dans l'extrait (relecture du Lot 9). Sert aussi à la
+    /// scission.
     pub fn extract_pages(&self, pages: &[u16]) -> CoreResult<Vec<u8>> {
+        let source = carry_source(self)?;
+        self.extract_with(pages, source.as_ref())
+    }
+
+    /// [`Document::extract_pages`] avec la source déjà relue par `lopdf` (`carry_source`) : la
+    /// scission la relit une fois pour toutes ses parties.
+    fn extract_with(&self, pages: &[u16], source: Option<&lopdf::Document>) -> CoreResult<Vec<u8>> {
+        let copied = self.copy_pages_raw(pages)?;
+        let carried = with_catalogs(copied, &[(source, pages)])?;
+        // Document neuf assemblé par PDFium : jamais chiffré.
+        crate::cleanup::before_save(&carried, None, self.file_version())?
+            .into_checked(self.needs_cleanup, "extraction refusée")
+    }
+
+    /// Copie **brute** par PDFium des pages `pages` (dans l'ordre donné) dans un document neuf,
+    /// sérialisée : ni report du catalogue, ni nettoyage. Étape commune à l'extraction et aux
+    /// tests de la passe de report (`carry`), qui ont besoin de ce que PDFium seul produit.
+    pub(crate) fn copy_pages_raw(&self, pages: &[u16]) -> CoreResult<Vec<u8>> {
         let guard = engine::guard();
         let source: Vec<PdfPageIndex> = pages
             .iter()
@@ -138,8 +184,7 @@ impl Document {
         }
         let mut target = new_document(&guard)?;
         copy_pages(&mut target, self.inner(), &source, 0)?;
-        // Document neuf assemblé par PDFium : jamais chiffré.
-        crate::cleanup::before_save(&target.save_to_bytes()?, None)
+        Ok(target.save_to_bytes()?)
     }
 
     /// Indices valides, triés, sans doublon ; erreur si la liste est vide ou hors bornes.
@@ -197,8 +242,35 @@ fn new_document(_guard: &PdfiumGuard) -> CoreResult<PdfDocument<'static>> {
     Ok(engine::pdfium()?.create_new_pdf()?)
 }
 
-/// Fusionne des documents dans l'ordre donné en un nouveau PDF (octets).
+/// Fusionne des documents dans l'ordre donné en un nouveau PDF (octets). Le catalogue de
+/// chaque source est reporté (`carry`, audit E3) : formulaires (un nom de champ déjà pris
+/// reçoit ` (2)`, ` (3)`…), signets à la suite, pièces jointes, étiquettes, calques ; la langue,
+/// les préférences d'affichage et les métadonnées XMP sont celles de la première source qui
+/// en a.
 pub fn merge(docs: &[&Document]) -> CoreResult<Vec<u8>> {
+    let copied = merge_raw(docs)?;
+    let pages: Vec<Vec<u16>> = docs.iter().map(|d| (0..d.page_count()).collect()).collect();
+    let read: Vec<Option<lopdf::Document>> = docs
+        .iter()
+        .map(|doc| carry_source(doc))
+        .collect::<CoreResult<_>>()?;
+    let sources: Vec<(Option<&lopdf::Document>, &[u16])> = read
+        .iter()
+        .zip(&pages)
+        .map(|(source, pages)| (source.as_ref(), pages.as_slice()))
+        .collect();
+    let carried = with_catalogs(copied, &sources)?;
+    // Le plus récent des en-têtes sources : la fusion ne doit pas rabaisser la version.
+    // [Apprentissage] `filter_map` écarte les sources sans version connue (`None`) ; `max` d'un
+    // itérateur rend lui-même une `Option`, `None` s'il ne reste aucune version.
+    let version = docs.iter().filter_map(|d| d.file_version()).max();
+    let deleted = docs.iter().any(|d| d.needs_cleanup);
+    crate::cleanup::before_save(&carried, None, version)?.into_checked(deleted, "fusion refusée")
+}
+
+/// Fusion **brute** par PDFium (document neuf, pages de chaque source à la suite), sérialisée :
+/// ni report du catalogue, ni nettoyage. Étape commune à [`merge`] et aux tests de `carry`.
+pub(crate) fn merge_raw(docs: &[&Document]) -> CoreResult<Vec<u8>> {
     if docs.is_empty() {
         return Err(CoreError::InvalidOperation(
             "aucun document à fusionner".to_string(),
@@ -209,7 +281,62 @@ pub fn merge(docs: &[&Document]) -> CoreResult<Vec<u8>> {
     for doc in docs {
         target.pages_mut().append(doc.inner())?;
     }
-    crate::cleanup::before_save(&target.save_to_bytes()?, None)
+    Ok(target.save_to_bytes()?)
+}
+
+/// Reporte sur `copied` (document neuf de PDFium) le catalogue de chaque source `(source relue
+/// par lopdf, pages copiées)` ; les pages d'une source suivent celles des sources précédentes.
+/// La `k`-ième source (k ≥ 2) renomme ses champs déjà pris avec le suffixe ` (k)`. Une source
+/// que `lopdf` n'a pas relue (`None`) garde la seule copie de PDFium (comportement d'avant le
+/// Lot 14).
+fn with_catalogs(
+    copied: Vec<u8>,
+    sources: &[(Option<&lopdf::Document>, &[u16])],
+) -> CoreResult<Vec<u8>> {
+    let Ok(mut target) = crate::crypt::load_limited(&copied, None) else {
+        return Ok(copied);
+    };
+    let mut first = 0;
+    for (k, (source, pages)) in sources.iter().enumerate() {
+        if let Some(source) = source {
+            let suffix = (k > 0).then(|| format!(" ({})", k + 1));
+            carry::carry_catalog(source, &mut target, pages, first, suffix.as_deref());
+        }
+        first += pages.len();
+    }
+    let mut out = Vec::new();
+    target.save_to(&mut out)?;
+    Ok(out)
+}
+
+/// `doc` relu par `lopdf`, objets en clair (déchiffré avec son mot de passe), pour la passe de
+/// report (lecture seule : une même relecture sert à toutes les parties d'une scission) ; `None` si `lopdf` ne le relit pas, ou n'y voit pas le même nombre de pages que
+/// PDFium (les index de pages ne se correspondraient plus).
+fn carry_source(doc: &Document) -> CoreResult<Option<lopdf::Document>> {
+    // Une modification non enregistrée n'est que dans PDFium : on relit alors son état actuel.
+    // [Apprentissage] `owned` n'est initialisée que dans la branche qui en a besoin ; Rust
+    // vérifie qu'on ne lit jamais une variable avant de lui avoir donné une valeur.
+    let owned;
+    let bytes: &[u8] = if doc.changed {
+        owned = doc.to_bytes()?;
+        &owned
+    } else {
+        doc.file_bytes()
+    };
+    let Ok(session) = crate::crypt::LopdfSession::load(bytes, doc.password()) else {
+        return Ok(None);
+    };
+    let passthrough = session.keeps_object_numbers();
+    let mut source = session.doc;
+    if source.get_pages().len() != usize::from(doc.page_count()) {
+        return Ok(None);
+    }
+    // Fichier `Identity` : ses pièces jointes restent chiffrées (`/EFF`) ; copiées dans le
+    // document neuf, non chiffré, elles seraient illisibles.
+    if passthrough && let Some(names) = carry::names_dict_mut(&mut source) {
+        names.remove(b"EmbeddedFiles");
+    }
+    Ok(Some(source))
 }
 
 /// Scinde `doc` en autant de PDF que de groupes dans `parts` (indices 0-based).
@@ -219,7 +346,11 @@ pub fn split(doc: &Document, parts: &[Vec<u16>]) -> CoreResult<Vec<Vec<u8>>> {
             "aucune partie à produire".to_string(),
         ));
     }
-    parts.iter().map(|p| doc.extract_pages(p)).collect()
+    let source = carry_source(doc)?;
+    parts
+        .iter()
+        .map(|p| doc.extract_with(p, source.as_ref()))
+        .collect()
 }
 
 /// Façon de scinder un document (miroir TypeScript : `SplitMode`, et options du CLI).

@@ -18,6 +18,64 @@ use crate::engine;
 pub mod fuzz;
 pub mod hostile;
 
+/// Une page avec deux objets texte, chacun dans son propre `BDC /MCID`, et un vrai arbre de
+/// structure (`/StructTreeRoot`, `/ParentTree`, deux éléments `/P` citant les MCID 0 et 1).
+///
+/// Pourquoi : supprimer un des deux objets fait disparaître son `BDC /MCID n … EMC` du
+/// contenu ; l'arbre de structure doit alors cesser de citer ce MCID (Lot 14, audit E5).
+pub fn two_marked_objects_pdf() -> Vec<u8> {
+    use lopdf::{Object, dictionary};
+    let mut doc = lopdf::Document::with_version("1.7");
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+    });
+    let content = b"/P <</MCID 0>> BDC BT /F1 14 Tf 50 700 Td (Un) Tj ET EMC
+        /P <</MCID 1>> BDC BT /F1 14 Tf 50 650 Td (Deux) Tj ET EMC
+";
+    let stream = doc.add_object(lopdf::Stream::new(dictionary! {}, content.to_vec()));
+    let pages_id = doc.new_object_id();
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        "Contents" => stream, "StructParents" => 0,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+        }),
+    );
+    let root_id = doc.new_object_id();
+    let element = |doc: &mut lopdf::Document, mcid: i64, alt: &str| {
+        doc.add_object(dictionary! {
+            "Type" => "StructElem", "S" => "P", "P" => root_id, "Pg" => page,
+            "K" => mcid, "Alt" => Object::string_literal(alt),
+        })
+    };
+    let e0 = element(&mut doc, 0, "Un");
+    let e1 = element(&mut doc, 1, "Deux");
+    // `/ParentTree` et son tableau sont des objets indirects (la forme que produisent Word et
+    // LibreOffice) : la passe qui annule les entrées périmées doit les suivre.
+    let entries = doc.add_object(Object::Array(vec![e0.into(), e1.into()]));
+    let parent_tree = doc.add_object(dictionary! { "Nums" => vec![0.into(), entries.into()] });
+    doc.objects.insert(
+        root_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "StructTreeRoot", "K" => vec![e0.into(), e1.into()],
+            "ParentTree" => parent_tree,
+        }),
+    );
+    let catalog = doc.add_object(dictionary! {
+        "Type" => "Catalog", "Pages" => pages_id, "StructTreeRoot" => root_id,
+        "MarkInfo" => dictionary! { "Marked" => true },
+    });
+    doc.trailer.set("Root", catalog);
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("écriture en mémoire");
+    out
+}
+
 /// Un PDF sans page, dont la seule information est le titre dans `/Info`.
 ///
 /// \[Apprentissage\] Un fichier PDF est une suite d'objets numérotés (`1 0 obj … endobj`),
@@ -1234,6 +1292,43 @@ pub fn inherited_media_box_pdf() -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Quatre pages (« Page 1 » à « Page 4 », Helvetica) rangées dans un arbre à **deux niveaux**
+/// dont les nœuds intermédiaires portent des attributs hérités différents (§7.7.3.4) : sert à
+/// vérifier qu'un déplacement d'un nœud à l'autre (`move_pages`, audit E4) ne change ni la
+/// taille ni l'orientation des pages.
+///
+/// - racine `/Pages` (2) : `/Resources` (police `/F1`) pour toutes les pages ;
+/// - premier nœud (3), pages 1 et 2 : `/Rotate 90` et `/MediaBox [0 0 400 600]` ;
+/// - second nœud (4), pages 3 et 4 : `/CropBox [20 20 575 822]` ; ces pages ont leur propre
+///   `/MediaBox [0 0 595 842]`.
+pub fn two_level_pages_pdf() -> Vec<u8> {
+    let content = |n: u8| {
+        let text = format!("BT /F1 24 Tf 72 300 Td (Page {n}) Tj ET");
+        format!("<< /Length {} >>\nstream\n{text}\nendstream", text.len())
+    };
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 4 /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_string(),
+        "<< /Type /Pages /Parent 2 0 R /Kids [6 0 R 7 0 R] /Count 2 /Rotate 90 \
+         /MediaBox [0 0 400 600] >>"
+            .to_string(),
+        "<< /Type /Pages /Parent 2 0 R /Kids [8 0 R 9 0 R] /Count 2 /CropBox [20 20 575 822] >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+        "<< /Type /Page /Parent 3 0 R /Contents 10 0 R >>".to_string(),
+        "<< /Type /Page /Parent 3 0 R /Contents 11 0 R >>".to_string(),
+        "<< /Type /Page /Parent 4 0 R /MediaBox [0 0 595 842] /Contents 12 0 R >>".to_string(),
+        "<< /Type /Page /Parent 4 0 R /MediaBox [0 0 595 842] /Contents 13 0 R >>".to_string(),
+        content(1),
+        content(2),
+        content(3),
+        content(4),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Une page dont le texte est **dessiné dans le désordre** (correctif 0.12.2), comme dans les
 /// PDF réels où la sélection sautait : lignes d'un paragraphe dessinées 3, 1, 2 ; mot en gras
 /// dessiné à la fin du flux au milieu de sa ligne ; liste « libellé : valeur » de 5 lignes dont
@@ -1358,13 +1453,48 @@ fn assemble_pdf(objects: &[String], info: &str) -> Vec<u8> {
 /// d'ouverture vide, propriétaire `owner`, `/O` et `/U` calculés pour ces valeurs (RC4
 /// 128 bits, révision 4, `/P -4`, premier `/ID` `00112233…eeff`).
 pub fn attachments_only_encrypted_pdf() -> Vec<u8> {
-    let content = "BT /F1 24 Tf 72 700 Td (Hello Identity) Tj ET";
-    let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+    attachments_only_build(false, false)
+}
+
+/// Comme [`attachments_only_encrypted_pdf`], avec une pièce jointe `a.txt` dont le flux
+/// `/EF /F` porte `/Filter /Crypt` (filtre `/StdCF`, §7.6.6) : ses octets, ici le faux chiffré
+/// `CIPHERTEXT-ABC123`, ne doivent jamais être touchés par une réécriture.
+pub fn attachments_only_encrypted_with_file_pdf() -> Vec<u8> {
+    attachments_only_build(true, false)
+}
+
+/// Comme [`attachments_only_encrypted_with_file_pdf`], avec une **note** numérotée *avant* la
+/// pièce jointe (objet 8, la pièce jointe suit en 9 et 10) : la supprimer décalerait le numéro
+/// du flux chiffré si l'on renumérotait les objets. Le flux de contenu, non compressé, cite
+/// en commentaire le texte `/Encrypt 12 0 R`, qu'aucune réécriture ne doit modifier.
+pub fn attachments_only_encrypted_with_note_pdf() -> Vec<u8> {
+    attachments_only_build(true, true)
+}
+
+/// Construit l'un des deux PDF « pièces jointes seules » ci-dessus.
+fn attachments_only_build(with_file: bool, with_note: bool) -> Vec<u8> {
+    let content = if with_note {
+        "BT /F1 24 Tf 72 700 Td (Hello Identity) Tj ET\n% /Encrypt 12 0 R"
+    } else {
+        "BT /F1 24 Tf 72 700 Td (Hello Identity) Tj ET"
+    };
+    // Numéro de la fiche de la pièce jointe (son flux est le suivant).
+    let spec = if with_note { 9 } else { 8 };
+    let catalog = if with_file {
+        format!(
+            "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(a.txt) {spec} 0 R] >> >> >>"
+        )
+    } else {
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string()
+    };
+    let annots = if with_note { "/Annots [8 0 R] " } else { "" };
+    let mut objects = vec![
+        catalog,
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
-         /Resources << /Font << /F1 5 0 R >> >> >>"
-            .to_string(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] {annots}/Contents 4 0 R \
+             /Resources << /Font << /F1 5 0 R >> >> >>"
+        ),
         format!(
             "<< /Length {} >>\nstream\n{content}\nendstream",
             content.len()
@@ -1378,6 +1508,26 @@ pub fn attachments_only_encrypted_pdf() -> Vec<u8> {
             .to_string(),
         "<< /Title (Plain title) >>".to_string(),
     ];
+    if with_note {
+        objects.push(
+            "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents (SECRET-NOTE) \
+             /T (Auteur) /P 3 0 R >>"
+                .to_string(),
+        );
+    }
+    if with_file {
+        let ciphertext = "CIPHERTEXT-ABC123";
+        objects.push(format!(
+            "<< /Type /Filespec /F (a.txt) /EF << /F {} 0 R >> >>",
+            spec + 1
+        ));
+        objects.push(format!(
+            "<< /Type /EmbeddedFile /Length {} /Filter /Crypt \
+             /DecodeParms << /Type /CryptFilterDecodeParms /Name /StdCF >> >>\n\
+             stream\n{ciphertext}\nendstream",
+            ciphertext.len()
+        ));
+    }
     let mut out = String::from("%PDF-1.6\n");
     let mut offsets = Vec::new();
     for (i, body) in objects.iter().enumerate() {
@@ -1569,4 +1719,219 @@ pub fn scanned_pdf() -> Vec<u8> {
     let mut out = Vec::new();
     doc.save_to(&mut out).expect("sérialisation");
     out
+}
+
+/// Une page avec une note (`secret` dans son `/Contents` et dans un `/StructElem`), un
+/// popup, une réponse `/IRT`, et un `/Encrypt` dont les filtres sont `Identity` (rien n'est
+/// chiffré en dehors des pièces jointes). PDFium l'ouvre ; depuis le Lot 14, `lopdf` le relit
+/// par la session passe-plat (`crypt::LopdfSession`), donc le nettoyage s'y applique et une
+/// suppression y est permise : sert à prouver que le texte supprimé n'y survit pas et que le
+/// `/Encrypt` d'origine est gardé (audit E1). Sa variante à filtre inconnu (`tests/cleanup.rs`)
+/// est, elle, refusée.
+pub fn identity_encrypted_note_pdf(secret: &str) -> Vec<u8> {
+    let content = "BT /F1 24 Tf 72 400 Td (Visible) Tj ET";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R /MarkInfo << /Marked true >> >>"
+            .to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Annots [4 0 R 5 0 R 6 0 R] \
+         /StructParents 0 /Contents 9 0 R /Resources << /Font << /F1 10 0 R >> >> >>"
+            .to_string(),
+        format!(
+            "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents ({secret}) \
+             /T (Auteur) /Popup 5 0 R /P 3 0 R /StructParent 1 >>"
+        ),
+        "<< /Type /Annot /Subtype /Popup /Rect [300 300 450 400] /Parent 4 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /Contents (Reponse) \
+         /IRT 4 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /StructTreeRoot /K 8 0 R /ParentTree << /Nums [1 8 0 R] >> >>".to_string(),
+        format!(
+            "<< /Type /StructElem /S /Annot /P 7 0 R /Pg 3 0 R /Alt ({secret}) \
+             /K << /Type /OBJR /Obj 4 0 R /Pg 3 0 R >> >>"
+        ),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        "<< /Filter /Standard /V 4 /R 4 /Length 128 /P -4 \
+         /O <566fa873ee33c797cd3b904fdadf814afa34df9a38f6ed41b984e2c6da2aa6f5> \
+         /U <60cb14e897d58381f951427876a7804100000000000000000000000000000000> \
+         /CF << /StdCF << /Type /CryptFilter /CFM /V2 /Length 16 /AuthEvent /DocOpen >> >> \
+         /StmF /Identity /StrF /Identity /EFF /StdCF >>"
+            .to_string(),
+        "<< /Title (Plain title) >>".to_string(),
+    ];
+    let mut out = String::from("%PDF-1.6\n");
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{body}\nendobj\n", i + 1));
+    }
+    let xref = out.len();
+    out.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objects.len() + 1
+    ));
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    let id = "<00112233445566778899aabbccddeeff>";
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R /Info 12 0 R /Encrypt 11 0 R /ID [{id}{id}] >>\n\
+         startxref\n{xref}\n%%EOF\n",
+        objects.len() + 1
+    ));
+    out.into_bytes()
+}
+
+/// Paquet XMP minimal (titre « Riche ») du catalogue de [`rich_catalog_pdf`].
+const RICH_XMP: &str = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\
+<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Riche</rdf:li></rdf:Alt></dc:title>\
+<xmp:ModifyDate>2020-01-01T00:00:00Z</xmp:ModifyDate>\
+</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+
+/// Trois pages (« Page 1/2/3 ») et un catalogue qui porte **les 17 structures** dont on vérifie
+/// la conservation à l'enregistrement, à la fusion, à l'extraction et à la scission (audit de
+/// compatibilité, E1 et E3) :
+///
+/// 1. `/StructTreeRoot` (un élément `/P` sur la page 1, qui porte `/StructParents 0`) ;
+/// 2. `/MarkInfo` ;
+/// 3. `/OCProperties`, un calque (OCG) utilisé par la page 2 (`/OC /oc1 BDC`, via
+///    `/Resources /Properties`) ;
+/// 4. `/Names /Dests` : `(chap2)` → page 2 ;
+/// 5. `/Names /JavaScript` (un script `init`) ;
+/// 6. `/Names /EmbeddedFiles` : une pièce jointe `notes.txt` ;
+/// 7. `/Dests` (forme PDF 1.1) : `/chap3` → page 3 ;
+/// 8. `/PageLabels` (romain puis décimal) ;
+/// 9. `/Lang (fr-CA)` ;
+/// 10. `/OpenAction` ;
+/// 11. `/AA` (action JavaScript à la fermeture) ;
+/// 12. `/ViewerPreferences` ;
+/// 13. `/PageMode` ;
+/// 14. `/Metadata` (XMP) ;
+/// 15. `/OutputIntents` ;
+/// 16. `/Outlines` : « Vers chap2 » (destination nommée), « Vers chap3 » (action `GoTo`
+///     nommée), « Direct p3 » (destination explicite) ;
+/// 17. `/AcroForm` avec un champ texte `nom` (widget fusionné au champ, sur la page 1).
+///
+/// La page 1 porte aussi trois liens (`/Dest (chap2)`, `/A /GoTo /D /chap3`, `[p3 /Fit]`).
+/// `header` est la version écrite après `%PDF-`, `catalog_version` la clé `/Version` du
+/// catalogue (absente si `None`).
+pub fn rich_catalog_pdf(header: &str, catalog_version: Option<&str>) -> Vec<u8> {
+    let version = catalog_version
+        .map(|v| format!(" /Version /{v}"))
+        .unwrap_or_default();
+    let stream = |dict: &str, content: &str| {
+        format!(
+            "<< {dict} /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+    };
+    let p1 = "/P << /MCID 0 >> BDC BT /Helv 24 Tf 72 760 Td (Page 1) Tj ET EMC";
+    let p2 = "/OC /oc1 BDC BT /Helv 24 Tf 72 760 Td (Page 2) Tj ET EMC";
+    let p3 = "BT /Helv 24 Tf 72 760 Td (Page 3) Tj ET";
+    let objects: Vec<String> = vec![
+        // 1 Catalog
+        format!(
+            "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 10 0 R /MarkInfo << /Marked true >> \
+             /OCProperties << /OCGs [12 0 R] /D << /ON [12 0 R] /Order [12 0 R] >> >> \
+             /Names 13 0 R /Dests 14 0 R \
+             /PageLabels << /Nums [0 << /S /r >> 1 << /S /D /St 1 >>] >> /Lang (fr-CA) \
+             /OpenAction [4 0 R /Fit] /AA << /WC 15 0 R >> /ViewerPreferences << /HideToolbar true >> \
+             /PageMode /UseOutlines /Metadata 16 0 R /OutputIntents [17 0 R] /Outlines 18 0 R \
+             /AcroForm << /Fields [22 0 R] /NeedAppearances true /DA (/Helv 0 Tf 0 g) \
+             /DR << /Font << /Helv 6 0 R >> >> >>{version} >>"
+        ),
+        // 2 Pages
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>".to_string(),
+        // 3 Page 1
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 6 0 R >> >> \
+         /Contents 7 0 R /StructParents 0 /Annots [19 0 R 20 0 R 21 0 R 22 0 R] >>"
+            .to_string(),
+        // 4 Page 2
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
+         /Resources << /Font << /Helv 6 0 R >> /Properties << /oc1 12 0 R >> >> /Contents 8 0 R >>"
+            .to_string(),
+        // 5 Page 3
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 6 0 R >> >> \
+         /Contents 9 0 R >>"
+            .to_string(),
+        // 6 Font
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        stream("", p1),
+        stream("", p2),
+        stream("", p3),
+        // 10 StructTreeRoot
+        "<< /Type /StructTreeRoot /K 11 0 R /ParentTree << /Nums [0 [11 0 R]] >> >>".to_string(),
+        // 11 StructElem
+        "<< /Type /StructElem /S /P /P 10 0 R /Pg 3 0 R /K 0 >>".to_string(),
+        // 12 OCG
+        "<< /Type /OCG /Name (Calque) >>".to_string(),
+        // 13 Names
+        "<< /Dests << /Names [(chap2) [4 0 R /Fit]] >> /JavaScript << /Names [(init) 15 0 R] >> \
+         /EmbeddedFiles << /Names [(notes.txt) 23 0 R] >> >>"
+            .to_string(),
+        // 14 Dests (PDF 1.1)
+        "<< /chap3 [5 0 R /Fit] >>".to_string(),
+        // 15 JS
+        r"<< /S /JavaScript /JS (app.alert(1);) >>".to_string(),
+        // 16 XMP
+        stream("/Type /Metadata /Subtype /XML", RICH_XMP),
+        // 17 OutputIntent
+        "<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB) /Info (sRGB) >>"
+            .to_string(),
+        // 18 Outlines
+        "<< /Type /Outlines /First 24 0 R /Last 26 0 R /Count 3 >>".to_string(),
+        // 19-21 Links
+        "<< /Type /Annot /Subtype /Link /Rect [72 700 200 720] /Border [0 0 0] /Dest (chap2) >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Link /Rect [72 650 200 670] /Border [0 0 0] \
+         /A << /S /GoTo /D /chap3 >> >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Link /Rect [72 600 200 620] /Border [0 0 0] /Dest [5 0 R /Fit] >>"
+            .to_string(),
+        // 22 Widget
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (nom) /V () /Rect [72 500 300 524] /F 4 \
+         /DA (/Helv 12 Tf 0 g) /P 3 0 R >>"
+            .to_string(),
+        // 23 Filespec
+        "<< /Type /Filespec /F (notes.txt) /UF (notes.txt) /EF << /F 27 0 R >> >>".to_string(),
+        // 24-26 Outline items
+        "<< /Title (Vers chap2) /Parent 18 0 R /Next 25 0 R /Dest (chap2) >>".to_string(),
+        "<< /Title (Vers chap3) /Parent 18 0 R /Prev 24 0 R /Next 26 0 R \
+         /A << /S /GoTo /D /chap3 >> >>"
+            .to_string(),
+        "<< /Title (Direct p3) /Parent 18 0 R /Prev 25 0 R /Dest [5 0 R /Fit] >>".to_string(),
+        // 27 EmbeddedFile
+        stream(
+            "/Type /EmbeddedFile /Subtype /text#2Fplain /Params << /Size 7 >>",
+            "Bonjour",
+        ),
+        // 28 Info
+        "<< /Title (Riche) /Producer (MegaUltraPDF audit) >>".to_string(),
+    ];
+    let mut out = format!("%PDF-{header}\n%\u{e2}\u{e3}\u{cf}\u{d3}\n");
+    let mut offsets = Vec::with_capacity(objects.len());
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{body}\nendobj\n", i + 1));
+    }
+    let xref = out.len();
+    out.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objects.len() + 1
+    ));
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R /Info 28 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+        objects.len() + 1
+    ));
+    out.into_bytes()
 }

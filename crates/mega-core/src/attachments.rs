@@ -62,8 +62,9 @@ pub(crate) fn display_name(raw: &str) -> String {
     }
 }
 
-/// `rapport.md` → `rapport (2).md`, `rapport (3).md`… jusqu'à un nom libre.
-fn unique_name(wanted: &str, existing: &[String]) -> String {
+/// `rapport.md` → `rapport (2).md`, `rapport (3).md`… jusqu'à un nom libre. Sert aussi à la
+/// fusion, qui ne doit pas confondre deux pièces jointes de même nom (`pages::carry`).
+pub(crate) fn unique_name(wanted: &str, existing: &[String]) -> String {
     if !existing.iter().any(|n| n == wanted) {
         return wanted.to_string();
     }
@@ -143,6 +144,8 @@ impl Document {
 
     /// Supprime la pièce jointe `index`.
     pub fn delete_attachment(&mut self, index: u16) -> CoreResult<()> {
+        // Le flux du fichier joint deviendrait orphelin : seul le nettoyage le retire.
+        self.ensure_cleanable()?;
         self.mark_changed();
         let _guard = engine::guard();
         let attachments = self.inner_mut().attachments_mut();

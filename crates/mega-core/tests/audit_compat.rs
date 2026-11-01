@@ -23,7 +23,6 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use lopdf::dictionary;
 use lopdf::{Dictionary, Document as Lo, Object, ObjectId};
 use mega_core::Document;
 use mega_core::digital_signature::{SignAppearance, SignOptions, SigningIdentity};
@@ -529,149 +528,6 @@ fn s(x: &str) -> Vec<u8> {
 
 // --- Générateurs --------------------------------------------------------------------------
 
-const XMP: &str = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
-<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
-<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\
-<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Riche</rdf:li></rdf:Alt></dc:title>\
-<xmp:ModifyDate>2020-01-01T00:00:00Z</xmp:ModifyDate>\
-</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
-
-/// Trois pages et un catalogue qui porte toutes les structures dont on veut mesurer la
-/// conservation (voir le plan, E1).
-fn rich_catalog_pdf(header: &str, catalog_version: Option<&str>) -> Vec<u8> {
-    let version = catalog_version
-        .map(|v| format!(" /Version /{v}"))
-        .unwrap_or_default();
-    let p1 = "/P << /MCID 0 >> BDC BT /Helv 24 Tf 72 760 Td (Page 1) Tj ET EMC";
-    let p2 = "/OC /oc1 BDC BT /Helv 24 Tf 72 760 Td (Page 2) Tj ET EMC";
-    let p3 = "BT /Helv 24 Tf 72 760 Td (Page 3) Tj ET";
-    let notes = b"Bonjour";
-    let objects: Vec<Vec<u8>> = vec![
-        // 1 Catalog
-        s(&format!(
-            "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 10 0 R /MarkInfo << /Marked true >> \
-             /OCProperties << /OCGs [12 0 R] /D << /ON [12 0 R] /Order [12 0 R] >> >> \
-             /Names 13 0 R /Dests 14 0 R \
-             /PageLabels << /Nums [0 << /S /r >> 1 << /S /D /St 1 >>] >> /Lang (fr-CA) \
-             /OpenAction [4 0 R /Fit] /AA << /WC 15 0 R >> /ViewerPreferences << /HideToolbar true >> \
-             /PageMode /UseOutlines /Metadata 16 0 R /OutputIntents [17 0 R] /Outlines 18 0 R \
-             /AcroForm << /Fields [22 0 R] /NeedAppearances true /DA (/Helv 0 Tf 0 g) \
-             /DR << /Font << /Helv 6 0 R >> >> >>{version} >>"
-        )),
-        // 2 Pages
-        s("<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>"),
-        // 3 Page 1
-        s(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 6 0 R >> >> \
-           /Contents 7 0 R /StructParents 0 /Annots [19 0 R 20 0 R 21 0 R 22 0 R] >>",
-        ),
-        // 4 Page 2
-        s("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
-           /Resources << /Font << /Helv 6 0 R >> /Properties << /oc1 12 0 R >> >> /Contents 8 0 R >>"),
-        // 5 Page 3
-        s(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Helv 6 0 R >> >> \
-           /Contents 9 0 R >>",
-        ),
-        // 6 Font
-        s("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
-        stream("", p1.as_bytes()),
-        stream("", p2.as_bytes()),
-        stream("", p3.as_bytes()),
-        // 10 StructTreeRoot
-        s("<< /Type /StructTreeRoot /K 11 0 R /ParentTree << /Nums [0 [11 0 R]] >> >>"),
-        // 11 StructElem
-        s("<< /Type /StructElem /S /P /P 10 0 R /Pg 3 0 R /K 0 >>"),
-        // 12 OCG
-        s("<< /Type /OCG /Name (Calque) >>"),
-        // 13 Names
-        s(
-            "<< /Dests << /Names [(chap2) [4 0 R /Fit]] >> /JavaScript << /Names [(init) 15 0 R] >> \
-           /EmbeddedFiles << /Names [(notes.txt) 23 0 R] >> >>",
-        ),
-        // 14 Dests (PDF 1.1)
-        s("<< /chap3 [5 0 R /Fit] >>"),
-        // 15 JS
-        s("<< /S /JavaScript /JS (app.alert\\(1\\);) >>"),
-        // 16 XMP
-        stream("/Type /Metadata /Subtype /XML", XMP.as_bytes()),
-        // 17 OutputIntent
-        s("<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB) /Info (sRGB) >>"),
-        // 18 Outlines
-        s("<< /Type /Outlines /First 24 0 R /Last 26 0 R /Count 3 >>"),
-        // 19-21 Links
-        s("<< /Type /Annot /Subtype /Link /Rect [72 700 200 720] /Border [0 0 0] /Dest (chap2) >>"),
-        s(
-            "<< /Type /Annot /Subtype /Link /Rect [72 650 200 670] /Border [0 0 0] /A << /S /GoTo /D /chap3 >> >>",
-        ),
-        s(
-            "<< /Type /Annot /Subtype /Link /Rect [72 600 200 620] /Border [0 0 0] /Dest [5 0 R /Fit] >>",
-        ),
-        // 22 Widget
-        s(
-            "<< /Type /Annot /Subtype /Widget /FT /Tx /T (nom) /V () /Rect [72 500 300 524] /F 4 \
-           /DA (/Helv 12 Tf 0 g) /P 3 0 R >>",
-        ),
-        // 23 Filespec
-        s("<< /Type /Filespec /F (notes.txt) /UF (notes.txt) /EF << /F 27 0 R >> >>"),
-        // 24-26 Outline items
-        s("<< /Title (Vers chap2) /Parent 18 0 R /Next 25 0 R /Dest (chap2) >>"),
-        s(
-            "<< /Title (Vers chap3) /Parent 18 0 R /Prev 24 0 R /Next 26 0 R /A << /S /GoTo /D /chap3 >> >>",
-        ),
-        s("<< /Title (Direct p3) /Parent 18 0 R /Prev 25 0 R /Dest [5 0 R /Fit] >>"),
-        // 27 EmbeddedFile
-        stream(
-            "/Type /EmbeddedFile /Subtype /text#2Fplain /Params << /Size 7 >>",
-            notes,
-        ),
-        // 28 Info
-        s("<< /Title (Riche) /Producer (MegaUltraPDF audit) >>"),
-    ];
-    assemble(header, &objects, "/Info 28 0 R")
-}
-
-/// `note_with_popup_pdf` plus un `/Encrypt` dont les filtres sont `Identity` : PDFium l'ouvre,
-/// `crypt::check_crypt_filters` le refuse, donc `before_save` tombe dans son repli.
-fn identity_encrypted_note_pdf(secret: &str) -> Vec<u8> {
-    let objects: Vec<Vec<u8>> = vec![
-        s("<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R /MarkInfo << /Marked true >> >>"),
-        s("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-        s(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] /Annots [4 0 R 5 0 R 6 0 R] \
-           /StructParents 0 /Contents 9 0 R /Resources << /Font << /F1 10 0 R >> >> >>",
-        ),
-        s(&format!(
-            "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents ({secret}) \
-             /T (Auteur) /Popup 5 0 R /P 3 0 R /StructParent 1 >>"
-        )),
-        s("<< /Type /Annot /Subtype /Popup /Rect [300 300 450 400] /Parent 4 0 R /P 3 0 R >>"),
-        s(
-            "<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /Contents (Reponse) /IRT 4 0 R /P 3 0 R >>",
-        ),
-        s("<< /Type /StructTreeRoot /K 8 0 R /ParentTree << /Nums [1 8 0 R] >> >>"),
-        s(&format!(
-            "<< /Type /StructElem /S /Annot /P 7 0 R /Pg 3 0 R /Alt ({secret}) \
-             /K << /Type /OBJR /Obj 4 0 R /Pg 3 0 R >> >>"
-        )),
-        stream("", b"BT /F1 24 Tf 72 400 Td (Visible) Tj ET"),
-        s("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
-        // 11 Encrypt (identique à testing::attachments_only_encrypted_pdf)
-        s("<< /Filter /Standard /V 4 /R 4 /Length 128 /P -4 \
-           /O <566fa873ee33c797cd3b904fdadf814afa34df9a38f6ed41b984e2c6da2aa6f5> \
-           /U <60cb14e897d58381f951427876a7804100000000000000000000000000000000> \
-           /CF << /StdCF << /Type /CryptFilter /CFM /V2 /Length 16 /AuthEvent /DocOpen >> >> \
-           /StmF /Identity /StrF /Identity /EFF /StdCF >>"),
-        s("<< /Title (Plain title) >>"),
-    ];
-    let id = "<00112233445566778899aabbccddeeff>";
-    assemble(
-        "1.6",
-        &objects,
-        &format!("/Info 12 0 R /Encrypt 11 0 R /ID [{id}{id}]"),
-    )
-}
-
 /// Chaîne de `depth` nœuds `/Pages` imbriqués, attributs hérités à différents niveaux.
 fn deep_pages_pdf(depth: usize) -> Vec<u8> {
     // 1 Catalog, 2 Font, 3 Contents, 4..4+depth-1 nœuds, dernier = page.
@@ -1071,7 +927,7 @@ fn e1_catalog_preservation() {
             ver.map(|v| format!("-v{v}")).unwrap_or_default()
         );
         guarded(&tag, || {
-            let input = rich_catalog_pdf(hdr, ver);
+            let input = testing::rich_catalog_pdf(hdr, ver);
             save(&format!("{tag}-entree"), &input);
             let din = lo(&input);
             verdict(
@@ -1101,13 +957,15 @@ fn e1_catalog_preservation() {
                 format!("{lost_raw:?}"),
             );
             verdict(&tag, "to_bytes brut : /Version", cat_version(&raw_lo));
-            let cleaned = mega_core::cleanup::before_save(&raw, None).unwrap();
+            let cleaned = mega_core::cleanup::before_save(&raw, None, None)
+                .unwrap()
+                .bytes;
             verdict(&tag, "before_save a modifié les octets", cleaned != raw);
             measure_catalog(&tag, &input, &cleaned, None);
         });
     }
 
-    let input = rich_catalog_pdf("1.7", None);
+    let input = testing::rich_catalog_pdf("1.7", None);
     let cases: Vec<(&str, serde_json::Value)> = vec![
         (
             "E1b-rotate",
@@ -1145,8 +1003,8 @@ fn e1_catalog_preservation() {
     }
 
     guarded("E1f-merge", || {
-        let a = Document::from_bytes(rich_catalog_pdf("1.7", None), None).unwrap();
-        let b = Document::from_bytes(rich_catalog_pdf("1.5", None), None).unwrap();
+        let a = Document::from_bytes(testing::rich_catalog_pdf("1.7", None), None).unwrap();
+        let b = Document::from_bytes(testing::rich_catalog_pdf("1.5", None), None).unwrap();
         let out = mega_core::pages::merge(&[&a, &b]).unwrap();
         measure_catalog("E1f-merge", &input, &out, None);
     });
@@ -1170,14 +1028,16 @@ fn e1_catalog_preservation() {
 fn e2_cleanup_fallback_and_redaction() {
     let secret = "SECRET-ZX9";
     guarded("E2", || {
-        let input = identity_encrypted_note_pdf(secret);
+        let input = mega_core::testing::identity_encrypted_note_pdf(secret);
         save("E2-entree", &input);
         verdict(
             "E2",
             "lopdf relit l'entrée",
             catch_unwind(|| lo(&input)).is_ok(),
         );
-        let fallback = mega_core::cleanup::before_save(&input, None).unwrap();
+        let fallback = mega_core::cleanup::before_save(&input, None, None)
+            .unwrap()
+            .bytes;
         verdict(
             "E2",
             "étape 0 : before_save rend les octets inchangés (repli)",
@@ -2046,7 +1906,7 @@ fn e9_qpdf_uncovered_paths() {
     guarded("E9-merge", || {
         let a = Document::open(fixture("simple.pdf"), None).unwrap();
         let b = Document::open(fixture("outlined.pdf"), None).unwrap();
-        let c = Document::from_bytes(rich_catalog_pdf("1.7", None), None).unwrap();
+        let c = Document::from_bytes(testing::rich_catalog_pdf("1.7", None), None).unwrap();
         let out = mega_core::pages::merge(&[&a, &b, &c]).unwrap();
         let p = save("E9-merge", &out);
         verdict(
@@ -2318,7 +2178,7 @@ fn l12_user_unit() {
 #[ignore = "banc de mesure, lancer avec --ignored"]
 fn l13_named_destinations() {
     guarded("L13", || {
-        let doc = Document::from_bytes(rich_catalog_pdf("1.7", None), None).unwrap();
+        let doc = Document::from_bytes(testing::rich_catalog_pdf("1.7", None), None).unwrap();
         let outline: Vec<String> = doc
             .outline()
             .unwrap()
@@ -2492,7 +2352,9 @@ fn l15_third_party_annotations() {
             "to_bytes nu après rendu : /AP par annotation",
             format!("{generated:?}"),
         );
-        let cleaned = mega_core::cleanup::before_save(&raw, None).unwrap();
+        let cleaned = mega_core::cleanup::before_save(&raw, None, None)
+            .unwrap()
+            .bytes;
         let dc = lo(&cleaned);
         let after: Vec<String> = annots(&dc, page_ids(&dc)[0])
             .iter()
@@ -2771,46 +2633,13 @@ fn l19_corpus_text() {
 
 // --- E20 : remesures demandées par la relecture normative -----------------------------------
 
-/// Une page avec deux objets texte, chacun dans son propre `BDC /MCID`, pour mesurer ce que
-/// `regenerate_content` garde quand l'objet supprimé n'est pas le seul de la page.
-fn two_marked_objects_pdf() -> Vec<u8> {
-    let mut doc = Lo::with_version("1.7");
-    let font = doc.add_object(dictionary! {
-        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
-    });
-    let content = b"/P <</MCID 0>> BDC BT /F1 14 Tf 50 700 Td (Un) Tj ET EMC\n\
-        /P <</MCID 1>> BDC BT /F1 14 Tf 50 650 Td (Deux) Tj ET EMC\n";
-    let stream = doc.add_object(lopdf::Stream::new(dictionary! {}, content.to_vec()));
-    let pages_id = doc.new_object_id();
-    let page = doc.add_object(dictionary! {
-        "Type" => "Page", "Parent" => pages_id,
-        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
-        "Contents" => stream, "StructParents" => 0,
-        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
-    });
-    doc.objects.insert(
-        pages_id,
-        Object::Dictionary(dictionary! {
-            "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
-        }),
-    );
-    let catalog = doc.add_object(dictionary! {
-        "Type" => "Catalog", "Pages" => pages_id,
-        "MarkInfo" => dictionary! { "Marked" => true },
-    });
-    doc.trailer.set("Root", catalog);
-    let mut out = Vec::new();
-    doc.save_to(&mut out).unwrap();
-    out
-}
-
 #[test]
 #[ignore = "banc de mesure, lancer avec --ignored"]
 fn e20_remeasures() {
     let _ = IGNORE;
     // E20a : déplacer la page 1 (liens, BDC, /StructParents) en dernier.
     guarded("E20a-move-p1-last", || {
-        let input = rich_catalog_pdf("1.7", None);
+        let input = testing::rich_catalog_pdf("1.7", None);
         let mut doc = Document::from_bytes(input.clone(), None).unwrap();
         apply(
             &mut doc,
@@ -2858,7 +2687,7 @@ fn e20_remeasures() {
 
     // E20b : supprimer un objet sur une page qui en a deux, chacun balisé.
     guarded("E20b-delete-one-of-two", || {
-        let input = two_marked_objects_pdf();
+        let input = testing::two_marked_objects_pdf();
         let mut doc = Document::from_bytes(input, None).unwrap();
         apply(
             &mut doc,
@@ -2887,7 +2716,7 @@ fn e20_remeasures() {
 
     // E20c : page supprimée mais encore citée par un signet et une destination nommée.
     guarded("E20c-delete-cited-page", || {
-        let input = rich_catalog_pdf("1.7", None);
+        let input = testing::rich_catalog_pdf("1.7", None);
         let mut doc = Document::from_bytes(input, None).unwrap();
         apply(
             &mut doc,

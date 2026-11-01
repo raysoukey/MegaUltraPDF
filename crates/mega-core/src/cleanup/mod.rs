@@ -18,21 +18,76 @@ use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use crate::error::{CoreError, CoreResult};
 
+mod mcid;
+
 fn structure(e: impl std::fmt::Display) -> CoreError {
     CoreError::InvalidOperation(format!("nettoyage avant enregistrement : {e}"))
 }
 
+/// Résultat de [`before_save`] : les octets à écrire, et si le nettoyage a pu s'appliquer.
+///
+/// Pourquoi : quand `lopdf` ne relit pas le fichier, `before_save` rend les octets de PDFium
+/// tels quels, orphelins compris ; l'appelant qui vient de supprimer quelque chose doit le
+/// savoir pour refuser d'écrire un fichier où la suppression survivrait (audit E1). Les
+/// appelants du crate passent par `Saved::into_checked`, qui fait cette vérification.
+///
+/// \[Apprentissage\] `#[must_use]` : le compilateur avertit si une valeur de ce type est
+/// ignorée (calculée puis jetée sans être lue), ce qui serait ici un nettoyage oublié.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Saved {
+    /// Les octets prêts à écrire.
+    pub bytes: Vec<u8>,
+    /// Faux si `before_save` a dû se rabattre sur les octets de PDFium sans nettoyage.
+    pub cleaned: bool,
+}
+
+impl Saved {
+    /// Les octets à écrire, après `refuse_if_uncleaned` : refusés si une suppression a eu
+    /// lieu (`needs_cleanup`) et que le nettoyage n'a pas pu s'appliquer. `what` ouvre le
+    /// message d'erreur (« enregistrement refusé »…).
+    ///
+    /// Pourquoi : un seul chemin des octets vers le disque pour tous les appelants de
+    /// production ; lire `bytes` directement permettrait d'oublier la vérification.
+    pub(crate) fn into_checked(self, needs_cleanup: bool, what: &str) -> CoreResult<Vec<u8>> {
+        refuse_if_uncleaned(needs_cleanup, &self, what)?;
+        Ok(self.bytes)
+    }
+}
+
 /// Octets prêts à écrire : notes sans apparence imposée, `/InkList` sur les formes, objets
 /// orphelins élagués et renumérotés. Un document chiffré (ouvert avec `password`) est nettoyé
-/// en clair puis **rechiffré à l'identique** (`crypt::LopdfSession`, Lot 10).
-pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> {
+/// en clair puis **rechiffré à l'identique** (`crypt::LopdfSession`, Lot 10). Un document
+/// à filtres `Identity` est relu en **passe-plat** (rien à déchiffrer) : élagué, mais **pas
+/// renuméroté**, car le numéro d'un objet entre dans la clé de ses octets chiffrés (Lot 14).
+///
+/// `min_version` est la version d'en-tête du document d'origine : PDFium ne sait écrire que
+/// 1.0 à 1.7 (un `%PDF-2.0` ressort en `%PDF-1.0`), et l'en-tête écrit est le plus grand de
+/// celui des octets et de `min_version` (audit E2). `None` si aucune version n'est connue.
+pub fn before_save(
+    bytes: &[u8],
+    password: Option<&str>,
+    min_version: Option<(u8, u8)>,
+) -> CoreResult<Saved> {
+    let raw = || Saved {
+        bytes: crate::crypt::raise_header_version(bytes, min_version),
+        cleaned: false,
+    };
     let mut session = match crate::crypt::LopdfSession::load(bytes, password) {
         Ok(session) => session,
         // Un fichier que lopdf ne relit (ou ne déchiffre) pas est écrit tel que PDFium l'a
         // produit, protection comprise.
-        Err(_) => return Ok(bytes.to_vec()),
+        Err(_) => return Ok(raw()),
     };
+    let keeps_numbers = session.keeps_object_numbers();
     let doc = &mut session.doc;
+    // [Apprentissage] `Option` est ordonnée : `None` est plus petit que tout `Some(_)`, et deux
+    // `Some` se comparent par leur contenu. `max` garde donc la version connue, ou la plus
+    // récente des deux (comparaison des tuples : voir `crypt::raise_header_version`).
+    let written = crate::crypt::header_version(bytes).max(min_version);
+    if let Some((major, minor)) = written {
+        doc.version = format!("{major}.{minor}");
+    }
     let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
     // Le nettoyage ne touche à aucun flux de contenu : on en garde l'empreinte pour vérifier
     // la relecture (un rechiffrement faux brouillerait le contenu sans changer les pages).
@@ -41,13 +96,21 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
         clean_page_annotations(doc, *page_id)?;
         identify_annotations(doc, *page_id)?;
     }
+    // Avant le retrait des liens pendants : un lien retiré ici y perd aussi popup et `/OBJR`.
+    neutralize_dead_destinations(doc);
     drop_dangling_annotation_links(doc, &pages)?;
+    // Un objet supprimé ne doit plus être cité par l'arbre de structure (Lot 14, E5) ; sans
+    // `/StructTreeRoot`, la passe ne fait rien.
+    mcid::prune_orphan_mcids(doc);
     dedupe_font_files(doc);
     // Le fichier est réécrit : sa date de modification aussi (C12, Lot 9).
     crate::properties::stamp_mod_date(doc);
     let pages_before = doc.get_pages().len();
     prune(doc);
-    doc.renumber_objects();
+    // Passe-plat : le numéro d'un objet entre dans la clé de ses octets chiffrés.
+    if !keeps_numbers {
+        doc.renumber_objects();
+    }
     let out = session.finish()?;
     // Ceinture de sécurité : la réécriture `lopdf` remplace le fichier de l'utilisateur ; si
     // elle ne se relit (et ne se déchiffre) pas avec le même nombre de pages et les mêmes
@@ -55,9 +118,46 @@ pub fn before_save(bytes: &[u8], password: Option<&str>) -> CoreResult<Vec<u8>> 
     // contrôles (audit du Lot 13, R6 : trois chargements par enregistrement auparavant).
     let reread = reload_if_sane(pages_before, &out, password).map(|s| page_contents(&s.doc));
     if reread.as_ref() != Some(&contents_before) {
-        return Ok(bytes.to_vec());
+        return Ok(raw());
     }
-    Ok(out)
+    Ok(Saved {
+        bytes: out,
+        cleaned: true,
+    })
+}
+
+/// Refuse d'écrire `saved` quand une suppression a eu lieu (`needs_cleanup`) et que le
+/// nettoyage n'a pas pu s'appliquer : les restes de ce qui a été supprimé survivraient (E1).
+/// `what` ouvre le message (« enregistrement refusé », « protection refusée »…).
+fn refuse_if_uncleaned(needs_cleanup: bool, saved: &Saved, what: &str) -> CoreResult<()> {
+    if needs_cleanup && !saved.cleaned {
+        return Err(CoreError::InvalidOperation(format!(
+            "{what} : le nettoyage n'a pas pu s'appliquer après une suppression ; \
+             le fichier d'origine est conservé"
+        )));
+    }
+    Ok(())
+}
+
+/// Vrai si [`before_save`] pourra nettoyer ces octets : `lopdf` doit les relire (et les
+/// déchiffrer avec `password`).
+///
+/// Pourquoi : `FPDF_SaveAsCopy` recopie tous les objets, y compris ceux qu'une suppression a
+/// rendus orphelins (le texte d'une annotation supprimée resterait en clair dans le fichier,
+/// audit E1) ; seul l'élagage `lopdf` de `before_save` les retire. Quand `lopdf` ne relit pas
+/// le fichier (filtres `Identity`, structure qu'il refuse), `before_save` écrit les octets de
+/// PDFium tels quels : on refuse alors les suppressions (`Document::ensure_cleanable`).
+///
+/// Exposée uniquement pour les tests d'intégration, comme [`before_save`].
+#[doc(hidden)]
+pub fn can_clean(bytes: &[u8], password: Option<&str>) -> bool {
+    check_cleanable(bytes, password).is_ok()
+}
+
+/// Comme [`can_clean`], avec la raison du refus (`Document::ensure_cleanable` la transmet à
+/// l'utilisateur, ADR-0005).
+pub(crate) fn check_cleanable(bytes: &[u8], password: Option<&str>) -> CoreResult<()> {
+    crate::crypt::LopdfSession::load(bytes, password).map(drop)
 }
 
 /// Octets **bruts** (encore compressés, déjà déchiffrés) des flux de contenu de chaque page,
@@ -261,6 +361,47 @@ fn page_annots(doc: &Document, page_id: ObjectId) -> Option<(Option<ObjectId>, V
     }
 }
 
+/// Ne garde, dans le `/Annots` de la page, que les annotations pour lesquelles `keep` est vrai
+/// (un élément qui n'est pas un dictionnaire lisible est gardé) ; le tableau, direct ou
+/// indirect, n'est réécrit que s'il a changé.
+///
+/// \[Apprentissage\] `keep` reçoit le document en **lecture** : la fermeture ne peut pas
+/// capturer `doc`, que cette fonction emprunte déjà en écriture.
+fn retain_annots(
+    doc: &mut Document,
+    page_id: ObjectId,
+    mut keep: impl FnMut(&Document, &Dictionary) -> bool,
+) -> CoreResult<()> {
+    let Some((array_id, items)) = page_annots(doc, page_id) else {
+        return Ok(());
+    };
+    let kept: Vec<Object> = items
+        .iter()
+        .filter(|item| {
+            let dict = match item {
+                Object::Reference(id) => doc.get_dictionary(*id).ok(),
+                Object::Dictionary(dict) => Some(dict),
+                _ => None,
+            };
+            dict.is_none_or(|d| keep(doc, d))
+        })
+        .cloned()
+        .collect();
+    if kept.len() == items.len() {
+        return Ok(());
+    }
+    match array_id {
+        Some(id) => {
+            doc.objects.insert(id, Object::Array(kept));
+        }
+        None => doc
+            .get_dictionary_mut(page_id)
+            .map_err(structure)?
+            .set("Annots", Object::Array(kept)),
+    }
+    Ok(())
+}
+
 /// Donne à chaque annotation de la page qui n'en a pas un `/NM` (nom unique sur la page)
 /// et un `/P` (sa page) : clés facultatives que PDFium n'écrit pas, mais dont se servent les
 /// lecteurs qui synchronisent, fusionnent ou répondent à des commentaires (§12.5.2, B3).
@@ -346,72 +487,25 @@ fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> Cor
     //    n'est plus listée : le groupe forme une seule annotation, ils partent avec elle.
     let primaries = listed(doc);
     for page_id in pages {
-        let Some((array_id, items)) = page_annots(doc, *page_id) else {
-            continue;
-        };
-        let orphan_member = |item: &Object| {
-            let dict = match item {
-                Object::Reference(id) => doc.get_dictionary(*id).ok(),
-                Object::Dictionary(dict) => Some(dict),
-                _ => None,
-            };
-            dict.is_some_and(|d| {
-                d.get(b"RT").and_then(Object::as_name).ok() == Some(b"Group".as_slice())
-                    && d.get(b"IRT")
-                        .and_then(Object::as_reference)
-                        .is_ok_and(|primary| !primaries.contains(&primary))
-            })
-        };
-        let kept: Vec<Object> = items
-            .iter()
-            .filter(|i| !orphan_member(i))
-            .cloned()
-            .collect();
-        if kept.len() == items.len() {
-            continue;
-        }
-        match array_id {
-            Some(id) => {
-                doc.objects.insert(id, Object::Array(kept));
-            }
-            None => doc
-                .get_dictionary_mut(*page_id)
-                .map_err(structure)?
-                .set("Annots", Object::Array(kept)),
-        }
+        retain_annots(doc, *page_id, |_, d| {
+            let orphan_member = d.get(b"RT").and_then(Object::as_name).ok()
+                == Some(b"Group".as_slice())
+                && d.get(b"IRT")
+                    .and_then(Object::as_reference)
+                    .is_ok_and(|primary| !primaries.contains(&primary));
+            !orphan_member
+        })?;
     }
     let before = listed(doc);
     // 1. Popups dont le parent n'est plus listé : retirés de `/Annots`.
     for page_id in pages {
-        let Some((array_id, items)) = page_annots(doc, *page_id) else {
-            continue;
-        };
-        let orphan = |item: &Object| {
-            let dict = match item {
-                Object::Reference(id) => doc.get_dictionary(*id).ok(),
-                Object::Dictionary(dict) => Some(dict),
-                _ => None,
-            };
-            dict.is_some_and(|d| {
-                subtype(d) == b"Popup"
-                    && d.get(b"Parent")
-                        .and_then(Object::as_reference)
-                        .is_ok_and(|parent| !before.contains(&parent))
-            })
-        };
-        let kept: Vec<Object> = items.iter().filter(|i| !orphan(i)).cloned().collect();
-        if kept.len() == items.len() {
-            continue;
-        }
-        match array_id {
-            Some(id) => {
-                doc.objects.insert(id, Object::Array(kept));
-            }
-            None => doc
-                .get_dictionary_mut(*page_id)
-                .map_err(structure)?
-                .set("Annots", Object::Array(kept)),
-        }
+        retain_annots(doc, *page_id, |_, d| {
+            let orphan = subtype(d) == b"Popup"
+                && d.get(b"Parent")
+                    .and_then(Object::as_reference)
+                    .is_ok_and(|parent| !before.contains(&parent));
+            !orphan
+        })?;
     }
     // 2. Annotations qui ne sont plus listées nulle part.
     let alive = listed(doc);
@@ -461,6 +555,331 @@ fn drop_dangling_annotation_links(doc: &mut Document, pages: &[ObjectId]) -> Cor
         scrub_links(object, &dead, &dead_objr, 0);
     }
     Ok(())
+}
+
+// --- Destinations vers une page supprimée (Lot 14, audit E4) -------------------------------
+
+/// Profondeur suivie dans l'arbre des signets et l'arbre de noms `/Dests` (même borne que la
+/// lecture des signets).
+const MAX_DEPTH: usize = crate::outline::MAX_OUTLINE_DEPTH;
+
+/// Retire du document les destinations qui visent une page absente de l'arbre des pages
+/// (`get_pages`) : une page supprimée par PDFium devient un objet `null`, mais signets, liens
+/// et destinations nommées la citaient encore (audit E4).
+///
+/// - entrées de `/Names /Dests` et du `/Dests` du catalogue vers une page morte : retirées ;
+/// - signet (`/Outlines`) dont la `/Dest` ou l'action `/A /S /GoTo /D` vise une page morte,
+///   directement ou par un nom retiré : il perd cette clé, mais reste (son titre et ses
+///   enfants gardent leur sens) ;
+/// - annotation de lien dans ce cas : retirée de `/Annots` (un lien sans cible ne mène nulle
+///   part) ;
+/// - `/OpenAction` du catalogue dans ce cas : retirée.
+///
+/// Pourquoi : un autre lecteur suivrait ces références vers un objet nul, et un objet encore
+/// cité échapperait à l'élagage (`prune`) qui suit.
+///
+/// Critère d'une page morte : l'objet visé n'est pas une page de l'arbre que lit `lopdf`
+/// (objet absent, objet qui n'est pas un dictionnaire de page, ou page détachée de l'arbre).
+/// Ce critère suppose que `lopdf` voit les mêmes pages que PDFium : les octets nettoyés sont
+/// ceux que PDFium vient d'écrire, et `move_pages` refuse déjà un document où les deux comptes
+/// diffèrent. `reload_if_sane` vérifie ensuite que la réécriture garde le nombre de pages lu par
+/// `lopdf`, mais un désaccord entre les deux bibliothèques n'est pas mesuré ici.
+pub(crate) fn neutralize_dead_destinations(doc: &mut Document) {
+    let live: BTreeSet<ObjectId> = doc.get_pages().into_values().collect();
+    if live.is_empty() {
+        return;
+    }
+    let dead_names = drop_dead_named_destinations(doc, &live);
+    let dead = Dead {
+        live: &live,
+        names: &dead_names,
+    };
+    // Signets : clés retirées après coup (lecture puis écriture, pour le vérificateur
+    // d'emprunts).
+    let mut fixes: Vec<(ObjectId, &'static [u8])> = Vec::new();
+    for item in outline_items(doc) {
+        let Ok(dict) = doc.get_dictionary(item) else {
+            continue;
+        };
+        if dict.get(b"Dest").is_ok_and(|d| dead.dest(doc, d)) {
+            fixes.push((item, b"Dest"));
+        }
+        if dict.get(b"A").is_ok_and(|a| dead.goto(doc, a)) {
+            fixes.push((item, b"A"));
+        }
+    }
+    for (item, key) in fixes {
+        if let Ok(dict) = doc.get_dictionary_mut(item) {
+            dict.remove(key);
+        }
+    }
+    // Liens des pages vivantes.
+    for page_id in &live {
+        // Ne peut échouer : la page vivante a déjà été lue par `get_pages`. Une erreur ne
+        // laisserait que le lien, sans rien casser.
+        let _ = retain_annots(doc, *page_id, |doc, d| !dead.link(doc, d));
+    }
+    // Action d'ouverture.
+    let open_action_dead = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"OpenAction").ok())
+        .is_some_and(|action| dead.dest(doc, action) || dead.goto(doc, action));
+    if open_action_dead && let Ok(catalog) = doc.catalog_mut() {
+        catalog.remove(b"OpenAction");
+    }
+}
+
+/// Ce qui est mort : toute page hors de `live`, tout nom de `names`.
+///
+/// \[Apprentissage\] **Durée de vie nommée** : `Dead<'a>` ne possède pas ses ensembles, il les
+/// emprunte. `'a` dit au compilateur qu'une valeur `Dead` ne doit pas vivre plus longtemps que
+/// les ensembles qu'elle cite (voir `docs/apprentissage/concepts/ownership-et-emprunts.md`).
+struct Dead<'a> {
+    live: &'a BTreeSet<ObjectId>,
+    names: &'a BTreeSet<Vec<u8>>,
+}
+
+impl Dead<'_> {
+    /// Vrai si la destination `dest` (tableau explicite, `<< /D … >>` ou nom) mène à une page
+    /// morte. Une destination vers une page désignée par son numéro (`GoToR`) n'est pas jugée.
+    fn dest(&self, doc: &Document, dest: &Object) -> bool {
+        let Ok((_, dest)) = doc.dereference(dest) else {
+            return false;
+        };
+        let dest = match dest {
+            Object::String(name, _) | Object::Name(name) => return self.names.contains(name),
+            Object::Dictionary(dict) => match dict.get(b"D").and_then(|d| doc.dereference(d)) {
+                Ok((_, d)) => d,
+                Err(_) => return false,
+            },
+            other => other,
+        };
+        dest.as_array()
+            .ok()
+            .and_then(|items| items.first())
+            .and_then(|page| page.as_reference().ok())
+            .is_some_and(|page| !self.live.contains(&page))
+    }
+
+    /// Vrai si `action` est une action `/GoTo` dont la `/D` mène à une page morte.
+    fn goto(&self, doc: &Document, action: &Object) -> bool {
+        let Ok(Ok(action)) = doc.dereference(action).map(|(_, a)| a.as_dict()) else {
+            return false;
+        };
+        action.get(b"S").and_then(Object::as_name).ok() == Some(b"GoTo".as_slice())
+            && action.get(b"D").is_ok_and(|d| self.dest(doc, d))
+    }
+
+    /// Vrai si l'annotation `d` est un lien vers une page morte.
+    fn link(&self, doc: &Document, d: &Dictionary) -> bool {
+        subtype(d) == b"Link"
+            && (d.get(b"Dest").is_ok_and(|dest| self.dest(doc, dest))
+                || d.get(b"A").is_ok_and(|a| self.goto(doc, a)))
+    }
+}
+
+/// Les signets de `/Outlines` (pile explicite, chacun visité une fois, profondeur bornée).
+fn outline_items(doc: &Document) -> Vec<ObjectId> {
+    let mut items = Vec::new();
+    let root = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"Outlines").ok())
+        .and_then(|o| doc.dereference(o).ok())
+        .and_then(|(_, o)| o.as_dict().ok());
+    let Some(first) = root.and_then(|r| r.get(b"First").and_then(Object::as_reference).ok()) else {
+        return items;
+    };
+    let mut seen = BTreeSet::new();
+    // (premier enfant d'une liste de frères, profondeur)
+    let mut stack = vec![(first, 1)];
+    while let Some((first, depth)) = stack.pop() {
+        let mut next = Some(first);
+        while let Some(id) = next {
+            if !seen.insert(id) {
+                break;
+            }
+            let Ok(dict) = doc.get_dictionary(id) else {
+                break;
+            };
+            items.push(id);
+            if depth < MAX_DEPTH
+                && let Ok(child) = dict.get(b"First").and_then(Object::as_reference)
+            {
+                stack.push((child, depth + 1));
+            }
+            next = dict.get(b"Next").and_then(Object::as_reference).ok();
+        }
+    }
+    items
+}
+
+/// Retire les destinations nommées (`/Names /Dests`, `/Dests` du catalogue) qui mènent à une
+/// page hors de `live`, et rend les noms qui n'existent plus nulle part.
+fn drop_dead_named_destinations(
+    doc: &mut Document,
+    live: &BTreeSet<ObjectId>,
+) -> BTreeSet<Vec<u8>> {
+    let no_names = BTreeSet::new();
+    let dead = Dead {
+        live,
+        names: &no_names,
+    };
+    let mut removed = BTreeSet::new();
+    let mut kept = BTreeSet::new();
+    // `/Dests` du catalogue (PDF 1.1) : nom → destination.
+    let dests_id = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"Dests").ok())
+        .and_then(|d| d.as_reference().ok());
+    let dests = match dests_id {
+        Some(id) => doc.get_dictionary(id).ok(),
+        None => doc
+            .catalog()
+            .ok()
+            .and_then(|c| c.get(b"Dests").ok())
+            .and_then(|d| d.as_dict().ok()),
+    };
+    if let Some(dests) = dests {
+        for (name, value) in dests.iter() {
+            if dead.dest(doc, value) {
+                removed.insert(name.clone());
+            } else {
+                kept.insert(name.clone());
+            }
+        }
+    }
+    if !removed.is_empty() {
+        let dests = match dests_id {
+            Some(id) => doc.get_dictionary_mut(id).ok(),
+            None => doc
+                .catalog_mut()
+                .ok()
+                .and_then(|c| c.get_mut(b"Dests").ok())
+                .and_then(|d| d.as_dict_mut().ok()),
+        };
+        if let Some(dests) = dests {
+            for name in &removed {
+                dests.remove(name);
+            }
+        }
+    }
+    // Arbre `/Names /Dests` (PDF 1.2) : chaque nœud filtre ses paires `[nom destination …]`.
+    let mut stack: Vec<(ObjectId, usize)> = Vec::new();
+    let mut seen = BTreeSet::new();
+    let (root_id, root_kids) = match names_dests_root(doc) {
+        Some(DestsRoot::Indirect(id)) => (Some(id), Vec::new()),
+        Some(DestsRoot::Direct(node)) => {
+            let filtered = filter_name_pairs(doc, &dead, &node, &mut removed, &mut kept);
+            if let Some(pairs) = filtered
+                && let Some(root) = names_dests_root_mut(doc)
+            {
+                root.set("Names", Object::Array(pairs));
+            }
+            (None, kid_refs(&node))
+        }
+        None => (None, Vec::new()),
+    };
+    stack.extend(root_id.map(|id| (id, 0)));
+    stack.extend(root_kids.into_iter().map(|id| (id, 1)));
+    while let Some((id, depth)) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Ok(node) = doc.get_dictionary(id).cloned() else {
+            continue;
+        };
+        if let Some(pairs) = filter_name_pairs(doc, &dead, &node, &mut removed, &mut kept)
+            && let Ok(node) = doc.get_dictionary_mut(id)
+        {
+            node.set("Names", Object::Array(pairs));
+        }
+        if depth < MAX_DEPTH {
+            stack.extend(kid_refs(&node).into_iter().map(|kid| (kid, depth + 1)));
+        }
+    }
+    // Un nom retiré d'une structure mais encore présent dans l'autre reste valable.
+    removed.retain(|name| !kept.contains(name));
+    removed
+}
+
+/// Où est la racine de l'arbre `/Names /Dests` : objet indirect, ou dictionnaire direct
+/// (copié) rangé dans le dictionnaire `/Names`.
+enum DestsRoot {
+    Indirect(ObjectId),
+    Direct(Dictionary),
+}
+
+fn names_dests_root(doc: &Document) -> Option<DestsRoot> {
+    let names = doc.catalog().ok()?.get(b"Names").ok()?;
+    let dests = doc
+        .dereference(names)
+        .ok()?
+        .1
+        .as_dict()
+        .ok()?
+        .get(b"Dests")
+        .ok()?;
+    match dests {
+        Object::Reference(id) => Some(DestsRoot::Indirect(*id)),
+        Object::Dictionary(dict) => Some(DestsRoot::Direct(dict.clone())),
+        _ => None,
+    }
+}
+
+/// La racine directe de l'arbre `/Names /Dests`, modifiable.
+fn names_dests_root_mut(doc: &mut Document) -> Option<&mut Dictionary> {
+    let names_id = doc.catalog().ok()?.get(b"Names").ok()?.as_reference().ok();
+    let names = match names_id {
+        Some(id) => doc.get_dictionary_mut(id).ok()?,
+        None => doc
+            .catalog_mut()
+            .ok()?
+            .get_mut(b"Names")
+            .ok()?
+            .as_dict_mut()
+            .ok()?,
+    };
+    names.get_mut(b"Dests").ok()?.as_dict_mut().ok()
+}
+
+/// Références des `/Kids` d'un nœud d'arbre de noms.
+fn kid_refs(node: &Dictionary) -> Vec<ObjectId> {
+    node.get(b"Kids")
+        .and_then(Object::as_array)
+        .map(|kids| kids.iter().filter_map(|k| k.as_reference().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Les paires `/Names` de `node` sans celles qui mènent à une page morte, ou `None` si rien
+/// n'est à retirer. Note chaque nom dans `removed` ou `kept`.
+fn filter_name_pairs(
+    doc: &Document,
+    dead: &Dead<'_>,
+    node: &Dictionary,
+    removed: &mut BTreeSet<Vec<u8>>,
+    kept: &mut BTreeSet<Vec<u8>>,
+) -> Option<Vec<Object>> {
+    let items = node.get(b"Names").and_then(Object::as_array).ok()?;
+    // [Apprentissage] `as_chunks::<2>()` découpe la tranche en tableaux `[T; 2]` (et rend à part
+    // un éventuel élément impair) : `for [key, value] in pairs` les déstructure sans index.
+    let (pairs, _odd) = items.as_chunks::<2>();
+    let mut out = Vec::with_capacity(items.len());
+    let mut changed = false;
+    for [key, value] in pairs {
+        let name = key.as_str().map(<[u8]>::to_vec).unwrap_or_default();
+        if dead.dest(doc, value) {
+            removed.insert(name);
+            changed = true;
+        } else {
+            kept.insert(name);
+            out.push(key.clone());
+            out.push(value.clone());
+        }
+    }
+    changed.then_some(out)
 }
 
 /// Vrai si `dict` est un marqueur de contenu `/OBJR` dont la cible `/Obj` est dans `dead`.
@@ -701,6 +1120,52 @@ mod tests {
 }
 
 #[cfg(test)]
+mod refuse_tests {
+    use super::*;
+
+    #[test]
+    fn refuse_if_uncleaned_only_refuses_a_fallback_after_a_deletion() {
+        let fallback = Saved {
+            bytes: Vec::new(),
+            cleaned: false,
+        };
+        let cleaned = Saved {
+            bytes: Vec::new(),
+            cleaned: true,
+        };
+        assert!(refuse_if_uncleaned(true, &fallback, "protection refusée").is_err());
+        assert!(refuse_if_uncleaned(false, &fallback, "x").is_ok());
+        assert!(refuse_if_uncleaned(true, &cleaned, "x").is_ok());
+        let message = refuse_if_uncleaned(true, &fallback, "protection refusée")
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("protection refusée"), "{message}");
+        assert!(!message.contains("  "), "pas d'espaces répétés : {message}");
+    }
+
+    /// Revue du Lot 14 (I2, M13) : `into_checked` est le seul chemin des appelants de
+    /// production vers les octets ; un repli non nettoyé après une suppression est refusé.
+    #[test]
+    fn into_checked_refuses_an_uncleaned_fallback_after_a_deletion() {
+        let fallback = || Saved {
+            bytes: b"brut".to_vec(),
+            cleaned: false,
+        };
+        let err = fallback()
+            .into_checked(true, "enregistrement refusé")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("enregistrement refusé"), "{err}");
+        assert_eq!(fallback().into_checked(false, "x").unwrap(), b"brut");
+        let cleaned = Saved {
+            bytes: b"propre".to_vec(),
+            cleaned: true,
+        };
+        assert_eq!(cleaned.into_checked(true, "x").unwrap(), b"propre");
+    }
+}
+
+#[cfg(test)]
 mod prune_tests {
     use super::*;
 
@@ -722,5 +1187,73 @@ mod prune_tests {
             assert_eq!(keys(&ours), keys(&theirs));
             assert!(!ours.objects.contains_key(&orphan));
         }
+    }
+}
+
+#[cfg(test)]
+mod dead_destination_tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    /// `rich_catalog_pdf` relu par lopdf, la page d'objet `page` retirée de l'arbre et
+    /// effacée (comme PDFium le fait d'une page supprimée).
+    fn rich_without(page: u32) -> Document {
+        let bytes = crate::testing::rich_catalog_pdf("1.7", None);
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        let root = doc.get_dictionary_mut((2, 0)).unwrap();
+        let kids: Vec<Object> = [3, 4, 5]
+            .into_iter()
+            .filter(|&id| id != page)
+            .map(|id| Object::Reference((id, 0)))
+            .collect();
+        root.set("Kids", kids);
+        root.set("Count", 2);
+        doc.objects.insert((page, 0), Object::Null);
+        doc
+    }
+
+    fn annots(doc: &Document) -> Vec<Object> {
+        page_annots(doc, (3, 0)).unwrap().1
+    }
+
+    #[test]
+    fn explicit_and_pdf_1_1_named_destinations_to_a_dead_page_are_neutralized() {
+        let mut doc = rich_without(5);
+        neutralize_dead_destinations(&mut doc);
+        // `/chap3` (dictionnaire `/Dests` du catalogue) est retiré, `(chap2)` reste.
+        let dests = doc.get_dictionary((14, 0)).unwrap();
+        assert!(!dests.has(b"chap3"));
+        let Some(DestsRoot::Direct(tree)) = names_dests_root(&doc) else {
+            panic!("arbre /Names /Dests direct attendu");
+        };
+        assert_eq!(tree.get(b"Names").unwrap().as_array().unwrap().len(), 2);
+        // Signets « Vers chap3 » (action `GoTo` nommée) et « Direct p3 » : sans cible.
+        assert!(!doc.get_dictionary((25, 0)).unwrap().has(b"A"));
+        assert!(!doc.get_dictionary((26, 0)).unwrap().has(b"Dest"));
+        assert!(doc.get_dictionary((24, 0)).unwrap().has(b"Dest"));
+        // Liens vers la page 3 retirés ; le lien vers chap2 et le widget restent.
+        assert_eq!(
+            annots(&doc),
+            [Object::Reference((19, 0)), Object::Reference((22, 0))]
+        );
+        // L'action d'ouverture vise la page 2, vivante.
+        assert!(doc.catalog().unwrap().has(b"OpenAction"));
+    }
+
+    #[test]
+    fn an_open_action_to_a_dead_page_is_removed() {
+        let mut doc = rich_without(4);
+        neutralize_dead_destinations(&mut doc);
+        assert!(!doc.catalog().unwrap().has(b"OpenAction"));
+        assert!(!doc.get_dictionary((24, 0)).unwrap().has(b"Dest"));
+        assert_eq!(
+            annots(&doc),
+            [
+                Object::Reference((20, 0)),
+                Object::Reference((21, 0)),
+                Object::Reference((22, 0))
+            ]
+        );
     }
 }

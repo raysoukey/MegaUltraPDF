@@ -224,3 +224,311 @@ fn split_to_dir_refuses_existing_outputs_unless_forced() {
         );
     }
 }
+
+/// `sample_pdf` réécrit par `lopdf` avec l'en-tête `version` (PDFium ne sait écrire que 1.0 à 1.7).
+fn sample_with_header(version: &str, catalog_version: Option<&str>) -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&sample_pdf(3, "t")).unwrap();
+    doc.version = version.into();
+    if let Some(v) = catalog_version {
+        let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let catalog = doc.get_object_mut(root).unwrap().as_dict_mut().unwrap();
+        catalog.set("Version", lopdf::Object::Name(v.as_bytes().to_vec()));
+    }
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+#[test]
+fn rotate_merge_extract_and_protect_keep_the_2_0_header() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = Document::from_bytes(sample_with_header("2.0", None), None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let path = dir.path().join("rotated.pdf");
+    doc.save_as(&path).unwrap();
+    assert!(
+        std::fs::read(&path).unwrap().starts_with(b"%PDF-2.0"),
+        "save_as"
+    );
+
+    // Une seconde édition part des octets enregistrés : la version reste.
+    doc.rotate_pages(&[1], 1).unwrap();
+    doc.save_as(&path).unwrap();
+    assert!(
+        std::fs::read(&path).unwrap().starts_with(b"%PDF-2.0"),
+        "save_as bis"
+    );
+
+    assert!(
+        doc.extract_pages(&[0, 1]).unwrap().starts_with(b"%PDF-2.0"),
+        "extract"
+    );
+
+    let old = Document::from_bytes(sample_with_header("1.5", None), None).unwrap();
+    let new = Document::from_bytes(sample_with_header("2.0", None), None).unwrap();
+    assert!(
+        mega_core::pages::merge(&[&old, &new])
+            .unwrap()
+            .starts_with(b"%PDF-2.0"),
+        "merge"
+    );
+    assert!(
+        mega_core::pages::merge(&[&old, &old])
+            .unwrap()
+            .starts_with(b"%PDF-1."),
+        "merge 1.x"
+    );
+
+    let mut protected = Document::from_bytes(sample_with_header("2.0", None), None).unwrap();
+    protected
+        .protect(&mega_core::Protection {
+            user_password: "u".to_string(),
+            owner_password: "o".to_string(),
+            permissions: mega_core::Permissions {
+                print: true,
+                copy: true,
+                modify: true,
+                annotate: true,
+            },
+        })
+        .unwrap();
+    let protected_path = dir.path().join("protected.pdf");
+    protected.save_as(&protected_path).unwrap();
+    assert!(
+        std::fs::read(&protected_path)
+            .unwrap()
+            .starts_with(b"%PDF-2.0"),
+        "protect"
+    );
+}
+
+#[test]
+fn catalog_version_entry_survives_a_rewrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = Document::from_bytes(sample_with_header("1.4", Some("1.7")), None).unwrap();
+    doc.rotate_pages(&[0], 1).unwrap();
+    let path = dir.path().join("v.pdf");
+    doc.save_as(&path).unwrap();
+    let out = std::fs::read(&path).unwrap();
+    assert!(out.starts_with(b"%PDF-1.4"));
+    let reread = lopdf::Document::load_mem(&out).unwrap();
+    let root = reread.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let catalog = reread.get_object(root).unwrap().as_dict().unwrap();
+    assert_eq!(catalog.get(b"Version").unwrap().as_name().unwrap(), b"1.7");
+}
+
+// --- Report du catalogue (Lot 14, audit E3) -------------------------------------------------
+
+use mega_core::links::LinkTarget;
+use mega_core::pages::merge;
+use mega_core::testing::{form_parent_kid_pdf, rich_catalog_pdf};
+
+fn rich() -> Document {
+    Document::from_bytes(rich_catalog_pdf("1.7", None), None).unwrap()
+}
+
+/// Nom et valeur de chaque champ de formulaire, toutes pages confondues.
+fn fields(doc: &Document) -> Vec<(String, Option<String>)> {
+    (0..doc.page_count())
+        .flat_map(|p| doc.form_fields(p).unwrap())
+        .map(|f| (f.name, f.value))
+        .collect()
+}
+
+#[test]
+fn merging_two_rich_catalogs_keeps_bookmarks_attachments_fields_and_links() {
+    let (a, b) = (rich(), rich());
+    let merged = Document::from_bytes(merge(&[&a, &b]).unwrap(), None).unwrap();
+    assert_eq!(merged.page_count(), 6);
+    let outline = merged.outline().unwrap();
+    let targets: Vec<(&str, Option<u16>)> =
+        outline.iter().map(|n| (n.title.as_str(), n.page)).collect();
+    assert_eq!(
+        targets,
+        [
+            ("Vers chap2", Some(1)),
+            ("Vers chap3", Some(2)),
+            ("Direct p3", Some(2)),
+            ("Vers chap2", Some(4)),
+            ("Vers chap3", Some(5)),
+            ("Direct p3", Some(5)),
+        ]
+    );
+    let names: Vec<String> = merged
+        .attachments()
+        .unwrap()
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    assert_eq!(names, ["notes (2).txt", "notes.txt"]);
+    let names: Vec<String> = fields(&merged).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["nom", "nom (2)"]);
+    // Les liens de chaque source visent leurs propres pages, même par un nom partagé.
+    for (page, expected) in [(0, [1, 2, 2]), (3, [4, 5, 5])] {
+        let links: Vec<LinkTarget> = merged
+            .links(page)
+            .unwrap()
+            .into_iter()
+            .map(|l| l.target)
+            .collect();
+        assert_eq!(
+            links,
+            expected.map(LinkTarget::Page),
+            "liens de la page {page}"
+        );
+    }
+}
+
+#[test]
+fn extracting_a_page_keeps_attachments_and_its_bookmark() {
+    let bytes = rich().extract_pages(&[1]).unwrap();
+    let part = Document::from_bytes(bytes, None).unwrap();
+    assert_eq!(part.attachments().unwrap().len(), 1);
+    let outline = part.outline().unwrap();
+    assert_eq!(outline.len(), 1);
+    assert_eq!(
+        (outline[0].title.as_str(), outline[0].page),
+        ("Vers chap2", Some(0))
+    );
+}
+
+#[test]
+fn a_merged_parent_kid_form_keeps_its_field() {
+    // [E20d] : sans report, le `/Parent` du widget copié désignait un flux de contenu.
+    let form = Document::from_bytes(form_parent_kid_pdf(), None).unwrap();
+    let simple = Document::open(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/simple.pdf"),
+        None,
+    )
+    .unwrap();
+    let merged = Document::from_bytes(merge(&[&simple, &form]).unwrap(), None).unwrap();
+    assert_eq!(
+        fields(&merged),
+        [("nom".to_string(), Some("ancien".to_string()))]
+    );
+}
+
+#[test]
+fn extracting_from_a_password_protected_source_carries_its_catalog() {
+    let mut doc = rich();
+    doc.protect(&mega_core::security::Protection {
+        user_password: "u".to_string(),
+        owner_password: "o".to_string(),
+        permissions: mega_core::Permissions {
+            print: true,
+            copy: true,
+            modify: true,
+            annotate: true,
+        },
+    })
+    .unwrap();
+    // Protection non enregistrée (état PDFium), puis fichier enregistré rouvert.
+    let saved = doc.to_bytes().unwrap();
+    let reopened = Document::from_bytes(saved, Some("u")).unwrap();
+    for source in [&doc, &reopened] {
+        let part = Document::from_bytes(source.extract_pages(&[1]).unwrap(), None).unwrap();
+        assert_eq!(part.attachments().unwrap().len(), 1);
+        assert_eq!(part.outline().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn attachments_still_encrypted_in_an_identity_file_are_not_carried() {
+    // `/EFF` : la pièce jointe resterait chiffrée dans un document neuf qui ne l'est pas.
+    let doc = Document::from_bytes(
+        mega_core::testing::attachments_only_encrypted_with_file_pdf(),
+        None,
+    )
+    .unwrap();
+    let part = Document::from_bytes(doc.extract_pages(&[0]).unwrap(), None).unwrap();
+    assert!(part.attachments().unwrap().is_empty());
+}
+
+// --- Déplacement par l'arbre des pages (Lot 14, audit E4) -------------------------------------
+
+#[test]
+fn moving_a_page_keeps_its_links_tagging_and_the_bookmarks_to_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = rich();
+    doc.move_pages(&[0], 2).unwrap();
+    let path = dir.path().join("deplacee.pdf");
+    doc.save_as(&path).unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    let reopened = Document::from_bytes(saved.clone(), None).unwrap();
+    assert_eq!(labels(&reopened), ["Page2", "Page3", "Page1"]);
+    // La page déplacée reste le même objet : ses liens, son widget et ce qui la vise suivent.
+    let links: Vec<LinkTarget> = reopened
+        .links(2)
+        .unwrap()
+        .into_iter()
+        .map(|l| l.target)
+        .collect();
+    assert_eq!(
+        links,
+        [
+            LinkTarget::Page(0),
+            LinkTarget::Page(1),
+            LinkTarget::Page(1)
+        ]
+    );
+    assert_eq!(reopened.annotations(2).unwrap().len(), 4);
+    let names: Vec<String> = fields(&reopened).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["nom"], "le widget reste dans /AcroForm /Fields");
+    let outline: Vec<(String, Option<u16>)> = reopened
+        .outline()
+        .unwrap()
+        .into_iter()
+        .map(|n| (n.title, n.page))
+        .collect();
+    assert_eq!(
+        outline,
+        [
+            ("Vers chap2".to_string(), Some(0)),
+            ("Vers chap3".to_string(), Some(1)),
+            ("Direct p3".to_string(), Some(1)),
+        ]
+    );
+    // Balisage : la page garde sa clé dans l'arbre de structure et son contenu marqué.
+    let lo = lopdf::Document::load_mem(&saved).unwrap();
+    let moved = lo.get_pages()[&3];
+    let page = lo.get_dictionary(moved).unwrap();
+    assert_eq!(page.get(b"StructParents").unwrap().as_i64().unwrap(), 0);
+    let content = lo.get_page_content(moved);
+    assert!(content.windows(3).any(|w| w == b"BDC"));
+}
+
+#[test]
+fn moving_a_page_in_an_aes256_document_keeps_the_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/encrypted.pdf");
+    let mut doc = Document::open(source, Some("secret")).unwrap();
+    let first = doc.page_text(0).unwrap();
+    doc.move_pages(&[0], 2).unwrap();
+    let path = dir.path().join("chiffre.pdf");
+    doc.save_as(&path).unwrap();
+    let reopened = Document::open(&path, Some("secret")).unwrap();
+    assert_eq!(reopened.page_count(), 3);
+    assert_eq!(reopened.page_text(2).unwrap(), first);
+    assert!(matches!(
+        Document::open(&path, None),
+        Err(CoreError::PasswordRequired)
+    ));
+}
+
+#[test]
+fn a_refused_move_leaves_the_document_unchanged() {
+    // Un déplacement refusé ne doit pas marquer le document modifié : l'enregistrement
+    // réécrirait sinon le fichier (et romprait une signature).
+    let dir = tempfile::tempdir().unwrap();
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/simple.pdf");
+    let input = std::fs::read(source).unwrap();
+    let mut doc = Document::open(source, None).unwrap();
+    let count = doc.page_count();
+    assert!(matches!(
+        doc.move_pages(&[0], count),
+        Err(CoreError::PageOutOfRange { .. })
+    ));
+    let path = dir.path().join("intact.pdf");
+    doc.save_as(&path).unwrap();
+    assert!(std::fs::read(&path).unwrap() == input, "octets identiques");
+}

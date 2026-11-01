@@ -257,3 +257,111 @@ fn a_pdfa_claim_is_detected_and_kept() {
     assert!(catalog.has(b"OutputIntents"), "profil de sortie perdu");
     assert!(catalog.has(b"Metadata"), "métadonnées XMP perdues");
 }
+
+#[test]
+fn pdfa_4_documents_do_not_receive_an_info_dictionary() {
+    let mut lo = lopdf::Document::load_mem(&mega_core::testing::pdfa_pdf()).unwrap();
+    let meta = lo
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = lo.get_object_mut(meta).unwrap().as_stream_mut().unwrap();
+    let xmp = String::from_utf8(stream.content.clone()).unwrap().replace(
+        "pdfaid:part=\"2\" pdfaid:conformance=\"B\"/>",
+        "pdfaid:part=\"4\" xmp:ModifyDate=\"2001-01-01T00:00:00Z\"          xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"/>",
+    );
+    stream.set_plain_content(xmp.into_bytes());
+    lo.trailer.remove(b"Info");
+    let mut bytes = Vec::new();
+    lo.save_to(&mut bytes).unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pdfa4.pdf");
+    let mut d = Document::from_bytes(bytes, None).unwrap();
+    d.rotate_pages(&[0], 1).unwrap();
+    d.save_as(&path).unwrap();
+    let out = lopdf::Document::load_mem(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(out.trailer.get(b"Info").is_err(), "PDF/A-4 : pas de /Info");
+    let meta = out
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let xmp = String::from_utf8(
+        out.get_object(meta)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .decompressed_content()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !xmp.contains("2001-01-01"),
+        "xmp:ModifyDate mis à jour : {xmp}"
+    );
+}
+
+/// `pdfa_pdf` déclaré en partie `part`, avec ou sans `/Info` réduit à un `/ModDate` ancien.
+fn pdfa_with(part: &str, info: Option<&str>) -> Vec<u8> {
+    let mut lo = lopdf::Document::load_mem(&mega_core::testing::pdfa_pdf()).unwrap();
+    let meta = lo
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = lo.get_object_mut(meta).unwrap().as_stream_mut().unwrap();
+    let xmp = String::from_utf8(stream.content.clone())
+        .unwrap()
+        .replace("pdfaid:part=\"2\"", &format!("pdfaid:part=\"{part}\""));
+    stream.set_plain_content(xmp.into_bytes());
+    lo.trailer.remove(b"Info");
+    if let Some(date) = info {
+        let id = lo.add_object(lopdf::Dictionary::from_iter(vec![(
+            "ModDate",
+            lopdf::Object::string_literal(date),
+        )]));
+        lo.trailer.set("Info", id);
+    }
+    let mut bytes = Vec::new();
+    lo.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+fn saved_info_mod_date(bytes: Vec<u8>) -> Option<String> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sortie.pdf");
+    let mut d = Document::from_bytes(bytes, None).unwrap();
+    d.rotate_pages(&[0], 1).unwrap();
+    d.save_as(&path).unwrap();
+    let out = lopdf::Document::load_mem(&std::fs::read(&path).unwrap()).unwrap();
+    let info = out.trailer.get(b"Info").ok()?;
+    let (_, info) = out.dereference(info).ok()?;
+    let date = info.as_dict().ok()?.get(b"ModDate").ok()?.as_str().ok()?;
+    Some(String::from_utf8_lossy(date).into_owned())
+}
+
+#[test]
+fn pdfa_4_existing_info_keeps_getting_its_mod_date() {
+    let date = saved_info_mod_date(pdfa_with("4", Some("D:20010101000000+00'00'")));
+    assert!(
+        date.is_some_and(|d| !d.contains("2001")),
+        "ModDate mis à jour"
+    );
+}
+
+#[test]
+fn pdfa_2_documents_still_receive_a_mod_date() {
+    let date = saved_info_mod_date(pdfa_with("2", None));
+    assert!(
+        date.is_some_and(|d| d.starts_with("D:")),
+        "/Info créé comme avant"
+    );
+}

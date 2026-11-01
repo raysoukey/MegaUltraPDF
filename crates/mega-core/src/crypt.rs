@@ -97,22 +97,43 @@ pub(crate) fn stream_bytes(stream: &Stream) -> Option<Vec<u8>> {
     }
 }
 
-/// Refuse un chiffrement que lopdf ne rechiffrerait pas à l'identique (relecture du Lot 10) :
-/// un filtre `/StmF` ou `/StrF` qui n'est pas une entrée de `/CF` (le nom réservé `Identity`,
-/// « en clair », par exemple : lopdf le traiterait en RC4 et brouillerait le fichier), ou un
-/// `/EFF` (pièces jointes) différent de `/StmF`, que lopdf ne sait pas réécrire.
-fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<()> {
-    let refuse = || {
-        CoreError::InvalidOperation(
-            "document chiffré par filtres (pièces jointes seules, filtre « Identity ») : \
-             non réécrit par cette version"
-                .to_string(),
-        )
-    };
+/// Ce que la session doit faire d'un document chiffré lu par lopdf.
+enum FilterCheck {
+    /// Les filtres sont ceux que lopdf sait rechiffrer à l'identique : déchiffrer, travailler,
+    /// rechiffrer.
+    Standard,
+    /// `/StmF` et `/StrF` valent `Identity` : flux et chaînes sont en clair dans le fichier
+    /// (seules les pièces jointes, `/EFF`, peuvent être chiffrées). lopdf les « déchiffrerait »
+    /// pourtant en RC4 : la session relit alors le fichier sans le déchiffrer et garde son
+    /// `/Encrypt` tel quel.
+    Passthrough,
+}
+
+fn refuse() -> CoreError {
+    CoreError::InvalidOperation(
+        "document chiffré par filtres (filtre inconnu ou pièces jointes seules mal décrites) : \
+         non réécrit par cette version"
+            .to_string(),
+    )
+}
+
+/// Vrai pour le filtre « en clair » : le nom réservé `Identity`, ou l'absence de nom (la norme
+/// en fait la valeur par défaut, §7.6.5).
+fn is_identity(name: Option<&[u8]>) -> bool {
+    // [Apprentissage] `matches!` teste un motif sans écrire un `match` complet ; ici il
+    // reconnaît trois formes d'un même sens (absent, vide, `Identity`).
+    matches!(name, None | Some(b"") | Some(b"Identity"))
+}
+
+/// Choisit le mode de la session pour un document chiffré, ou refuse un chiffrement que lopdf
+/// ne rechiffrerait pas à l'identique (relecture du Lot 10) : un filtre `/StmF` ou `/StrF`
+/// qui n'est pas une entrée de `/CF` (sans être `Identity` des deux côtés), ou un `/EFF`
+/// (pièces jointes) différent de `/StmF`, que lopdf ne sait pas réécrire.
+fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<FilterCheck> {
     let encoded = state.encode().map_err(|_| refuse())?;
     let version = encoded.get(b"V").and_then(|v| v.as_i64()).unwrap_or(0);
     if version < 4 {
-        return Ok(());
+        return Ok(FilterCheck::Standard);
     }
     let filters: Vec<Vec<u8>> = encoded
         .get(b"CF")
@@ -121,6 +142,9 @@ fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<
         .unwrap_or_default();
     let name_of = |key: &[u8]| encoded.get(key).and_then(|n| n.as_name()).ok();
     let stream = name_of(b"StmF");
+    if is_identity(stream) && is_identity(name_of(b"StrF")) {
+        return Ok(FilterCheck::Passthrough);
+    }
     for key in [&b"StmF"[..], b"StrF"] {
         match name_of(key) {
             Some(name) if filters.iter().any(|f| f.as_slice() == name) => {}
@@ -146,31 +170,127 @@ fn check_crypt_filters(doc: &LoDocument, state: &EncryptionState) -> CoreResult<
     {
         return Err(refuse());
     }
-    Ok(())
+    Ok(FilterCheck::Standard)
 }
 
-/// Un document `lopdf` déchiffré le temps d'une passe, à rechiffrer à l'identique.
+/// Copie de `bytes` où la référence `/Encrypt N G R` de chaque remorque (le dictionnaire qui
+/// suit un mot-clé `trailer`) est rebaptisée `/Encrypx N G R`, sans changer la longueur : lopdf
+/// voit alors un fichier non chiffré et ne touche à aucun octet, et le dictionnaire `/Encrypt`
+/// reste un objet ordinaire, comme les flux chiffrés des pièces jointes.
+///
+/// Rien d'autre n'est modifié : dans un fichier `Identity`, chaînes et flux non compressés sont
+/// en clair et pourraient citer le même texte. `None` si aucune remorque classique ne porte la
+/// référence (fichier à flux de références : elle y est dans un flux, non réécrit ici).
+fn hide_encrypt_entry(bytes: &[u8]) -> Option<Vec<u8>> {
+    const KEY: &[u8] = b"/Encrypt";
+    let is_space = |b: u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0 | 0x0c);
+    // Position après « espaces (au moins un) puis chiffres (au moins un) » à partir de `at`.
+    let skip_number = |mut at: usize| -> Option<usize> {
+        let start = at;
+        while bytes.get(at).copied().is_some_and(is_space) {
+            at += 1;
+        }
+        if at == start {
+            return None;
+        }
+        let digits = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        (at > digits).then_some(at)
+    };
+    let mut out = bytes.to_vec();
+    let mut renamed = false;
+    let mut from = 0;
+    while let Some(found) = bytes[from..].windows(7).position(|w| w == b"trailer") {
+        let mut at = from + found + 7;
+        from = at;
+        while bytes.get(at).copied().is_some_and(is_space) {
+            at += 1;
+        }
+        if !bytes[at..].starts_with(b"<<") {
+            continue;
+        }
+        // Fin du dictionnaire de remorque : `<<` et `>>` équilibrés (un `<` seul ouvre une
+        // chaîne hexadécimale, il n'est pas compté).
+        let start = at;
+        let mut depth = 0usize;
+        while at < bytes.len() {
+            if bytes[at..].starts_with(b"<<") {
+                depth += 1;
+                at += 2;
+            } else if bytes[at..].starts_with(b">>") {
+                depth = depth.saturating_sub(1);
+                at += 2;
+                if depth == 0 {
+                    break;
+                }
+            } else {
+                at += 1;
+            }
+        }
+        let end = at;
+        from = end;
+        let mut scan = start;
+        while let Some(found) = bytes[scan..end].windows(KEY.len()).position(|w| w == KEY) {
+            let key_at = scan + found;
+            scan = key_at + KEY.len();
+            let is_reference = skip_number(scan)
+                .and_then(skip_number)
+                .is_some_and(|num_end| {
+                    let mut r = num_end;
+                    while bytes.get(r).copied().is_some_and(is_space) {
+                        r += 1;
+                    }
+                    r > num_end && bytes.get(r) == Some(&b'R')
+                });
+            if is_reference {
+                out[key_at + KEY.len() - 1] = b'x';
+                renamed = true;
+            }
+        }
+    }
+    renamed.then_some(out)
+}
+
+/// Un document `lopdf` le temps d'une passe : déchiffré puis rechiffré à l'identique, ou, pour
+/// des filtres `Identity`, relu en **passe-plat** (ni déchiffré ni rechiffré, jamais renuméroté).
 pub(crate) struct LopdfSession {
-    /// Le document, objets en clair.
+    /// Le document, objets en clair (en passe-plat : tels que lus, seules les pièces jointes
+    /// restant chiffrées).
     pub(crate) doc: LoDocument,
     /// L'état de chiffrement d'origine (`None` : document non chiffré).
     state: Option<EncryptionState>,
+    /// Vrai pour un fichier lu en passe-plat : ses objets chiffrés (pièces jointes) sont
+    /// chiffrés **avec leur numéro d'objet** dans la clé (RC4 et AES, §7.6.2) ; les renuméroter
+    /// les rendrait illisibles. Voir [`LopdfSession::keeps_object_numbers`].
+    passthrough: bool,
 }
 
 impl LopdfSession {
+    /// Vrai si la passe ne doit **pas** renuméroter les objets (`renumber_objects`) : élaguer
+    /// reste permis, déplacer un numéro non.
+    pub(crate) fn keeps_object_numbers(&self) -> bool {
+        self.passthrough
+    }
+
     /// Charge `bytes` (déchiffré avec `password`, ou le mot de passe vide s'il n'y en a pas).
     /// Refuse un document resté chiffré : mot de passe faux, ou chiffrement que lopdf ne sait
     /// pas lire (filtre inconnu).
     pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> CoreResult<Self> {
-        Self::from_loaded(load_limited(bytes, password))
+        Self::from_loaded(load_limited(bytes, password), bytes, true)
     }
 
     /// Comme [`LopdfSession::load`], sans réparer la remorque (voir [`load_exact`]).
     pub(crate) fn load_exact(bytes: &[u8], password: Option<&str>) -> CoreResult<Self> {
-        Self::from_loaded(load_exact(bytes, password))
+        Self::from_loaded(load_exact(bytes, password), bytes, false)
     }
 
-    fn from_loaded(loaded: lopdf::Result<LoDocument>) -> CoreResult<Self> {
+    fn from_loaded(
+        loaded: lopdf::Result<LoDocument>,
+        bytes: &[u8],
+        repair: bool,
+    ) -> CoreResult<Self> {
         let mut doc = loaded.map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;
@@ -182,10 +302,50 @@ impl LopdfSession {
             ));
         }
         let state = doc.encryption_state.take();
-        if let Some(state) = &state {
-            check_crypt_filters(&doc, state)?;
+        if let Some(state) = &state
+            && matches!(check_crypt_filters(&doc, state)?, FilterCheck::Passthrough)
+        {
+            return Self::passthrough(state, bytes, repair);
         }
-        Ok(LopdfSession { doc, state })
+        Ok(LopdfSession {
+            doc,
+            state,
+            passthrough: false,
+        })
+    }
+
+    /// Session d'un fichier `/StmF /StrF Identity` : relu sans déchiffrement (la première
+    /// lecture a déjà authentifié le mot de passe), avec `/Encrypt` remis dans la remorque pour
+    /// que l'élagage le garde ; `/ID` n'est pas touché, et les objets ne doivent pas être
+    /// renumérotés (`keeps_object_numbers`). `finish` n'a rien à rechiffrer : ce qui est
+    /// chiffré (les pièces jointes) n'a jamais été lu en clair.
+    fn passthrough(state: &EncryptionState, bytes: &[u8], repair: bool) -> CoreResult<Self> {
+        let hidden = hide_encrypt_entry(bytes).ok_or_else(refuse)?;
+        let loaded = if repair {
+            load_limited(&hidden, None)
+        } else {
+            load_exact(&hidden, None)
+        };
+        let mut doc = loaded.map_err(|e| {
+            CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
+        })?;
+        let id = state.encrypt_object_id().ok_or_else(refuse)?;
+        let is_standard = doc
+            .get_dictionary(id)
+            .ok()
+            .and_then(|d| d.get(b"Filter").and_then(Object::as_name).ok())
+            == Some(b"Standard".as_slice());
+        if !is_standard {
+            return Err(refuse());
+        }
+        // La clé rebaptisée n'a plus de raison d'être : elle ne doit pas se retrouver écrite.
+        doc.trailer.remove(b"Encrypx");
+        doc.trailer.set("Encrypt", Object::Reference(id));
+        Ok(LopdfSession {
+            doc,
+            state: None,
+            passthrough: true,
+        })
     }
 
     /// Rechiffre (si besoin) avec l'état d'origine et sérialise le document.
@@ -198,5 +358,106 @@ impl LopdfSession {
         let mut out = Vec::new();
         self.doc.save_to(&mut out)?;
         Ok(out)
+    }
+}
+
+/// Version `(majeur, mineur)` annoncée par l'en-tête `%PDF-M.n`, cherché dans les 1024
+/// premiers octets (des octets parasites peuvent précéder l'en-tête, comme le tolère la
+/// lecture `lopdf`). `None` si aucun en-tête à deux chiffres n'y figure.
+///
+/// Pourquoi : PDFium ne sait écrire que les versions 1.0 à 1.7 et réécrit un `%PDF-2.0` en
+/// `%PDF-1.0` ; sans connaître la version d'origine, chaque édition d'un PDF/A-4 ou d'un
+/// PDF/UA-2 romprait sa conformité (audit E2).
+pub(crate) fn header_version(bytes: &[u8]) -> Option<(u8, u8)> {
+    let head = &bytes[..bytes.len().min(1024)];
+    let start = head.windows(5).position(|w| w == b"%PDF-")? + 5;
+    let digits = head.get(start..start + 3)?;
+    match digits {
+        [major @ b'0'..=b'9', b'.', minor @ b'0'..=b'9'] => Some((major - b'0', minor - b'0')),
+        _ => None,
+    }
+}
+
+/// Copie de `bytes` dont l'en-tête annonce au moins `min_version`, sans changer la longueur
+/// (les trois octets `M.n` sont réécrits en place : tous les décalages restent exacts).
+/// Les octets sont rendus tels quels si l'en-tête est déjà assez récent ou introuvable.
+pub(crate) fn raise_header_version(bytes: &[u8], min_version: Option<(u8, u8)>) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    if let (Some(min), Some(current)) = (min_version, header_version(bytes))
+        // [Apprentissage] Les tuples se comparent champ par champ : (2, 0) > (1, 7).
+        && min > current
+        // Une composante à deux chiffres ne tient pas dans un octet `M` ou `n`.
+        && min.0 <= 9
+        && min.1 <= 9
+        && let Some(pos) = out[..out.len().min(1024)]
+            .windows(5)
+            .position(|w| w == b"%PDF-")
+    {
+        out[pos + 5] = b'0' + min.0;
+        out[pos + 7] = b'0' + min.1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    #[test]
+    fn header_version_reads_major_minor_after_a_prefix() {
+        assert_eq!(header_version(b"%PDF-2.0\n%\xE2\xE3"), Some((2, 0)));
+        assert_eq!(header_version(b"junk\n%PDF-1.4\n"), Some((1, 4)));
+        assert_eq!(header_version(b"nope"), None);
+    }
+
+    #[test]
+    fn raise_header_version_only_raises() {
+        assert_eq!(
+            raise_header_version(b"%PDF-1.4\nx", Some((2, 0))),
+            b"%PDF-2.0\nx"
+        );
+        assert_eq!(
+            raise_header_version(b"%PDF-1.7\nx", Some((1, 4))),
+            b"%PDF-1.7\nx"
+        );
+        assert_eq!(raise_header_version(b"%PDF-1.7\nx", None), b"%PDF-1.7\nx");
+    }
+
+    /// Revue du Lot 14 (M1) : une version à deux chiffres ne s'écrit pas dans les trois octets
+    /// `M.n` (`b'0' + 12` n'est pas un chiffre) ; l'en-tête reste tel quel.
+    #[test]
+    fn raise_header_version_ignores_a_multi_digit_component() {
+        assert_eq!(
+            raise_header_version(b"%PDF-1.4\nx", Some((1, 12))),
+            b"%PDF-1.4\nx"
+        );
+        assert_eq!(
+            raise_header_version(b"%PDF-1.4\nx", Some((250, 0))),
+            b"%PDF-1.4\nx"
+        );
+    }
+}
+
+#[cfg(test)]
+mod hide_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_trailer_reference_is_renamed() {
+        let input = b"%PDF-1.6\n1 0 obj\n(/Encrypt 12 0 R)\nendobj\ntrailer\n<< /Size 3 /Encrypt 6 0 R /ID [<aa><bb>] >>\nstartxref\n0\n%%EOF\n";
+        let out = hide_encrypt_entry(input).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("(/Encrypt 12 0 R)"),
+            "texte hors remorque intact"
+        );
+        assert!(text.contains("/Encrypx 6 0 R"));
+        assert_eq!(text.len(), input.len());
+    }
+
+    #[test]
+    fn no_trailer_means_no_passthrough() {
+        assert!(hide_encrypt_entry(b"%PDF-1.6\n<< /Encrypt 6 0 R >>\n").is_none());
+        assert!(hide_encrypt_entry(b"trailer\n<< /Size 3 >>\n").is_none());
     }
 }

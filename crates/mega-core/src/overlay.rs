@@ -228,8 +228,8 @@ impl Document {
 
     /// Pose un filigrane sur les pages visées.
     pub fn add_watermark(&mut self, w: &Watermark) -> CoreResult<()> {
+        // Lue avant `mark_changed`, qui vide la vue `lopdf` gardée.
         let conformance = self.conformance();
-        self.mark_changed();
         check_text(&w.text)?;
         if !(w.size.is_finite() && (4.0..=400.0).contains(&w.size)) {
             return Err(invalid(
@@ -266,13 +266,16 @@ impl Document {
                 frame,
             });
         }
+        // Après les gardes : un refus laisse le document intact (et ses octets réécrits tels
+        // quels à l'enregistrement).
+        self.mark_changed();
         self.apply_placements(placements, conformance, ARTIFACT)
     }
 
     /// Numérote les pages visées d'après le modèle.
     pub fn add_page_numbers(&mut self, n: &PageNumbering) -> CoreResult<()> {
+        // Lue avant `mark_changed`, qui vide la vue `lopdf` gardée.
         let conformance = self.conformance();
-        self.mark_changed();
         if n.template.trim().is_empty() {
             return Err(invalid("le modèle ne peut pas être vide"));
         }
@@ -329,6 +332,8 @@ impl Document {
                 frame,
             });
         }
+        // Après les gardes, celles de la boucle comprises (texte de chaque numéro, marge).
+        self.mark_changed();
         self.apply_placements(placements, conformance, PAGINATION_ARTIFACT)
     }
 

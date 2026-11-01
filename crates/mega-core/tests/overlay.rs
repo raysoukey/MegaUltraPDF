@@ -885,3 +885,52 @@ fn invisible_words_on_a_missing_page_leave_the_document_unchanged() {
     doc.save_as(&path).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), source, "octets d'origine");
 }
+
+/// Enregistre `doc` et rend les octets écrits.
+fn saved_bytes(doc: &mut Document) -> Vec<u8> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sortie.pdf");
+    doc.save_as(&path).unwrap();
+    std::fs::read(&path).unwrap()
+}
+
+/// Un filigrane refusé par ses gardes (texte vide, page absente, taille hors bornes) laisse
+/// le document **non modifié** : enregistrer réécrit les octets d'origine tels quels.
+#[test]
+fn a_refused_watermark_leaves_the_document_unchanged() {
+    let source = sample_pdf(1, "intact");
+    let too_big = Watermark {
+        size: 1000.0,
+        ..watermark("GRAND", None)
+    };
+    for (what, spec) in [
+        ("texte vide", watermark("   ", None)),
+        ("page absente", watermark("COPIE", Some(vec![5]))),
+        ("taille hors bornes", too_big),
+    ] {
+        let mut doc = Document::from_bytes(source.clone(), None).unwrap();
+        assert!(doc.add_watermark(&spec).is_err(), "{what} : refusé");
+        assert!(!doc.is_modified(), "{what} : document non modifié");
+        assert!(saved_bytes(&mut doc) == source, "{what} : octets d'origine");
+    }
+}
+
+/// Même règle pour la numérotation, y compris quand le refus vient de la boucle qui place
+/// chaque numéro (marge qui sort de la page).
+#[test]
+fn refused_page_numbers_leave_the_document_unchanged() {
+    let source = sample_pdf(2, "intact");
+    let off_page = PageNumbering {
+        margin: 5000.0,
+        ..numbering("{n}", Corner::BottomRight, 1)
+    };
+    for (what, spec) in [
+        ("modèle vide", numbering("  ", Corner::BottomCenter, 1)),
+        ("marge hors de la page", off_page),
+    ] {
+        let mut doc = Document::from_bytes(source.clone(), None).unwrap();
+        assert!(doc.add_page_numbers(&spec).is_err(), "{what} : refusé");
+        assert!(!doc.is_modified(), "{what} : document non modifié");
+        assert!(saved_bytes(&mut doc) == source, "{what} : octets d'origine");
+    }
+}

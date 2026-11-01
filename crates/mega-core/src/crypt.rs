@@ -781,10 +781,11 @@ fn give_up_decoding(reason: &str) -> Option<Vec<u8>> {
 ///
 /// - fichier chiffré (`/Encrypt`) : PDFium le lit déchiffré, [`seal_metadata`] répare sa
 ///   sortie (pas une renonciation : rien n'est noté) ;
-/// - octets parasites avant `%PDF-`, lecture stricte impossible (`load_exact`, sans réparation
-///   de la remorque), table de références réparée (`xref_recovery`), objet de la table absent
-///   de la lecture, nombre de pages différent après réécriture : renonciation notée au
-///   journal. lopdf et PDFium pourraient réparer différemment ; seul un fichier sain est
+/// - octets parasites avant `%PDF-`, lecture impossible (`load_exact`, sans réparation de la
+///   remorque ; lopdf reste indulgent et saute un objet malformé, c'est le contrôle suivant qui
+///   le rattrape), table de références réparée (`xref_recovery`), objet de la table absent de
+///   la lecture (objet sauté), nombre de pages différent après réécriture : renonciation notée
+///   au journal. lopdf et PDFium pourraient réparer différemment ; seul un fichier sain est
 ///   réécrit.
 ///
 /// Les octets du fichier (`file_bytes`) ne changent pas : un document ouvert puis enregistré
@@ -798,7 +799,7 @@ pub(crate) fn unfiltered_metadata_copy(bytes: &[u8]) -> Option<Vec<u8>> {
     }
     let mut doc = match load_exact(bytes, None) {
         Ok(doc) => doc,
-        Err(e) => return give_up_decoding(&format!("lecture stricte impossible ({e})")),
+        Err(e) => return give_up_decoding(&format!("lecture impossible ({e})")),
     };
     if doc.xref_recovery.is_some() {
         return give_up_decoding("table de références réparée");
@@ -810,7 +811,9 @@ pub(crate) fn unfiltered_metadata_copy(bytes: &[u8]) -> Option<Vec<u8>> {
         let id = match entry {
             lopdf::xref::XrefEntry::Normal { generation, .. } => (number, *generation),
             lopdf::xref::XrefEntry::Compressed { .. } => (number, 0),
-            _ => return false,
+            // Une entrée libre ne désigne aucun objet. Les variantes sont énumérées, sans
+            // `_`, pour qu'une nouvelle variante de lopdf fasse échouer la compilation ici.
+            lopdf::xref::XrefEntry::Free | lopdf::xref::XrefEntry::UnusableFree => return false,
         };
         !doc.objects.contains_key(&id)
     });

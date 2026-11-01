@@ -228,8 +228,8 @@ impl Document {
 
     /// Pose un filigrane sur les pages visées.
     pub fn add_watermark(&mut self, w: &Watermark) -> CoreResult<()> {
+        // Lue avant `mark_changed`, qui vide la vue `lopdf` gardée.
         let conformance = self.conformance();
-        self.mark_changed();
         check_text(&w.text)?;
         if !(w.size.is_finite() && (4.0..=400.0).contains(&w.size)) {
             return Err(invalid(
@@ -266,13 +266,16 @@ impl Document {
                 frame,
             });
         }
+        // Après les gardes : un refus laisse le document intact (et ses octets réécrits tels
+        // quels à l'enregistrement).
+        self.mark_changed();
         self.apply_placements(placements, conformance, ARTIFACT)
     }
 
     /// Numérote les pages visées d'après le modèle.
     pub fn add_page_numbers(&mut self, n: &PageNumbering) -> CoreResult<()> {
+        // Lue avant `mark_changed`, qui vide la vue `lopdf` gardée.
         let conformance = self.conformance();
-        self.mark_changed();
         if n.template.trim().is_empty() {
             return Err(invalid("le modèle ne peut pas être vide"));
         }
@@ -329,21 +332,24 @@ impl Document {
                 frame,
             });
         }
+        // Après les gardes, celles de la boucle comprises (texte de chaque numéro, marge).
+        self.mark_changed();
         self.apply_placements(placements, conformance, PAGINATION_ARTIFACT)
     }
 
     /// Recadre les pages visées (`/CropBox`) par marges depuis la MediaBox, en points
     /// affichés ; quatre marges nulles retirent le recadrage.
     pub fn crop_pages(&mut self, c: &CropSpec) -> CoreResult<()> {
-        self.mark_changed();
         if c.margins.iter().any(|m| !m.is_finite() || *m < 0.0) {
             return Err(invalid("les marges doivent être positives ou nulles"));
         }
         let pages = self.target_pages(&c.pages)?;
         // PDFium ne lit que la `/MediaBox` propre à la page : l'héritée vient de `lopdf`,
-        // lue avant la phase PDFium (le verrou n'est pas réentrant).
+        // lue avant la phase PDFium (le verrou n'est pas réentrant), avec le mot de passe du
+        // document (sans lui, lopdf ne déchiffre pas un fichier à mot de passe d'ouverture).
         let inherited: BTreeMap<u16, Rect> = {
-            let doc = crate::crypt::load_limited(&self.to_bytes()?, None).map_err(structure)?;
+            let doc = crate::crypt::load_limited(&self.to_bytes()?, self.password())
+                .map_err(structure)?;
             let ids = doc.get_pages();
             pages
                 .iter()
@@ -353,11 +359,15 @@ impl Document {
                 })
                 .collect()
         };
+        // Deux temps : calculer (et refuser) le recadrage de **chaque** page d'abord, puis
+        // seulement les poser. Un refus sur la troisième page ne laisse pas la première
+        // recadrée.
+        let mut crops = Vec::with_capacity(pages.len());
         {
             let _guard = engine::guard();
             for page in pages {
                 let index = self.checked_index_unlocked(page)?;
-                let mut pdf_page = self.inner().pages().get(index)?;
+                let pdf_page = self.inner().pages().get(index)?;
                 let rotate = pdf_page
                     .rotation()
                     .map(Rotation::from_pdfium)
@@ -399,7 +409,17 @@ impl Document {
                     w,
                     h,
                 };
-                let crop = frame.to_user_space(displayed);
+                crops.push((index, frame.to_user_space(displayed)));
+            }
+        }
+        // Après les gardes : un refus laisse le document intact.
+        self.mark_changed();
+        {
+            let _guard = engine::guard();
+            // Les indices et les boîtes ont déjà été validés : un échec ici ne peut venir que
+            // d'une panne de PDFium, et les pages déjà recadrées le resteraient (limite assumée).
+            for (index, crop) in crops {
+                let mut pdf_page = self.inner().pages().get(index)?;
                 pdf_page.boundaries_mut().set_crop(to_pdf_rect(&crop))?;
             }
         }
@@ -418,11 +438,13 @@ impl Document {
     /// la copie, pas à la lecture vocale. Rendre un scan accessible demanderait de baliser le
     /// texte reconnu dans l'arbre de structure, ce que cette version ne fait pas.
     pub fn add_invisible_words(&mut self, page: u16, words: &[InvisibleWord]) -> CoreResult<()> {
-        self.mark_changed();
         let count = self.page_count();
         if page >= count {
             return Err(CoreError::PageOutOfRange { index: page, count });
         }
+        // Après la garde : un refus laisse le document intact (et ses octets réécrits tels
+        // quels à l'enregistrement).
+        self.mark_changed();
         let frame = self.page_frame(page)?;
         // Largeur d'**avance** à 100 pt (table AFM, proportionnelle à la taille) : c'est elle
         // que `Tz` étire, et que les lecteurs utilisent pour placer la sélection.

@@ -9,6 +9,7 @@
 //! Organisation des modules :
 //! - [`error`] : le type d'erreur unique du crate, [`CoreError`].
 //! - [`engine`] : localisation et initialisation (une seule fois) de PDFium.
+//! - [`diagnostic`] : avertissements du cœur vers le journal de diagnostic de l'application.
 //! - [`document`] : [`Document`], un PDF ouvert, et ses métadonnées.
 //! - [`render`] : rendu d'une page en pixels ([`RenderedPage`]).
 //! - [`geometry`] : [`Rect`] (points PDF) et [`Rotation`].
@@ -41,6 +42,7 @@ pub mod cleanup;
 pub mod compare;
 pub mod content;
 pub(crate) mod crypt;
+pub mod diagnostic;
 #[cfg(feature = "signature")]
 pub mod digital_signature;
 pub mod document;

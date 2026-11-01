@@ -42,21 +42,26 @@ l'écran atterrissait ailleurs.
    lecteurs. Le recadrage est un `/CropBox` (PDFium), par marges affichées depuis la MediaBox.
 5. **Passe de nettoyage à l'enregistrement** (`cleanup::before_save`, `lopdf`) : `/InkList`
    déduite de l'apparence pour nos `Ink`, `/AP` imposé aux notes et `/PDFIUM_HasGeneratedAP`
-   retirés, objets orphelins élagués et renumérotés. Un fichier chiffré ou illisible par `lopdf`
-   est écrit tel quel.
+   retirés, objets orphelins élagués et renumérotés. Un fichier chiffré est nettoyé puis
+   rechiffré à l'identique (Lot 10, ADR-0014 §7). Un fichier illisible par `lopdf` est écrit tel
+   quel, **sauf** après une suppression : l'écriture est alors refusée (Lot 14, ADR-0019 §1).
 6. Toute édition reste une `EditCommand` appliquée par `Document::apply` (ADR-0007) ; la CLI
    et l'application exécutent le même code, et écrivent par `save_as` (passe de nettoyage
    comprise), jamais par `to_bytes()` brut.
 7. **Refus plutôt que promesse fausse** (relectures de fin de lot) : l'édition d'objets et le
-   caviardage sont refusés sur un PDF chiffré (les objets retirés resteraient en orphelins :
-   `FPDF_SaveAsCopy` recopie tout et `lopdf` ne peut pas élaguer), sur une page dont PDFium
-   régénérerait le flux en perdant du contenu (police Type 3, image en ligne, ombrage :
-   `content::check_regeneration_safe`), quand la zone touche un champ de formulaire (sa valeur
-   resterait dans `/AcroForm`) et quand du texte reste sous le cache (dessiné via un XObject :
-   vérification par `text_boxes` après retrait, instantané restauré). Toute passe `lopdf`
-   (nettoyage, filigrane, champs) s'abstient sur un fichier chiffré **ou déchiffré en silence**
-   (`was_encrypted()` : mot de passe utilisateur vide), et la réécriture est validée
-   (`rewrite_is_sane`) avant de remplacer les octets PDFium.
+   caviardage sont refusés quand `lopdf` ne pourrait pas élaguer ce qu'ils retirent (les objets
+   retirés resteraient en orphelins, car `FPDF_SaveAsCopy` recopie tout). Au Lot 5, cela
+   visait tout PDF chiffré ; le Lot 10 a levé ce refus, et depuis le Lot 14 il vise tout
+   fichier que `lopdf` ne relit pas (`Document::ensure_cleanable`, ADR-0019 §1). Ils sont
+   refusés aussi sur une page dont PDFium régénérerait le flux en perdant du contenu (police
+   Type 3, image en ligne, ombrage : `content::check_regeneration_safe`), quand la zone touche
+   un champ de formulaire (sa valeur resterait dans `/AcroForm`) et quand du texte reste sous
+   le cache (dessiné via un XObject : vérification par `text_boxes` après retrait, instantané
+   restauré). La réécriture `lopdf` est validée (`rewrite_is_sane`) avant de remplacer les
+   octets PDFium. Au Lot 5, toute passe `lopdf` (nettoyage, filigrane, champs) s'abstenait sur
+   un fichier chiffré ou déchiffré en silence (`was_encrypted()`) ; depuis le Lot 10, elles
+   passent par `crypt::LopdfSession`, qui déchiffre puis rechiffre à l'identique (ADR-0014 §7),
+   en passe-plat pour des filtres `Identity` (ADR-0019 §2).
 
 ## Conséquences
 
@@ -71,3 +76,21 @@ l'écran atterrissait ailleurs.
   caractère dans le flux et caviardage raster des images (un scan pleine page est retiré en
   entier), recadrage par rectangle tracé, popups orphelins après suppression d'une note
   tierce, avertissement quand une réécriture invalide une signature numérique.
+
+## Mise à jour (Lot 14, 2026-10-31)
+
+Audit de compatibilité `docs/audit/2026-10-31-compatibilite-pdf.md`, constats E5, E6 et E9.
+
+- **Balisage après suppression d'un objet** (E5) : `regenerate_content` garde les marques
+  (`BDC`/`EMC`, `/MCID`, `/OC`) des objets qui restent ; seule celle de l'objet supprimé
+  disparaît. La passe d'enregistrement retire alors de l'arbre de structure le MCID devenu
+  absent (`cleanup/mcid.rs`, règle conservatrice : ADR-0019 §6).
+- **Filigrane, numéros et couche OCR** (E6) : enveloppés dans `/Artifact BMC … EMC` (la
+  numérotation en `/Artifact <</Type /Pagination>> BDC`), pour qu'un lecteur d'écran les
+  ignore. Sur un document qui déclare PDF/A ou PDF/UA, le texte prend la police Unicode
+  incorporée même en WinAnsi (Helvetica n'est pas incorporée). En PDF/A, la couleur est écrite
+  en `CalRGB` ; en PDF/A-1, sans `/Group` ni opacité, la transparence étant simulée en
+  éclaircissant la couleur (ADR-0018 §7).
+- **Image insérée** (E9) : écrite par `lopdf` et non plus par PDFium ; un JPEG garde ses
+  octets (`/DCTDecode`), un masque `/SMask` n'est ajouté qu'en cas de vraie transparence
+  (ADR-0019 §10). La mise en place reste celle du §1 : espace affiché, puis matrice.

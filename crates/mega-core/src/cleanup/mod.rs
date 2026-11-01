@@ -29,15 +29,21 @@ fn structure(e: impl std::fmt::Display) -> CoreError {
 ///
 /// Pourquoi : quand `lopdf` ne relit pas le fichier, `before_save` rend les octets de PDFium
 /// tels quels, orphelins compris ; l'appelant qui vient de supprimer quelque chose doit le
-/// savoir pour refuser d'écrire un fichier où la suppression survivrait (audit E1). Les
-/// appelants du crate passent par `Saved::into_checked`, qui fait cette vérification.
+/// savoir pour refuser d'écrire un fichier où la suppression survivrait (audit E1). Tout
+/// appelant qui **écrit** ces octets passe par [`Saved::into_checked`], qui fait cette
+/// vérification : c'est la règle du crate, et la seule voie offerte aux autres crates.
+///
+/// Les champs restent publics pour les tests d'intégration (`tests/`, hors du crate), qui
+/// examinent justement le repli (`cleaned` faux, `bytes` tels quels) ; ni le CLI ni
+/// l'application ne les lisent (relecture finale du Lot 14, M4).
 ///
 /// \[Apprentissage\] `#[must_use]` : le compilateur avertit si une valeur de ce type est
 /// ignorée (calculée puis jetée sans être lue), ce qui serait ici un nettoyage oublié.
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Saved {
-    /// Les octets prêts à écrire.
+    /// Les octets prêts à écrire. Lus directement par les seuls tests : pour écrire, passer
+    /// par [`Saved::into_checked`].
     pub bytes: Vec<u8>,
     /// Faux si `before_save` a dû se rabattre sur les octets de PDFium sans nettoyage.
     pub cleaned: bool,
@@ -49,8 +55,9 @@ impl Saved {
     /// message d'erreur (« enregistrement refusé »…).
     ///
     /// Pourquoi : un seul chemin des octets vers le disque pour tous les appelants de
-    /// production ; lire `bytes` directement permettrait d'oublier la vérification.
-    pub(crate) fn into_checked(self, needs_cleanup: bool, what: &str) -> CoreResult<Vec<u8>> {
+    /// production, dans ce crate comme ailleurs ; lire `bytes` directement permettrait
+    /// d'oublier la vérification.
+    pub fn into_checked(self, needs_cleanup: bool, what: &str) -> CoreResult<Vec<u8>> {
         refuse_if_uncleaned(needs_cleanup, &self, what)?;
         Ok(self.bytes)
     }

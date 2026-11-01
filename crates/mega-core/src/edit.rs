@@ -456,6 +456,12 @@ impl Command for EditCommand {
             // (elle n'en avait pas, sinon l'OCR aurait été refusé).
             #[cfg(feature = "ocr")]
             EditCommand::OcrPage { page, .. } => doc.page_has_text(*page).unwrap_or(true),
+            // Un déplacement nul (la sélection est déjà à sa place) ne touche à rien.
+            // Invariant : `changes_order` (fonction pure) et `reorder_kids` (qui réordonne
+            // vraiment) doivent répondre la même chose ; le test
+            // `changes_order_agrees_with_reorder_kids` le garantit. S'ils divergeaient, un vrai
+            // déplacement serait cru sans effet et perdu à l'enregistrement.
+            EditCommand::MovePages { pages, to } => crate::pages::changes_order(pages, *to),
             _ => true,
         }
     }
@@ -808,6 +814,14 @@ impl Document {
             return Ok(());
         }
         let bytes = self.rewritten_bytes()?;
+        // Le nettoyage a pu retirer des objets que PDFium garde en mémoire (popup d'une note
+        // supprimée, entrées de `/Annots`) : on recharge PDFium depuis les octets qui vont être
+        // écrits, sinon un index lu dans le fichier (`lopdf_view`, qui relit `file_bytes`) et le
+        // même index dans PDFium désigneraient deux annotations différentes (relecture finale du
+        // Lot 14, I1). Le rechargement précède l'écriture : s'il échoue, rien n'a été écrit et
+        // le document reste « modifié » ; si c'est l'écriture qui échoue ensuite, PDFium décrit
+        // le même contenu, nettoyé, et le document reste « modifié » lui aussi.
+        self.reload_from_bytes(bytes.clone())?;
         write_atomically(path, &bytes)?;
         // Ce qui vient d'être écrit est désormais l'état du fichier.
         self.mark_saved(path, bytes);
@@ -851,6 +865,9 @@ impl Document {
             self.replace_inner(clean);
             (bytes, fresh)
         };
+        // Seconde sortie de PDFium : son XMP est en clair lui aussi (voir `Document::to_bytes`).
+        // Rechiffré avant la passe `lopdf`, qui le « déchiffrerait » sinon en octets aléatoires.
+        let bytes = crate::crypt::seal_metadata(bytes, self.password());
         // Passe `lopdf` : /InkList, apparences imposées aux notes, élagage (module `cleanup`).
         // Si une suppression a eu lieu et que le nettoyage n'a pas pu retirer ses restes,
         // écrire les octets de PDFium ferait survivre ce que l'utilisateur a supprimé : refus
@@ -866,10 +883,11 @@ impl Document {
             .into_checked(self.needs_cleanup, "enregistrement refusé")
     }
 
-    /// Recharge le document depuis des octets (annuler / rétablir) en gardant son chemin.
+    /// Recharge le document depuis des octets (annuler / rétablir, après une signature ou une
+    /// passe `lopdf`) en gardant son chemin, par `document::load_file_bytes` (constat F21-5).
     pub(crate) fn reload_from_bytes(&mut self, bytes: Vec<u8>) -> CoreResult<()> {
         let guard = engine::guard();
-        let inner = engine::load_bytes(&guard, bytes, self.password())?;
+        let inner = crate::document::load_file_bytes(&guard, bytes, self.password())?;
         self.replace_inner(inner);
         Ok(())
     }

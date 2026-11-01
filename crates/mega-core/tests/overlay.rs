@@ -858,3 +858,161 @@ fn pdfa1_watermarks_simulate_opacity_without_transparency() {
         assert!((c - 0.851).abs() < 0.01, "couleur éclaircie : {content}");
     }
 }
+
+/// Une page hors bornes est refusée **avant** que le document ne soit marqué modifié
+/// (CLAUDE.md : `mark_changed` après les gardes de refus) : enregistrer réécrit alors les
+/// octets d'origine tels quels.
+#[test]
+fn invisible_words_on_a_missing_page_leave_the_document_unchanged() {
+    let source = sample_pdf(1, "intact");
+    let mut doc = Document::from_bytes(source.clone(), None).unwrap();
+    let word = mega_core::overlay::InvisibleWord {
+        text: "Reconnu".to_string(),
+        rect: mega_core::Rect {
+            x: 100.0,
+            y: 600.0,
+            w: 80.0,
+            h: 14.0,
+        },
+    };
+    assert!(matches!(
+        doc.add_invisible_words(5, &[word]),
+        Err(CoreError::PageOutOfRange { index: 5, count: 1 })
+    ));
+    assert!(!doc.is_modified(), "un refus ne modifie pas le document");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("intact.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), source, "octets d'origine");
+}
+
+/// Enregistre `doc` et rend les octets écrits.
+fn saved_bytes(doc: &mut Document) -> Vec<u8> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sortie.pdf");
+    doc.save_as(&path).unwrap();
+    std::fs::read(&path).unwrap()
+}
+
+/// Un filigrane refusé par ses gardes (texte vide, page absente, taille hors bornes) laisse
+/// le document **non modifié** : enregistrer réécrit les octets d'origine tels quels.
+#[test]
+fn a_refused_watermark_leaves_the_document_unchanged() {
+    let source = sample_pdf(1, "intact");
+    let too_big = Watermark {
+        size: 1000.0,
+        ..watermark("GRAND", None)
+    };
+    for (what, spec) in [
+        ("texte vide", watermark("   ", None)),
+        ("page absente", watermark("COPIE", Some(vec![5]))),
+        ("taille hors bornes", too_big),
+    ] {
+        let mut doc = Document::from_bytes(source.clone(), None).unwrap();
+        assert!(doc.add_watermark(&spec).is_err(), "{what} : refusé");
+        assert!(!doc.is_modified(), "{what} : document non modifié");
+        assert!(saved_bytes(&mut doc) == source, "{what} : octets d'origine");
+    }
+}
+
+/// Même règle pour la numérotation, y compris quand le refus vient de la boucle qui place
+/// chaque numéro (marge qui sort de la page).
+#[test]
+fn refused_page_numbers_leave_the_document_unchanged() {
+    let source = sample_pdf(2, "intact");
+    let off_page = PageNumbering {
+        margin: 5000.0,
+        ..numbering("{n}", Corner::BottomRight, 1)
+    };
+    for (what, spec) in [
+        ("modèle vide", numbering("  ", Corner::BottomCenter, 1)),
+        ("marge hors de la page", off_page),
+    ] {
+        let mut doc = Document::from_bytes(source.clone(), None).unwrap();
+        assert!(doc.add_page_numbers(&spec).is_err(), "{what} : refusé");
+        assert!(!doc.is_modified(), "{what} : document non modifié");
+        assert!(saved_bytes(&mut doc) == source, "{what} : octets d'origine");
+    }
+}
+
+/// Un recadrage refusé ne touche **aucune** page, même quand le refus vient d'une page
+/// plus loin dans la liste : `two_level_pages_pdf` a une page 1 de 600 pt de large (affichée)
+/// et une page 3 de 595 pt ; 597 pt de marges laissent 3 pt à la première et rien à la
+/// seconde. Toutes les pages sont vérifiées avant d'en recadrer une.
+#[test]
+fn a_refused_crop_leaves_every_page_untouched() {
+    let source = mega_core::testing::two_level_pages_pdf();
+    for (what, spec) in [
+        (
+            "marges trop grandes pour la page 3",
+            CropSpec {
+                margins: [0.0, 0.0, 597.0, 0.0],
+                pages: Some(vec![0, 2]),
+            },
+        ),
+        (
+            "page absente",
+            CropSpec {
+                margins: [10.0, 10.0, 10.0, 10.0],
+                pages: Some(vec![0, 9]),
+            },
+        ),
+        (
+            "marge négative",
+            CropSpec {
+                margins: [-1.0, 0.0, 0.0, 0.0],
+                pages: None,
+            },
+        ),
+    ] {
+        let mut doc = Document::from_bytes(source.clone(), None).unwrap();
+        assert!(doc.crop_pages(&spec).is_err(), "{what} : refusé");
+        let lo = lopdf::Document::load_mem(&doc.to_bytes().unwrap()).unwrap();
+        let first = lo.get_dictionary(lo.get_pages()[&1]).unwrap();
+        assert!(!first.has(b"CropBox"), "{what} : page 1 recadrée");
+        assert!(saved_bytes(&mut doc) == source, "{what} : octets d'origine");
+    }
+}
+
+/// Relecture finale du Lot 14 (M5) : dans un document chiffré à mot de passe d'ouverture, la
+/// `/MediaBox` héritée se lit aussi (lecture `lopdf` avec le mot de passe du document).
+#[test]
+fn inherited_media_box_is_read_in_a_password_protected_document() {
+    let mut doc =
+        Document::from_bytes(mega_core::testing::inherited_media_box_pdf(), None).unwrap();
+    doc.protect(&mega_core::Protection {
+        user_password: "ouvre".to_string(),
+        owner_password: "maitre".to_string(),
+        permissions: mega_core::Permissions {
+            print: true,
+            copy: true,
+            modify: true,
+            annotate: true,
+        },
+    })
+    .unwrap();
+    let protected = doc.to_bytes().unwrap();
+    let mut doc = Document::from_bytes(protected, Some("ouvre")).unwrap();
+    doc.crop_pages(&CropSpec {
+        margins: [10.0, 10.0, 10.0, 10.0],
+        pages: None,
+    })
+    .unwrap();
+    let saved = lopdf::Document::load_mem_with_options(
+        &doc.to_bytes().unwrap(),
+        lopdf::LoadOptions::with_password("ouvre"),
+    )
+    .unwrap();
+    let page = *saved.get_pages().get(&1).unwrap();
+    let crop: Vec<f32> = saved
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"CropBox")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_float().unwrap())
+        .collect();
+    assert_eq!(crop, vec![110.0, 110.0, 490.0, 690.0]);
+}

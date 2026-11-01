@@ -1,0 +1,241 @@
+[
+  {
+    "wait": 2000
+  },
+  {
+    "eval": "(() => { if (!window.__origFetch) window.__origFetch = window.fetch.bind(window); const of = window.__origFetch; window.__picks = []; window.__dialogs = []; window.__last = {}; window.fetch = async (input, init) => { const url = typeof input === 'string' ? input : input.url; let cmd = null; try { const u = new URL(url); if (u.hostname === 'ipc.localhost' || u.protocol === 'ipc:') cmd = decodeURIComponent(u.pathname.slice(1)); } catch {} if (cmd === 'plugin:dialog|open' || cmd === 'plugin:dialog|save') { window.__dialogs.push(cmd); const v = window.__picks.length ? window.__picks.shift() : null; return new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json', 'Tauri-Response': 'ok' } }); } const res = await of(input, init); if (cmd) { try { window.__last[cmd] = await res.clone().json(); } catch { window.__last[cmd] = '(non JSON)'; } } return res; }; return 'dialogues natifs court-circuités (IPC)'; })()",
+    "label": "dialogues natifs remplacés par des chemins préparés (aucune vraie souris)"
+  },
+  {
+    "assert": "document.querySelectorAll('.thumb').length === 3",
+    "label": "edge-article : trois vignettes"
+  },
+  {
+    "assert": "(() => { const l = [...document.querySelectorAll('.page[data-page=\"0\"] .link')].map((x) => x.title); return (l.length === 2 && l.some((x) => x.startsWith('Page 1 '))) || 'ERREUR ' + l.join(' | '); })()",
+    "label": "avant : deux liens en page 1, dont le lien interne « tableau » vers la page 1"
+  },
+  {
+    "shot": "01-avant.png"
+  },
+  {
+    "eval": "(() => { const list = document.querySelector('.panel .list'); const th = document.querySelectorAll('.thumb'); const a = th[2].getBoundingClientRect(); const x = a.left + 10, y0 = a.top + a.height / 2; const ev = (el, type, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })); ev(th[2], 'pointerdown', y0); ev(th[2], 'pointermove', y0 - 10); list.scrollTop = 0; const first = document.querySelectorAll('.thumb')[0].getBoundingClientRect(); const y = first.top + 4; ev(document.body, 'pointermove', y); const ind = document.querySelector('.drop-indicator') !== null; ev(document.body, 'pointerup', y); return 'indicateur : ' + ind; })()",
+    "label": "glisser la vignette de la page 3 avant la page 1 (événements pointeur)"
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Déplacer\"]') !== null",
+    "label": "libellé d'annulation « Déplacer »"
+  },
+  {
+    "assert": "Promise.all([0, 1].map((page) => window.__TAURI_INTERNALS__.invoke('page_text', { id: 1, page }))).then((t) => (t[0].includes('Deuxième page') && t[1].includes('Rapport trimestriel')) || 'ERREUR ' + t.map((s) => s.slice(0, 30)).join(' | '))",
+    "label": "ordre : « Deuxième page » en 1, la page aux liens en 2"
+  },
+  {
+    "key": "Home"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '1'",
+    "label": "on est en page 1"
+  },
+  {
+    "assert": "(() => { const l = [...document.querySelectorAll('.page[data-page=\"1\"] .link')].map((x) => x.title); return (l.length === 2 && l.some((x) => x.startsWith('Page 2 '))) || 'ERREUR ' + l.join(' | '); })()",
+    "label": "après déplacement : le lien interne de la page 2 vise la page 2 (sa page, qui a bougé)"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('.page[data-page=\"1\"] .link')].find((x) => x.title.startsWith('Page ')).click(); return true; })()",
+    "label": "clic sur le lien interne (calque des liens)"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '2' || 'ERREUR page ' + document.querySelector('input[aria-label=\"Numéro de page\"]').value",
+    "label": "le lien mène à la page 2"
+  },
+  {
+    "shot": "02-lien-apres-deplacement.png"
+  },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/edge-deplace.pdf'); return true; })()",
+    "label": "chemin préparé pour « Enregistrer sous »"
+  },
+  {
+    "key": "s",
+    "ctrl": true,
+    "shift": true
+  },
+  {
+    "wait": 3500
+  },
+  {
+    "assert": "(document.querySelector('main .error') === null && window.__last['save_document'] && window.__last['save_document'].summary.path.endsWith('edge-deplace.pdf')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "Enregistrer sous : edge-deplace.pdf"
+  },
+  {
+    "key": "w",
+    "ctrl": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/edge-deplace.pdf']); return true; })()",
+    "label": "rouvrir edge-deplace.pdf"
+  },
+  {
+    "key": "o",
+    "ctrl": true
+  },
+  {
+    "wait": 3000
+  },
+  {
+    "key": "Home"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "(() => { const l = [...document.querySelectorAll('.page[data-page=\"1\"] .link')].map((x) => x.title); return (l.length === 2 && l.some((x) => x.startsWith('Page 2 '))) || 'ERREUR ' + l.join(' | '); })()",
+    "label": "fichier rouvert : le lien interne de la page 2 vise toujours la page 2"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('.page[data-page=\"1\"] .link')].find((x) => x.title.startsWith('Page ')).click(); return true; })()",
+    "label": "clic sur le lien interne (fichier rouvert)"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '2' || 'ERREUR page ' + document.querySelector('input[aria-label=\"Numéro de page\"]').value",
+    "label": "fichier rouvert : le lien mène à la page 2"
+  },
+  {
+    "shot": "03-lien-rouvert.png"
+  },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/nested_outline.pdf']); return true; })()",
+    "label": "ouvrir nested_outline.pdf (signets vers chaque page)"
+  },
+  {
+    "key": "o",
+    "ctrl": true
+  },
+  {
+    "wait": 3000
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').parentElement.innerText.includes('/ 9') || document.body.innerText.includes('/ 9')",
+    "label": "nested_outline : neuf pages"
+  },
+  {
+    "eval": "(() => { const list = document.querySelector('.panel .list'); const th = document.querySelectorAll('.thumb'); const a = th[1].getBoundingClientRect(); window.__dragX = a.left + 10; const y0 = a.top + a.height / 2; const ev = (el, type, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons: 1, clientX: window.__dragX, clientY: y })); ev(th[1], 'pointerdown', y0); ev(th[1], 'pointermove', y0 + 10); list.scrollTop = list.scrollHeight; return th[1].getAttribute('aria-label'); })()",
+    "label": "saisir la vignette de la page 2 (cible de « 1.1 Background ») et faire défiler la liste"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "eval": "(() => { const list = document.querySelector('.panel .list'); const last = [...document.querySelectorAll('.thumb')].find((b) => b.getAttribute('aria-label').startsWith('Page 9 ')); const r = last.getBoundingClientRect(); const lr = list.getBoundingClientRect(); const y = Math.min(r.bottom - 5, lr.bottom - 40); const ev = (type) => document.body.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: window.__dragX, clientY: y })); ev('pointermove'); const ind = document.querySelector('.drop-indicator') !== null; ev('pointerup'); return 'indicateur : ' + ind; })()",
+    "label": "la déposer après la page 9"
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "assert": "document.querySelector('button[title^=\"Annuler : Déplacer\"]') !== null",
+    "label": "libellé d'annulation « Déplacer »"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('.sidebar [role=tab]')].find((b) => b.textContent.trim() === 'Signets').click(); return true; })()",
+    "label": "onglet Signets"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=treeitem] .label')].find((x) => x.textContent.trim() === '1.1 Background').click(); return true; })()",
+    "label": "clic sur « 1.1 Background »"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '9' || 'ERREUR page ' + document.querySelector('input[aria-label=\"Numéro de page\"]').value",
+    "label": "« 1.1 Background » suit sa page : page 9"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=treeitem] .label')].find((x) => x.textContent.trim() === '1.2 Motivation').click(); return true; })()",
+    "label": "clic sur « 1.2 Motivation »"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '2' || 'ERREUR page ' + document.querySelector('input[aria-label=\"Numéro de page\"]').value",
+    "label": "« 1.2 Motivation » (ancienne page 3) : page 2"
+  },
+  {
+    "shot": "04-signets-apres-deplacement.png"
+  },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/nested-deplace.pdf'); return true; })()",
+    "label": "chemin préparé pour « Enregistrer sous »"
+  },
+  {
+    "key": "s",
+    "ctrl": true,
+    "shift": true
+  },
+  {
+    "wait": 3500
+  },
+  {
+    "assert": "(document.querySelector('main .error') === null && window.__last['save_document'].summary.path.endsWith('nested-deplace.pdf')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "Enregistrer sous : nested-deplace.pdf"
+  },
+  {
+    "key": "w",
+    "ctrl": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/nested-deplace.pdf']); return true; })()",
+    "label": "rouvrir nested-deplace.pdf"
+  },
+  {
+    "key": "o",
+    "ctrl": true
+  },
+  {
+    "wait": 3000
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('.sidebar [role=tab]')].find((b) => b.textContent.trim() === 'Signets').click(); return true; })()",
+    "label": "onglet Signets"
+  },
+  {
+    "wait": 800
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=treeitem] .label')].find((x) => x.textContent.trim() === '1.1 Background').click(); return true; })()",
+    "label": "clic sur « 1.1 Background » (fichier rouvert)"
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '9' || 'ERREUR page ' + document.querySelector('input[aria-label=\"Numéro de page\"]').value",
+    "label": "fichier rouvert : « 1.1 Background » mène à la page 9"
+  },
+  {
+    "shot": "05-signets-rouvert.png"
+  }
+]

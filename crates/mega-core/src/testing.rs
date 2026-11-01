@@ -425,35 +425,15 @@ xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:pdf=\"http://ns.adobe.com/pdf/1
     assemble_pdf(&objects, "<< /Title (Ancien) /Author (Alice) >>")
 }
 
-/// Variantes de métadonnées pour les tests d'encodage et de repli XMP. `kind` : `xmp-only`
-/// (XMP sans `/Info`), `pdfdoc-e9`, `pdfdoc-80-a0`, `utf8-raw` (titre `/Info` aux octets
-/// bruts correspondants).
+/// Le PDF de [`xmp_pdf`] **sans** dictionnaire `/Info` : seul le XMP (`dc:title` « Ancien »,
+/// `dc:creator` « Alice »…) porte les métadonnées, comme chez un producteur PDF 2.0 qui
+/// n'écrit plus `/Info` (ISO 32000-2 §14.3.3).
 ///
-/// Elles existent pour que le banc de l'audit et les vrais tests partagent les mêmes octets.
-pub fn metadata_variant_pdf(kind: &str) -> Vec<u8> {
-    let mut doc;
-    if kind == "xmp-only" {
-        doc = lopdf::Document::load_mem(&xmp_pdf()).expect("squelette XMP");
-        doc.trailer.remove(b"Info");
-    } else {
-        let title: Vec<u8> = match kind {
-            "pdfdoc-e9" => vec![b'C', b'a', b'f', 0xE9],
-            "pdfdoc-80-a0" => vec![0x80, b' ', 0xA0],
-            _ => "Café".as_bytes().to_vec(),
-        };
-        doc = lopdf::Document::load_mem(&sample_pdf(1, "x")).expect("squelette");
-        let info_id = doc
-            .trailer
-            .get(b"Info")
-            .and_then(lopdf::Object::as_reference)
-            .expect("/Info du squelette");
-        doc.get_dictionary_mut(info_id)
-            .expect("dictionnaire /Info")
-            .set(
-                "Title",
-                lopdf::Object::String(title, lopdf::StringFormat::Literal),
-            );
-    }
+/// Pourquoi : vérifier que les propriétés se replient sur le XMP quand `/Info` manque
+/// (audit L12).
+pub fn xmp_only_pdf() -> Vec<u8> {
+    let mut doc = lopdf::Document::load_mem(&xmp_pdf()).expect("squelette XMP");
+    doc.trailer.remove(b"Info");
     let mut out = Vec::new();
     doc.save_to(&mut out).expect("sérialisation lopdf");
     out
@@ -1464,6 +1444,43 @@ pub fn note_with_popup_pdf(secret: &str) -> Vec<u8> {
     assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
 }
 
+/// Une page dont `/Annots` vaut `[note, popup de la note, pièce jointe a.txt, pièce jointe
+/// b.txt]`. Supprimer la note puis enregistrer retire le popup du fichier écrit (nettoyage),
+/// ce qui décale les index de `/Annots` : sert à vérifier qu'après un enregistrement, PDFium et
+/// `lopdf` désignent encore la même annotation (relecture finale du Lot 14, I1).
+pub fn note_then_two_attachments_pdf() -> Vec<u8> {
+    let attachment = |name: &str, stream: u32| {
+        format!(
+            "<< /Type /Annot /Subtype /FileAttachment /Rect [400 400 420 420] /Name /PushPin \
+             /FS << /Type /Filespec /F ({name}) /UF ({name}) /EF << /F {stream} 0 R >> >> \
+             /Contents ({name}) /P 3 0 R >>"
+        )
+    };
+    let file = |content: &str| {
+        format!(
+            "<< /Type /EmbeddedFile /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+    };
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 500] \
+         /Annots [4 0 R 5 0 R 6 0 R 7 0 R] >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Text /Rect [50 50 70 70] /Contents (Note) /T (Auteur) \
+         /Popup 5 0 R /P 3 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Popup /Rect [300 300 450 400] /Parent 4 0 R /P 3 0 R >>"
+            .to_string(),
+        attachment("a.txt", 8),
+        attachment("b.txt", 9),
+        file("contenu A"),
+        file("contenu B"),
+    ];
+    assemble_pdf(&objects, "<< /Producer (MegaUltraPDF tests) >>")
+}
+
 /// Un texte « Secret » dans une police **sous-ensemble** (`/BaseFont /ABCDEF+Helvetica`) :
 /// seuls les glyphes utilisés seraient incorporés, un caractère nouveau s'afficherait mal.
 pub fn subset_font_pdf() -> Vec<u8> {
@@ -1990,6 +2007,43 @@ pub fn identity_encrypted_note_pdf(secret: &str) -> Vec<u8> {
     out.into_bytes()
 }
 
+/// La page de [`note_with_popup_pdf`] (note contenant `secret`, popup, réponse, arbre de
+/// structure) chiffrée en AES-256 (V5, R6) avec des filtres `/StmF /StrF Identity` et un mot de
+/// passe d'ouverture **non vide** (`user`, propriétaire `owner`).
+///
+/// Pourquoi : rien n'y est chiffré hors des pièces jointes, si bien que PDFium l'ouvre sans
+/// vérifier de mot de passe (aucun chiffre à préparer), alors que `lopdf` ne s'authentifie pas
+/// avec le mot de passe vide et laisse le document chiffré. C'est la forme de
+/// `navigation/encrypted-attachment.pdf` (constat F24-1, relecture finale du Lot 14, I3) : la
+/// session passe-plat doit s'y appliquer sans mot de passe.
+pub fn identity_encrypted_note_with_user_password_pdf(secret: &str) -> Vec<u8> {
+    use lopdf::encryption::crypt_filters::{Aes256CryptFilter, CryptFilter};
+    use lopdf::{EncryptionState, EncryptionVersion, Permissions};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    let mut doc = crate::crypt::load_limited(&note_with_popup_pdf(secret), None)
+        .expect("PDF de test lisible par lopdf");
+    let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
+    filters.insert(b"StdCF".to_vec(), Arc::new(Aes256CryptFilter));
+    let state = EncryptionState::try_from(EncryptionVersion::V5 {
+        encrypt_metadata: true,
+        crypt_filters: filters,
+        // Clé fixe : le fichier de test est reproductible.
+        file_encryption_key: &[7u8; 32],
+        stream_filter: b"Identity".to_vec(),
+        string_filter: b"Identity".to_vec(),
+        owner_password: "owner",
+        user_password: "user",
+        permissions: Permissions::all(),
+    })
+    .expect("état de chiffrement");
+    doc.encrypt(&state).expect("chiffrement (filtres Identity)");
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation lopdf");
+    out
+}
+
 /// Paquet XMP minimal (titre « Riche ») du catalogue de [`rich_catalog_pdf`].
 const RICH_XMP: &str = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 <x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
@@ -2282,6 +2336,118 @@ pub fn opentype_cff_cid_pdf_with(cid: u16, rotate: i64) -> Vec<u8> {
     out
 }
 
+/// Une page qui écrit le code 0x41 (« A ») avec une police Helvetica dont l'encodage
+/// `/Differences [65 /eacute]` renomme ce code : le glyphe dessiné est « é ».
+///
+/// Pourquoi : vérifier que l'extraction suit le nom de glyphe d'un `/Differences` (expérience
+/// L14 du banc de l'audit, retiré au Lot 14).
+pub fn differences_helvetica_pdf() -> Vec<u8> {
+    use lopdf::{Dictionary, Object};
+    simple_font_pdf(|_| {
+        Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Font".to_vec())),
+            ("Subtype", Object::Name(b"Type1".to_vec())),
+            ("BaseFont", Object::Name(b"Helvetica".to_vec())),
+            (
+                "Encoding",
+                Object::Dictionary(Dictionary::from_iter(vec![
+                    ("Type", Object::Name(b"Encoding".to_vec())),
+                    ("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec())),
+                    (
+                        "Differences",
+                        Object::Array(vec![65.into(), Object::Name(b"eacute".to_vec())]),
+                    ),
+                ])),
+            ),
+        ])
+    })
+}
+
+/// Une page qui écrit le code 0x41 (« A ») avec une police **TrueType incorporée** (DejaVu
+/// Sans, entière) déclarée **symbolique** (`/Flags 4`), un encodage `/Differences [65 /B]` et
+/// **sans** `/ToUnicode`.
+///
+/// Pourquoi : mesurer ce que l'extraction rend quand seul le nom de glyphe dit « B » (ISO
+/// 32000-1 §9.10.2) : PDFium rend le code « A », limite assumée (audit L4, expérience L14).
+pub fn symbolic_truetype_differences_pdf() -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    simple_font_pdf(|doc| {
+        let font = crate::fonts::unicode::DEJAVU_SANS;
+        let file = doc.add_object(Stream::new(
+            Dictionary::from_iter(vec![(
+                "Length1",
+                Object::Integer(i64::try_from(font.len()).expect("police de moins de 2 Go")),
+            )]),
+            font.to_vec(),
+        ));
+        let descriptor = doc.add_object(Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"FontDescriptor".to_vec())),
+            ("FontName", Object::Name(b"DejaVuSans".to_vec())),
+            ("Flags", Object::Integer(4)),
+            (
+                "FontBBox",
+                Object::Array(vec![
+                    (-1021).into(),
+                    (-463).into(),
+                    1793.into(),
+                    1232.into(),
+                ]),
+            ),
+            ("ItalicAngle", Object::Integer(0)),
+            ("Ascent", Object::Integer(928)),
+            ("Descent", Object::Integer(-236)),
+            ("CapHeight", Object::Integer(700)),
+            ("StemV", Object::Integer(80)),
+            ("FontFile2", Object::Reference(file)),
+        ]));
+        Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Font".to_vec())),
+            ("Subtype", Object::Name(b"TrueType".to_vec())),
+            ("BaseFont", Object::Name(b"DejaVuSans".to_vec())),
+            ("FirstChar", Object::Integer(65)),
+            ("LastChar", Object::Integer(66)),
+            ("Widths", Object::Array(vec![684.into(), 686.into()])),
+            ("FontDescriptor", Object::Reference(descriptor)),
+            (
+                "Encoding",
+                Object::Dictionary(Dictionary::from_iter(vec![
+                    ("Type", Object::Name(b"Encoding".to_vec())),
+                    (
+                        "Differences",
+                        Object::Array(vec![65.into(), Object::Name(b"B".to_vec())]),
+                    ),
+                ])),
+            ),
+        ])
+    })
+}
+
+/// Une page A4 qui écrit `(A) Tj` en 24 pt avec la police `/F1` que `font` construit (elle
+/// peut ajouter ses propres objets, programme de police ou descripteur, au document).
+fn simple_font_pdf(font: impl FnOnce(&mut lopdf::Document) -> lopdf::Dictionary) -> Vec<u8> {
+    use lopdf::{Dictionary, Object, Stream};
+    let mut doc = lopdf::Document::load_mem(&blank_pdf(595.0, 842.0)).expect("squelette lisible");
+    let font = font(&mut doc);
+    let font = doc.add_object(font);
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 24 Tf 72 700 Td (A) Tj ET".to_vec(),
+    ));
+    let page_id = *doc.get_pages().get(&1).expect("une page");
+    let page = doc.get_dictionary_mut(page_id).expect("page");
+    page.set("Contents", Object::Reference(content));
+    page.set(
+        "Resources",
+        Object::Dictionary(Dictionary::from_iter(vec![(
+            "Font",
+            Object::Dictionary(Dictionary::from_iter(vec![("F1", Object::Reference(font))])),
+        )])),
+    );
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("sérialisation");
+    out
+}
+
 /// Un nombre dans un dictionnaire ou une chaîne de caractères CFF : forme la plus courte.
 fn cff_int(v: i32) -> Vec<u8> {
     match v {
@@ -2475,8 +2641,8 @@ fn cid_keyed_otf(cid: u16) -> Vec<u8> {
 /// son `Popup`.
 ///
 /// Pourquoi : un fichier venu d'un autre logiciel ne ressemble jamais à ce que nous écrivons ;
-/// ce PDF sert au banc de compatibilité et aux tests qui vérifient que ces annotations sont
-/// lues sans être abîmées (audit L11, L15).
+/// ce PDF sert aux tests qui vérifient que ces annotations sont lues sans être abîmées
+/// (audit L11, expérience L15 du banc de mesure).
 pub fn third_party_annots_pdf() -> Vec<u8> {
     let stream = |dict: &str, content: &str| {
         format!(

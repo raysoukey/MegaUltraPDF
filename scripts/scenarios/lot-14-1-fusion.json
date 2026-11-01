@@ -1,0 +1,143 @@
+[
+  { "wait": 2000 },
+  {
+    "eval": "(() => { if (!window.__origFetch) window.__origFetch = window.fetch.bind(window); const of = window.__origFetch; window.__picks = []; window.__dialogs = []; window.__last = {}; window.fetch = async (input, init) => { const url = typeof input === 'string' ? input : input.url; let cmd = null; try { const u = new URL(url); if (u.hostname === 'ipc.localhost' || u.protocol === 'ipc:') cmd = decodeURIComponent(u.pathname.slice(1)); } catch {} if (cmd === 'plugin:dialog|open' || cmd === 'plugin:dialog|save') { window.__dialogs.push(cmd); const v = window.__picks.length ? window.__picks.shift() : null; return new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json', 'Tauri-Response': 'ok' } }); } const res = await of(input, init); if (cmd) { try { window.__last[cmd] = await res.clone().json(); } catch { window.__last[cmd] = '(non JSON)'; } } return res; }; return 'dialogues natifs court-circuités (IPC)'; })()",
+    "label": "dialogues natifs remplacés par des chemins préparés (aucune vraie souris)"
+  },
+  { "assert": "document.querySelectorAll('.page img').length >= 1", "label": "160F-2019 ouvert et rendu" },
+  { "key": "m", "ctrl": true },
+  { "wait": 600 },
+  { "assert": "document.querySelector('#merge-title') !== null", "label": "dialogue Fusionner ouvert" },
+  {
+    "eval": "(() => { const w = 'C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/'; window.__picks.push([w + '160F-2019.pdf', w + 'attachment.pdf']); [...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.trim().startsWith('Ajouter des fichiers')).click(); return true; })()",
+    "label": "« Ajouter des fichiers… » : 160F-2019.pdf + attachment.pdf"
+  },
+  { "wait": 800 },
+  {
+    "assert": "(() => { const names = [...document.querySelectorAll('[role=dialog] .files .name')].map((n) => n.textContent.trim()); return (names.join('|') === '160F-2019.pdf|attachment.pdf' && !document.querySelector('[role=dialog] button.primary').disabled) || 'ERREUR ' + names.join('|'); })()",
+    "label": "deux fichiers listés dans l'ordre, bouton Fusionner actif"
+  },
+  { "shot": "01-dialogue-fusion.png" },
+  { "click": "[role=dialog] button.primary" },
+  { "wait": 5000 },
+  {
+    "assert": "(() => { const s = window.__last['merge_files']; return (s && s.page_count === 2 && s.path === null && document.querySelector('#merge-title') === null && document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').length === 2) || 'ERREUR ' + JSON.stringify(s) + ' ' + ((document.querySelector('main .error') || {}).textContent || ''); })()",
+    "label": "fusion : nouvel onglet de 2 pages, sans chemin"
+  },
+  {
+    "assert": "[...document.querySelectorAll('.sidebar [role=tab]')].some((b) => b.textContent.trim() === 'Formulaire')",
+    "label": "le document fusionné a un formulaire (onglet « Formulaire »)"
+  },
+  {
+    "eval": "window.__TAURI_INTERNALS__.invoke('all_form_fields', { id: window.__last['merge_files'].id }).then((p) => p.map((f) => f.length).join(','))",
+    "label": "nombre de champs par page"
+  },
+  {
+    "assert": "window.__TAURI_INTERNALS__.invoke('all_form_fields', { id: window.__last['merge_files'].id }).then((p) => p[0].length === 76 || 'ERREUR ' + p[0].length)",
+    "label": "les 76 champs du 160F sont tous là (page 1)"
+  },
+  {
+    "eval": "(() => { const i = document.querySelector(\".page[data-page='0'] .form-layer input[type=text]:not([readonly])\"); if (!i) return 'ERREUR aucun champ texte modifiable'; window.__fieldName = i.getAttribute('aria-label'); i.focus(); i.value = 'Lot 14'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); return window.__fieldName; })()",
+    "label": "remplir le premier champ texte modifiable de la page 1 avec « Lot 14 »"
+  },
+  { "wait": 1500 },
+  {
+    "assert": "window.__TAURI_INTERNALS__.invoke('form_fields', { id: window.__last['merge_files'].id, page: 0 }).then((f) => f.some((x) => x.name === window.__fieldName && x.value === 'Lot 14') || 'ERREUR ' + JSON.stringify(f.filter((x) => x.name === window.__fieldName)))",
+    "label": "champ remplissable : la valeur « Lot 14 » est dans le document"
+  },
+  { "assert": "document.querySelector('button[title^=\"Annuler : \"]') !== null", "label": "la saisie est une étape d'annulation" },
+  { "shot": "02-champ-rempli.png" },
+  { "click": "button[aria-label='Pièces jointes']" },
+  { "wait": 1000 },
+  {
+    "assert": "(document.querySelectorAll('.attachments li').length === 1 && document.querySelector('.attachments').innerText.includes('foo.txt')) || 'ERREUR ' + (document.querySelector('.attachments') || {}).innerText",
+    "label": "la pièce jointe foo.txt d'attachment.pdf est listée"
+  },
+  { "shot": "03-piece-jointe.png" },
+  { "eval": "(() => { [...document.querySelectorAll('.sidebar [role=tab]')].find((b) => b.textContent.trim() === 'Signets').click(); return true; })()", "label": "onglet Signets" },
+  { "wait": 800 },
+  {
+    "eval": "document.querySelectorAll('[role=treeitem]').length + ' signet(s) ; aucune des deux sources n’a de /Outlines (mutool), 0 attendu'",
+    "label": "signets du résultat"
+  },
+  { "shot": "04-signets.png" },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/fusion-160F-attachment.pdf'); return true; })()",
+    "label": "chemin préparé pour « Enregistrer sous »"
+  },
+  { "key": "s", "ctrl": true, "shift": true },
+  { "wait": 4000 },
+  {
+    "assert": "(document.querySelector('main .error') === null && !document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•') && window.__last['save_document'] && window.__last['save_document'].summary.path.endsWith('fusion-160F-attachment.pdf')) || 'ERREUR ' + JSON.stringify(window.__last['save_document']) + ' ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "Enregistrer sous : fusion-160F-attachment.pdf écrit, onglet non modifié"
+  },
+  { "shot": "05-enregistre.png" },
+  { "key": "w", "ctrl": true },
+  { "wait": 800 },
+  {
+    "assert": "document.querySelectorAll('[role=tablist][aria-label=MegaUltraPDF] [role=tab]').length === 1 && document.querySelector('[role=alertdialog]') === null",
+    "label": "onglet enregistré fermé sans confirmation (rien à enregistrer)"
+  },
+  { "key": "m", "ctrl": true },
+  { "wait": 600 },
+  {
+    "eval": "(() => { const w = 'C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/'; window.__picks.push([w + '160F-2019.pdf', w + 'attachment.pdf', w + 'nested_outline.pdf']); [...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.trim().startsWith('Ajouter des fichiers')).click(); return true; })()",
+    "label": "seconde fusion avec nested_outline.pdf (seule source à signets)"
+  },
+  { "wait": 800 },
+  { "click": "[role=dialog] button.primary" },
+  { "wait": 5000 },
+  {
+    "assert": "(() => { const s = window.__last['merge_files']; return (s && s.page_count === 11) || 'ERREUR ' + JSON.stringify(s); })()",
+    "label": "fusion à trois : 1 + 1 + 9 = 11 pages"
+  },
+  { "eval": "(() => { [...document.querySelectorAll('.sidebar [role=tab]')].find((b) => b.textContent.trim() === 'Signets').click(); return true; })()", "label": "onglet Signets" },
+  { "wait": 1000 },
+  {
+    "assert": "(() => { const l = [...document.querySelectorAll('[role=treeitem] .label')].map((x) => x.textContent.trim()); return (l.includes('1. Introduction') && l.includes('2. Main Content')) || 'ERREUR ' + l.join(' | '); })()",
+    "label": "les signets de nested_outline sont reportés"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('[role=treeitem] .label')].find((x) => x.textContent.trim() === '2. Main Content').click(); return true; })()",
+    "label": "clic sur le signet « 2. Main Content » (page 4 de la source)"
+  },
+  { "wait": 1200 },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '6' || 'ERREUR page ' + document.querySelector('input[aria-label=\"Numéro de page\"]').value",
+    "label": "le signet mène à la page 6 du résultat (2 pages avant la source)"
+  },
+  { "eval": "(() => { document.querySelector(\"button[aria-label='Pièces jointes']\").click(); return true; })()", "label": "onglet Pièces jointes" },
+  { "wait": 800 },
+  { "assert": "document.querySelector('.attachments').innerText.includes('foo.txt')", "label": "pièce jointe toujours listée (fusion à trois)" },
+  { "assert": "window.__TAURI_INTERNALS__.invoke('all_form_fields', { id: window.__last['merge_files'].id }).then((p) => p[0].length === 76 || 'ERREUR ' + p[0].length)", "label": "les 76 champs sont là (fusion à trois)" },
+  { "shot": "06-fusion-signets.png" },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/fusion-3.pdf'); return true; })()",
+    "label": "chemin préparé pour « Enregistrer sous »"
+  },
+  { "key": "s", "ctrl": true, "shift": true },
+  { "wait": 4000 },
+  {
+    "assert": "(document.querySelector('main .error') === null && window.__last['save_document'].summary.path.endsWith('fusion-3.pdf')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "Enregistrer sous : fusion-3.pdf écrit"
+  },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/fusion-160F-attachment.pdf']); return true; })()",
+    "label": "rouvrir fusion-160F-attachment.pdf"
+  },
+  { "key": "o", "ctrl": true },
+  { "wait": 3000 },
+  {
+    "assert": "(() => { const s = window.__last['open_document']; return (s && s.path.endsWith('fusion-160F-attachment.pdf') && s.page_count === 2) || 'ERREUR ' + JSON.stringify(s); })()",
+    "label": "fichier enregistré rouvert (2 pages)"
+  },
+  {
+    "assert": "window.__TAURI_INTERNALS__.invoke('form_fields', { id: window.__last['open_document'].id, page: 0 }).then((f) => (f.length === 76 && f.some((x) => x.name === window.__fieldName && x.value === 'Lot 14')) || 'ERREUR ' + f.length)",
+    "label": "après réouverture : 76 champs, la valeur « Lot 14 » conservée"
+  },
+  {
+    "assert": "window.__TAURI_INTERNALS__.invoke('attachments', { id: window.__last['open_document'].id }).then((a) => a.some((x) => x.name === 'foo.txt') || 'ERREUR ' + JSON.stringify(a))",
+    "label": "après réouverture : pièce jointe foo.txt présente"
+  },
+  { "shot": "07-rouvert.png" }
+]

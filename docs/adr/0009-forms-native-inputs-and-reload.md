@@ -45,8 +45,8 @@ combos et listes, `flatten()` par page, et aucune écriture dans le dictionnaire
   attendent les éditions en vol : une valeur tapée sans quitter le champ n'est pas perdue.
 - **Valeurs lues** bornées (4096 caractères, idem à l'écriture), valeur d'un champ mot de
   passe jamais exposée. XFA : détecté, affiché avec un bandeau, non remplissable. Documents
-  chiffrés : formulaire non modifiable dans cette version (`lopdf` ne réécrit pas le
-  chiffrement ; Lot 6).
+  chiffrés : remplissables depuis le Lot 10 (session `lopdf` qui déchiffre puis rechiffre à
+  l'identique, ADR-0014 §7).
 
 ## Alternatives écartées
 
@@ -64,10 +64,31 @@ combos et listes, `flatten()` par page, et aucune écriture dans le dictionnaire
   gros fichiers.
 - Enregistrer sous MegaUltraPDF **normalise les apparences** de tous les champs (effet de
   `/NeedAppearances true` : PDFium réécrit `/AP` de chaque widget) ; un champ sans `/MK`
-  perd sa bordure à l'état décoché, comme dans Acrobat.
+  perd sa bordure à l'état décoché, comme dans Acrobat. Depuis le Lot 14, la clé
+  `/NeedAppearances` ne reste plus dans le fichier enregistré (voir la mise à jour ci-dessous).
 - Les pages tournées (`/Rotate`) placent encore annotations et signature dans l'espace non
   tourné : à traiter au Lot 5 avec la géométrie des pages.
 - Après aplatissement, les annotations du Lot 3 disparaissent aussi de la page (comportement
   de PDFium) : documenté dans le panneau (« définitifs, annulable avec Ctrl+Z »).
 - Tests : `crates/mega-core/tests/forms.rs`, `tests/edit.rs`, `tests/service.rs`, CLI
   `fields`/`flatten`, scénarios CDP `formulaire.json`, `formulaire-xfa.json`.
+
+## Mise à jour (Lot 14, 2026-10-31)
+
+Audit de compatibilité `docs/audit/2026-10-31-compatibilite-pdf.md`, constats E3 et E7.
+
+- **`/NeedAppearances` retiré après régénération** (E7). La clé posée à chaque saisie restait
+  dans le fichier : Acrobat proposait alors d'enregistrer dès l'ouverture, et PDF/A l'interdit.
+  À l'enregistrement du document ouvert, PDFium régénère d'abord les apparences des widgets
+  concernés (seules les pages qui en ont besoin sont rendues, `cleanup::save_plan`), puis la
+  passe `lopdf` retire la clé si **chaque** widget a une apparence utilisable. Elle reste si
+  un widget en manque ou si un rendu a échoué, et sur les sorties d'extraction, de fusion et
+  de protection, dont les apparences peuvent dater d'avant la dernière saisie
+  (`CleanupOptions::appearances_fresh`).
+- **Formulaire reporté à la fusion, à l'extraction et à la scission** (E3) : `/Fields` réduit
+  aux champs dont un widget a survécu, `/Parent` des widgets réassocié au champ copié, noms en
+  double suffixés ` (2)`, scripts `/AA` retirés (ADR-0019 §4). Auparavant, le document produit
+  avait des widgets sans formulaire, voire un `/Parent` qui pointait n'importe où.
+- **Limite** : les apparences que PDFium régénère pour un texte non latin citent des polices
+  non incorporées (Arial, SimSun) ; un lecteur qui ne les trouve pas sur le poste en substitue
+  une autre.

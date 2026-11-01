@@ -284,7 +284,8 @@ impl Document {
                     "pièce jointe de page introuvable à cet index".to_string(),
                 ));
             }
-            return self.delete_annotation(entry.page, entry.annot_index);
+            // La garde a déjà eu lieu en tête : pas une seconde lecture de tout le document.
+            return self.delete_annotation_after_guard(entry.page, entry.annot_index);
         }
         self.mark_changed();
         let _guard = engine::guard();

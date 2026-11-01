@@ -532,3 +532,32 @@ fn a_refused_move_leaves_the_document_unchanged() {
     doc.save_as(&path).unwrap();
     assert!(std::fs::read(&path).unwrap() == input, "octets identiques");
 }
+
+/// Relecture finale du Lot 14 (M3) : un déplacement sans effet (la sélection est déjà à sa
+/// place) ne modifie rien : pas d'étape d'historique, et l'enregistrement recopie les octets
+/// du fichier tels quels (une signature resterait intacte).
+#[test]
+fn a_move_that_changes_nothing_leaves_the_document_unmodified() {
+    let original = sample_pdf(3, "immobile");
+    let dir = tempfile::tempdir().unwrap();
+
+    // Appel direct (chemin du CLI).
+    let mut doc = Document::from_bytes(original.clone(), None).unwrap();
+    doc.move_pages(&[1], 1).unwrap();
+    let out = dir.path().join("direct.pdf");
+    doc.save_as(&out).unwrap();
+    assert!(std::fs::read(&out).unwrap() == original, "fichier réécrit");
+
+    // Par l'historique (chemin de l'interface).
+    let mut doc = Document::from_bytes(original.clone(), None).unwrap();
+    doc.apply(&mega_core::EditCommand::MovePages {
+        pages: vec![0, 1],
+        to: 0,
+    })
+    .unwrap();
+    assert!(!doc.is_modified());
+    assert!(!doc.can_undo(), "aucune étape d'historique");
+    let out = dir.path().join("historique.pdf");
+    doc.save_as(&out).unwrap();
+    assert!(std::fs::read(&out).unwrap() == original, "fichier réécrit");
+}

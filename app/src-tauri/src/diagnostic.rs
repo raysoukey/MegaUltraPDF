@@ -116,6 +116,21 @@ pub fn init(dir: PathBuf) {
         }
         previous(info);
     }));
+    // Les avertissements de `mega-core` (une difficulté qui n'a pas fait échouer l'opération)
+    // rejoignent ce journal.
+    mega_core::diagnostic::set_warning_sink(record_core_warning);
+}
+
+/// Ligne du journal pour un avertissement de `mega-core`, masquée comme les erreurs.
+fn core_warning_line(message: &str) -> String {
+    format!("avertissement du cœur : {}", sanitize(message))
+}
+
+/// Reçoit les avertissements de `mega-core` (installée par [`init`]).
+fn record_core_warning(message: &str) {
+    if let Some(log) = LOG.get() {
+        log.write(&core_warning_line(message));
+    }
 }
 
 /// Le dossier du journal, s'il est installé.
@@ -254,6 +269,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mega-diag-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// Un avertissement du cœur (tâche 21b du Lot 14) est masqué comme une erreur.
+    #[test]
+    fn core_warnings_are_sanitized() {
+        let line = core_warning_line("XMP laissé en clair : C:\\Users\\Jean\\secret.pdf");
+        assert!(line.starts_with("avertissement du cœur : XMP"), "{line}");
+        assert!(line.contains("«chemin»"), "{line}");
+        assert!(!line.contains("Jean"), "{line}");
     }
 
     #[test]

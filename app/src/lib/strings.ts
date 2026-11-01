@@ -123,6 +123,10 @@ export const fr = {
       body: 'Ouvrez un PDF avec Ctrl+O, le menu Fichier ou en le glissant sur la fenêtre. Plusieurs documents s’ouvrent en onglets. La barre latérale montre les vignettes, les signets, les annotations, les champs et les pièces jointes.',
     },
     {
+      title: 'Rechercher',
+      body: 'Ctrl+F cherche dans le document ; F3 et Maj+F3 passent d’un résultat à l’autre. La recherche porte sur le texte des pages seulement : ni sur les valeurs saisies dans les champs de formulaire ni sur le texte des annotations de texte libre.',
+    },
+    {
       title: 'Annoter',
       body: 'Sélectionnez du texte puis surlignez (H), soulignez (U) ou barrez (K). Les outils note (N), texte (T) et dessin (D) se placent d’un clic sur la page. Double-cliquez une annotation pour la modifier.',
     },
@@ -492,7 +496,7 @@ export const fr = {
     ].join(', '),
   protectTitle: 'Protéger…',
   protectHint:
-    'AES-256. Protéger est la dernière étape : un document protégé ne peut plus recevoir de filigrane, de numérotation ni de nouvelles métadonnées tant que la protection n’est pas retirée.',
+    'AES-256. Le document reste modifiable avec son mot de passe : chaque enregistrement le chiffre de nouveau avec le même mot de passe.',
   protectAlready: 'Ce document est protégé par un mot de passe.',
   protectUserPassword: 'Mot de passe d’ouverture',
   protectConfirm: 'Confirmer',
@@ -740,6 +744,10 @@ export const en: Strings = {
     {
       title: 'Open and read',
       body: 'Open a PDF with Ctrl+O, the File menu or by dropping it on the window. Several documents open as tabs. The sidebar shows thumbnails, bookmarks, annotations, form fields and attachments.',
+    },
+    {
+      title: 'Search',
+      body: 'Ctrl+F searches the document; F3 and Shift+F3 move between results. Search covers the page text only: neither the values typed in form fields nor the text of free-text annotations.',
     },
     {
       title: 'Annotate',
@@ -1110,7 +1118,7 @@ export const en: Strings = {
     ].join(', '),
   protectTitle: 'Protect…',
   protectHint:
-    'AES-256. Protecting is the last step: a protected document can no longer receive a watermark, page numbers or new metadata until its protection is removed.',
+    'AES-256. The document stays editable with its password: every save encrypts it again with the same password.',
   protectAlready: 'This document is password-protected.',
   protectUserPassword: 'Open password',
   protectConfirm: 'Confirm',

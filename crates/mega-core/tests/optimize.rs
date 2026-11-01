@@ -315,3 +315,19 @@ fn uncompressed_image_is_flated_without_recompression() {
         "aucune image laissée sans compression : {images:?}"
     );
 }
+
+/// Relecture finale du Lot 14 (M5, non-régression) : un document à mot de passe d'ouverture,
+/// ouvert avec ce mot de passe, est refusé comme chiffré, pas comme un fichier « illisible ».
+#[test]
+fn optimize_refuses_a_user_password_document_as_encrypted() {
+    let bytes = std::fs::read(format!(
+        "{}/../../fixtures/encrypted.pdf",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let mut protected = Document::from_bytes(bytes, Some("secret")).unwrap();
+    match protected.optimize(&defaults()) {
+        Err(CoreError::InvalidOperation(m)) => assert!(m.contains("chiffré"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}

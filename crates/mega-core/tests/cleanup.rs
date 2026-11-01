@@ -815,3 +815,55 @@ fn deleting_one_of_two_marked_objects_prunes_its_mcid_from_the_structure_tree() 
     assert!(matches!(entries[0], lopdf::Object::Null), "{entries:?}");
     assert!(entries[1].as_reference().is_ok(), "{entries:?}");
 }
+
+/// Relecture finale du Lot 14 (I3, constat F24-1) : un fichier à filtres `Identity` dont le mot
+/// de passe d'ouverture n'est pas vide s'ouvre sans mot de passe (PDFium n'a rien à
+/// déchiffrer) ; `lopdf` ne s'y authentifie pas, mais la session passe-plat n'en a pas besoin.
+/// La suppression doit donc réussir, et le texte supprimé disparaître du fichier.
+#[test]
+fn deleted_note_does_not_survive_in_an_identity_file_with_a_user_password() {
+    let input = mega_core::testing::identity_encrypted_note_with_user_password_pdf("SECRET-I3U");
+    let mut doc = Document::from_bytes(input, None).unwrap();
+    assert!(doc.security().unwrap().encrypted);
+    doc.delete_annotation(0, 0).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("o.pdf");
+    doc.save_as(&out).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(
+        !bytes.windows(10).any(|w| w == b"SECRET-I3U"),
+        "le texte de la note supprimée survit"
+    );
+    assert!(
+        bytes.windows(9).any(|w| w == b"/Encrypt "),
+        "/Encrypt d'origine conservé"
+    );
+    let reopened = Document::from_bytes(bytes, None).unwrap();
+    assert!(reopened.security().unwrap().encrypted);
+    assert!(
+        reopened
+            .annotations(0)
+            .unwrap()
+            .iter()
+            .all(|a| a.contents.as_deref() != Some("SECRET-I3U"))
+    );
+}
+
+/// Relecture finale du Lot 14 (M4) : la vérification `into_checked` est offerte hors du crate,
+/// seule voie prévue pour écrire les octets de `before_save`.
+#[test]
+fn into_checked_is_the_public_way_to_write_cleaned_bytes() {
+    let input = uncleanable_note_pdf("x");
+    let saved = mega_core::cleanup::before_save(&input, None, None).unwrap();
+    assert!(
+        saved
+            .clone()
+            .into_checked(true, "écriture refusée")
+            .is_err(),
+        "repli après une suppression : refus"
+    );
+    assert_eq!(
+        saved.into_checked(false, "écriture refusée").unwrap(),
+        input
+    );
+}

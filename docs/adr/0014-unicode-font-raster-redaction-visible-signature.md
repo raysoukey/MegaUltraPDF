@@ -31,6 +31,8 @@ Quatre manques restaient après le Lot 9 :
    police entière. Le jeton est gardé par `Document` jusqu'au prochain rechargement, et
    `cleanup::before_save` fusionne les programmes de police identiques. Un objet texte en
    police standard retouché avec ces lettres est remplacé par un objet DejaVu (même matrice).
+   Depuis le Lot 14, la même passe réduit cette police aux glyphes utilisés dans les octets
+   écrits (`cleanup/subset.rs`, ADR-0019 §10).
 5. **Caviardage des images par `lopdf`** (`content/raster.rs`), après la phase PDFium :
    - l'image est repérée par la matrice courante (`cm`) du flux ;
    - elle est retirée si la zone la couvre, sinon remplacée par une **nouvelle** image ;
@@ -77,7 +79,9 @@ Quatre manques restaient après le Lot 9 :
   - polices CJK ;
   - choix de police au-delà de « DejaVu Sans » ;
   - placement libre du tampon à la souris (le CLI le permet).
-- Un document qui utilise du texte Unicode inséré par PDFium grossit d'environ 340 Ko (police
-  entière, une fois par fichier).
+- Un document qui utilise du texte Unicode inséré par PDFium grossissait d'environ 340 Ko
+  (police entière, une fois par fichier). Depuis le Lot 14 (audit E10), le fichier enregistré
+  n'en garde qu'un sous-ensemble de moins de 40 Kio ; la police reste entière en mémoire
+  pendant la session.
 - Les passes `lopdf` sur un document chiffré déchiffrent en mémoire seulement : le fichier
   écrit est toujours chiffré.

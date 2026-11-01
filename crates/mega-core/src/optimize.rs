@@ -240,6 +240,9 @@ impl Document {
             ));
         }
         let bytes = self.to_bytes()?;
+        // Sans mot de passe, volontairement : un document chiffré reste alors chiffré pour
+        // lopdf (`is_encrypted`) et il est refusé juste en dessous ; le déchiffrer d'abord
+        // coûterait une passe complète pour le même refus (relecture finale du Lot 14, M5).
         let mut doc = crate::crypt::load_limited(&bytes, None).map_err(|e| {
             CoreError::InvalidOperation(format!("structure du PDF illisible : {e}"))
         })?;

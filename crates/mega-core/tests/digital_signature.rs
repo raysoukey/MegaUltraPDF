@@ -129,7 +129,7 @@ fn not_a_cms_is_unsupported_or_invalid_without_panicking() {
 /// mega-core --test digital_signature -- --ignored`, puis
 /// `openssl cms -verify -binary -inform DER -in rsa.der -content data.bin -noverify`.
 #[test]
-#[ignore]
+#[ignore = "vérification croisée manuelle par OpenSSL : écrit dans MEGA_CMS_SAMPLES"]
 fn write_samples_for_openssl() {
     let dir = std::path::PathBuf::from(std::env::var("MEGA_CMS_SAMPLES").unwrap());
     let data = b"contenu signe pour openssl";
@@ -365,7 +365,7 @@ fn unsigned_document_has_no_signatures() {
 /// test -p mega-core --test digital_signature -- --ignored` écrit `ours.pdf` (RSA) et
 /// `ours-ec.pdf`, puis `pyhanko sign validate --trust fixtures/test-signer-cert.pem ours.pdf`.
 #[test]
-#[ignore]
+#[ignore = "vérification croisée manuelle par pyHanko et qpdf : écrit dans MEGA_CMS_SAMPLES"]
 fn write_signed_samples_for_pyhanko() {
     let dir = std::path::PathBuf::from(std::env::var("MEGA_CMS_SAMPLES").unwrap());
     std::fs::write(dir.join("ours.pdf"), sign(fixture("simple.pdf"), &rsa())).unwrap();

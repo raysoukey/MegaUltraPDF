@@ -406,3 +406,126 @@ fn protect_declares_the_adobe_extension_level_and_a_1_7_header() {
         "une version plus haute reste"
     );
 }
+
+/// Le paquet XMP d'un document lu dans `bytes` (déchiffré avec `password`), en texte.
+fn xmp_text(bytes: &[u8], password: &str) -> String {
+    let options = lopdf::LoadOptions {
+        password: Some(password.to_string()),
+        ..lopdf::LoadOptions::default()
+    };
+    let doc = lopdf::Document::load_mem_with_options(bytes, options).unwrap();
+    let id = doc
+        .catalog()
+        .unwrap()
+        .get(b"Metadata")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+    String::from_utf8_lossy(
+        &stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone()),
+    )
+    .into_owned()
+}
+
+/// Tâche 21 du Lot 14 (constat de la relecture) : PDFium écrit le flux `/Metadata` **en clair**
+/// même quand `/EncryptMetadata` vaut `true`, mais le déchiffre à la relecture. Chaque
+/// enregistrement (PDFium relit sa propre sortie) changeait alors le XMP d'un document que nous
+/// venions de protéger en octets aléatoires. Depuis la tâche 21b, `Document::to_bytes` rechiffre
+/// ce flux : le XMP survit à la protection, à l'enregistrement et à une édition suivie d'un
+/// second enregistrement.
+#[test]
+fn protecting_keeps_the_xmp_readable_through_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("protege.pdf");
+    let mut doc =
+        Document::from_bytes(mega_core::testing::rich_catalog_pdf("1.7", None), None).unwrap();
+    doc.protect(&protection("u", "o", all())).unwrap();
+    doc.save_as(&path).unwrap();
+    let first = std::fs::read(&path).unwrap();
+    let xmp = xmp_text(&first, "u");
+    assert!(
+        xmp.starts_with("<?xpacket") && xmp.contains("</x:xmpmeta>"),
+        "XMP illisible après protection : {:?}",
+        xmp.chars().take(60).collect::<String>()
+    );
+    doc.apply(&EditCommand::RotatePages {
+        pages: vec![0],
+        quarter_turns: 1,
+    })
+    .unwrap();
+    doc.save_as(&path).unwrap();
+    let xmp = xmp_text(&std::fs::read(&path).unwrap(), "u");
+    assert!(
+        xmp.starts_with("<?xpacket") && xmp.contains("</x:xmpmeta>"),
+        "XMP illisible après un second enregistrement : {:?}",
+        xmp.chars().take(60).collect::<String>()
+    );
+}
+
+/// Un `protect` refusé (document déjà protégé, mots de passe vides) ne marque pas le document
+/// modifié (CLAUDE.md : `mark_changed` après les gardes de refus) : enregistrer recopie alors
+/// les octets d'origine tels quels.
+#[test]
+fn refused_protect_leaves_the_document_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture("encrypted.pdf");
+    let mut doc = Document::from_bytes(source.clone(), Some("secret")).unwrap();
+    assert!(matches!(
+        doc.protect(&protection("a", "b", all())),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    let path = dir.path().join("deja.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        source,
+        "déjà protégé : intact"
+    );
+
+    let plain = sample_pdf(1, "intact");
+    let mut doc = Document::from_bytes(plain.clone(), None).unwrap();
+    assert!(matches!(
+        doc.protect(&protection("", "", all())),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    let path = dir.path().join("vide.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        plain,
+        "mots de passe vides : intact"
+    );
+}
+
+/// Comme pour `protect` : un `unprotect` refusé (document non protégé, mot de passe faux) ne
+/// marque pas le document modifié ; enregistrer recopie les octets d'origine.
+#[test]
+fn refused_unprotect_leaves_the_document_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = sample_pdf(1, "intact");
+    let mut doc = Document::from_bytes(plain.clone(), None).unwrap();
+    assert!(matches!(
+        doc.unprotect(),
+        Err(CoreError::InvalidOperation(_))
+    ));
+    let path = dir.path().join("clair.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), plain, "non protégé : intact");
+
+    let source = fixture("encrypted.pdf");
+    let mut doc = Document::from_bytes(source.clone(), Some("secret")).unwrap();
+    assert!(matches!(
+        doc.unprotect_with(Some("faux")),
+        Err(CoreError::WrongPassword)
+    ));
+    let path = dir.path().join("chiffre.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        source,
+        "mot de passe faux : intact"
+    );
+}

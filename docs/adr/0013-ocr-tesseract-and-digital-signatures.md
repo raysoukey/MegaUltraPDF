@@ -27,7 +27,8 @@ l'autre d'une pile cryptographique ; aucune ne doit ajouter d'appel réseau.
    après le contenu, ressources propres à la page, Helvetica WinAnsi, mode `3 Tr`, un mot par
    boîte en espace affiché (pages tournées comprises), étiré par `Tz` à la largeur mesurée par
    PDFium ; les mots d'une ligne partagent taille et ligne de base, une espace explicite les
-   sépare (sinon « Page 2 » ne serait pas trouvé). Caractères hors WinAnsi : `?`.
+   sépare (sinon « Page 2 » ne serait pas trouvé). Caractères hors WinAnsi : `?` au Lot 8 ;
+   depuis le Lot 10, police Unicode incorporée (`Type0Writer`, ADR-0014 §3).
 4. **OCR page par page** (`EditCommand::OcrPage`) : historique, progression et arrêt entre
    deux pages ; une page qui a déjà du texte est refusée (relancer l'OCR est sans effet).
 5. **Octets du fichier.** `Document` garde les octets chargés ou enregistrés (`file_bytes`)
@@ -59,16 +60,38 @@ l'autre d'une pile cryptographique ; aucune ne doit ajouter d'appel réseau.
    clé RSA fait au moins 2048 bits. Il ne dit **jamais** que l'identité est certifiée :
    aucune chaîne de confiance ni révocation (il faudrait le réseau). L'interface le rappelle.
    Plusieurs signataires dans un même CMS, SHA-1, horodatages de document : « non pris en
-   charge ».
+   charge » (depuis le Lot 14, un horodatage de document est nommé comme tel, voir la mise à
+   jour ci-dessous).
 9. **Vérification croisée** : pyHanko 0.38 juge nos signatures RSA et ECDSA valides et
    couvrant tout le fichier ; `openssl cms -verify` accepte notre CMS ; nos tests vérifient
    des fichiers signés par pyHanko (pkcs7 et PAdES).
 
 ## Conséquences et limites
 
-- La signature est invisible (pas d'image) ; pas d'horodatage ni de LTV (réseau).
+- Pas d'horodatage ni de LTV (réseau). La signature était invisible au Lot 8 ; elle peut être
+  visible depuis le Lot 10 (ADR-0014 §6).
 - `rsa` 0.9 porte l'avis RUSTSEC-2023-0071 (canal auxiliaire temporel) ; sans portée pratique
   pour une signature faite localement par l'utilisateur.
 - Enregistrer un document signé **modifié** invalide ses signatures (bandeau d'avertissement) ;
   la préservation par mise à jour incrémentale de toute édition est hors périmètre.
-- L'OCR exige Tesseract et ses fichiers de langue ; la couche se limite à l'alphabet WinAnsi.
+- L'OCR exige Tesseract et ses fichiers de langue. La couche se limitait à l'alphabet WinAnsi
+  au Lot 8 ; elle accepte l'Unicode depuis le Lot 10.
+
+## Mise à jour (Lot 14, 2026-10-31)
+
+Audit de compatibilité `docs/audit/2026-10-31-compatibilite-pdf.md`, constats E6 et E14.
+
+- **Couche OCR et conformité** (E6) : la couche est enveloppée dans `/Artifact BMC … EMC`,
+  pour qu'un document balisé (PDF/UA) reste conforme. Sur un document qui déclare PDF/A ou
+  PDF/UA, elle utilise la police Unicode incorporée même pour un texte WinAnsi (Helvetica n'est
+  pas incorporée, ce que ces normes refusent).
+- **Document certifié puis modifié** (E14) : quand une signature certifie le document sans
+  modification permise (`/DocMDP` avec `P = 1`) et que des octets autres que des blancs PDF
+  suivent la partie signée, le verdict est `SigIssue::CertifiedThenModified` (« document
+  certifié puis modifié »). On échoue « fermé » : tout ajout compte comme une modification.
+- **Horodatage de document** (E14) : une signature `ETSI.RFC3161` est présentée comme un
+  horodatage de document (ISO 32000-2 §12.8.5), `SigIssue::DocumentTimestamp`, non vérifié, et
+  non plus comme une signature de personne au format inconnu.
+- Les deux verdicts sont traduits dans `strings.ts` (`sigIssues`, fr et en).
+- Restent hors périmètre : chaîne de confiance, révocation, vérification des horodatages,
+  `/Perms`, `/DocMDP` à `P = 2` ou `3` (ADR-0019, dettes).

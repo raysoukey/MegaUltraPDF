@@ -640,6 +640,17 @@ impl Document {
     /// Supprime l'annotation `index` de la page.
     pub fn delete_annotation(&mut self, page: u16, index: u16) -> CoreResult<()> {
         self.ensure_cleanable()?;
+        self.delete_annotation_after_guard(page, index)
+    }
+
+    /// Le corps de [`Document::delete_annotation`], **sans** `ensure_cleanable` : pour un
+    /// appelant qui vient de l'appeler lui-même (`delete_attachment`), une seule lecture `lopdf`
+    /// de tout le document au lieu de deux.
+    pub(crate) fn delete_annotation_after_guard(
+        &mut self,
+        page: u16,
+        index: u16,
+    ) -> CoreResult<()> {
         self.mark_changed();
         let _guard = engine::guard();
         let page_index = self.checked_index_unlocked(page)?;

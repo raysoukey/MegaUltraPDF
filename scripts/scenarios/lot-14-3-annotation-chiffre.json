@@ -1,0 +1,206 @@
+[
+  { "wait": 2000 },
+  {
+    "eval": "(() => { if (!window.__origFetch) window.__origFetch = window.fetch.bind(window); const of = window.__origFetch; window.__picks = []; window.__dialogs = []; window.__last = {}; window.fetch = async (input, init) => { const url = typeof input === 'string' ? input : input.url; let cmd = null; try { const u = new URL(url); if (u.hostname === 'ipc.localhost' || u.protocol === 'ipc:') cmd = decodeURIComponent(u.pathname.slice(1)); } catch {} if (cmd === 'plugin:dialog|open' || cmd === 'plugin:dialog|save') { window.__dialogs.push(cmd); const v = window.__picks.length ? window.__picks.shift() : null; return new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json', 'Tauri-Response': 'ok' } }); } const res = await of(input, init); if (cmd) { try { window.__last[cmd] = await res.clone().json(); } catch { window.__last[cmd] = '(non JSON)'; } } return res; }; return 'dialogues natifs court-circuités (IPC)'; })()",
+    "label": "dialogues natifs remplacés par des chemins préparés (aucune vraie souris)"
+  },
+  {
+    "assert": "(document.querySelector('#pwd-title') === null && document.querySelectorAll('.page img').length >= 1) || 'ERREUR ' + (document.querySelector('#pwd-title') ? 'mot de passe demandé' : 'page non rendue')",
+    "label": "encrypted-attachment.pdf ouvert sans mot de passe (filtres Identity : PDFium n’en vérifie aucun) et rendu"
+  },
+  {
+    "assert": "window.__TAURI_INTERNALS__.invoke('security', { id: 1 }).then((s) => s.encrypted === true || 'ERREUR ' + JSON.stringify(s))",
+    "label": "le document est bien chiffré"
+  },
+  { "eval": "(() => { [...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Annotations').click(); return true; })()", "label": "onglet Annotations" },
+  { "wait": 800 },
+  {
+    "assert": "document.body.innerText.includes('Aucune annotation')",
+    "label": "le fichier du corpus n'a aucune annotation : on en pose une, on l'enregistre, puis on la supprime"
+  },
+  { "click": "button[aria-label='Note']" },
+  { "wait": 300 },
+  { "drag": ".page[data-page='0'] .annotation-layer", "from": [300, 200], "to": [300, 200] },
+  { "wait": 600 },
+  { "assert": "document.querySelector('.annotation-layer textarea') !== null", "label": "saisie de la note ouverte" },
+  { "type": "NOTE-SECRETE-LOT14" },
+  { "key": "Enter", "ctrl": true },
+  { "wait": 1500 },
+  {
+    "assert": "(document.querySelectorAll('.panel li').length === 1 && document.body.innerText.includes('NOTE-SECRETE-LOT14')) || 'ERREUR ' + document.querySelector('.panel').innerText",
+    "label": "note « NOTE-SECRETE-LOT14 » créée"
+  },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/chiffre-avec-note.pdf'); return true; })()",
+    "label": "chemin préparé : chiffre-avec-note.pdf"
+  },
+  { "key": "s", "ctrl": true, "shift": true },
+  { "wait": 3500 },
+  {
+    "assert": "(document.querySelector('main .error') === null && window.__last['save_document'] && window.__last['save_document'].summary.path.endsWith('chiffre-avec-note.pdf')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "Enregistrer sous : chiffre-avec-note.pdf"
+  },
+  { "shot": "01-note-posee.png" },
+  { "key": "w", "ctrl": true },
+  { "wait": 800 },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/chiffre-avec-note.pdf']); return true; })()",
+    "label": "rouvrir chiffre-avec-note.pdf"
+  },
+  { "key": "o", "ctrl": true },
+  { "wait": 3000 },
+  {
+    "assert": "(() => { const s = window.__last['open_document']; return (s && s.path.endsWith('chiffre-avec-note.pdf') && document.querySelector('#pwd-title') === null) || 'ERREUR ' + JSON.stringify(s); })()",
+    "label": "chiffre-avec-note.pdf rouvert sans demande de mot de passe"
+  },
+  {
+    "assert": "window.__TAURI_INTERNALS__.invoke('security', { id: window.__last['open_document'].id }).then((s) => s.encrypted === true || 'ERREUR ' + JSON.stringify(s))",
+    "label": "toujours chiffré après enregistrement"
+  },
+  { "eval": "(() => { [...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Annotations').click(); return true; })()", "label": "onglet Annotations" },
+  { "wait": 1000 },
+  {
+    "assert": "(document.querySelectorAll('.panel li').length === 1 && document.body.innerText.includes('NOTE-SECRETE-LOT14')) || 'ERREUR ' + document.querySelector('.panel').innerText",
+    "label": "la note est dans le fichier rouvert"
+  },
+  { "click": ".panel li button[aria-label='Supprimer l’annotation']" },
+  { "wait": 1500 },
+  {
+    "assert": "(document.body.innerText.includes('Aucune annotation') && document.querySelector('button[title^=\"Annuler : Supprimer\"]') !== null) || 'ERREUR ' + document.querySelector('.panel').innerText",
+    "label": "annotation supprimée (étape « Supprimer »)"
+  },
+  { "shot": "02-note-supprimee.png" },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/chiffre-sans-note.pdf'); return true; })()",
+    "label": "chemin préparé : chiffre-sans-note.pdf"
+  },
+  { "key": "s", "ctrl": true, "shift": true },
+  { "wait": 3500 },
+  {
+    "assert": "(document.querySelector('main .error') === null && window.__last['save_document'].summary.path.endsWith('chiffre-sans-note.pdf')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "Enregistrer sous : chiffre-sans-note.pdf"
+  },
+  { "key": "w", "ctrl": true },
+  { "wait": 800 },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/chiffre-sans-note.pdf']); return true; })()",
+    "label": "rouvrir chiffre-sans-note.pdf"
+  },
+  { "key": "o", "ctrl": true },
+  { "wait": 3000 },
+  {
+    "assert": "(() => { const s = window.__last['open_document']; return (s && s.path.endsWith('chiffre-sans-note.pdf')) || 'ERREUR ' + JSON.stringify(s); })()",
+    "label": "chiffre-sans-note.pdf rouvert"
+  },
+  { "eval": "(() => { [...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Annotations').click(); return true; })()", "label": "onglet Annotations" },
+  { "wait": 1000 },
+  {
+    "assert": "(document.body.innerText.includes('Aucune annotation') && !document.body.innerText.includes('NOTE-SECRETE-LOT14')) || 'ERREUR ' + document.querySelector('.panel').innerText",
+    "label": "fichier rouvert : annotation absente"
+  },
+  {
+    "assert": "window.__TAURI_INTERNALS__.invoke('all_annotations', { id: window.__last['open_document'].id }).then((p) => p.every((a) => a.length === 0) || 'ERREUR ' + JSON.stringify(p))",
+    "label": "fichier rouvert : aucune annotation sur aucune page (commande)"
+  },
+  {
+    "assert": "Promise.all([window.__TAURI_INTERNALS__.invoke('security', { id: window.__last['open_document'].id }), window.__TAURI_INTERNALS__.invoke('attachments', { id: window.__last['open_document'].id })]).then(([s, a]) => (s.encrypted === true && a.some((x) => x.name === 'attachment.pdf')) || 'ERREUR ' + JSON.stringify([s, a]))",
+    "label": "toujours chiffré, pièce jointe attachment.pdf conservée"
+  },
+  { "shot": "03-rouvert-sans-note.png" },
+  { "key": "w", "ctrl": true },
+  { "wait": 800 },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/enc-R6-U-view-O-master.pdf']); return true; })()",
+    "label": "seconde partie : même parcours sur un AES-256 R6 à mot de passe utilisateur, que qpdf sait lire (enc-R6-U-view-O-master.pdf, mot de passe « view »)"
+  },
+  { "key": "o", "ctrl": true },
+  { "wait": 2000 },
+  { "assert": "document.querySelector('#pwd-title') !== null", "label": "mot de passe demandé" },
+  { "type": "view" },
+  { "key": "Enter" },
+  { "wait": 3000 },
+  {
+    "assert": "(document.querySelector('#pwd-title') === null && window.__last['open_document'] && window.__last['open_document'].path.endsWith('enc-R6-U-view-O-master.pdf')) || 'ERREUR ' + JSON.stringify(window.__last['open_document'])",
+    "label": "AES-256 ouvert avec son mot de passe"
+  },
+  { "eval": "(() => { [...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Annotations').click(); return true; })()", "label": "onglet Annotations" },
+  { "wait": 800 },
+  { "assert": "document.body.innerText.includes('Aucune annotation')", "label": "aucune annotation au départ" },
+  { "click": "button[aria-label='Note']" },
+  { "wait": 300 },
+  { "drag": ".page[data-page='0'] .annotation-layer", "from": [300, 200], "to": [300, 200] },
+  { "wait": 600 },
+  { "assert": "document.querySelector('.annotation-layer textarea') !== null", "label": "saisie de la note ouverte" },
+  { "type": "NOTE-AES-LOT14" },
+  { "key": "Enter", "ctrl": true },
+  { "wait": 1500 },
+  { "assert": "document.body.innerText.includes('NOTE-AES-LOT14')", "label": "note « NOTE-AES-LOT14 » créée" },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/aes-avec-note.pdf'); return true; })()",
+    "label": "chemin préparé : aes-avec-note.pdf"
+  },
+  { "key": "s", "ctrl": true, "shift": true },
+  { "wait": 3500 },
+  {
+    "assert": "(document.querySelector('main .error') === null && window.__last['save_document'].summary.path.endsWith('aes-avec-note.pdf')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "Enregistrer sous : aes-avec-note.pdf"
+  },
+  { "key": "w", "ctrl": true },
+  { "wait": 800 },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/aes-avec-note.pdf']); return true; })()",
+    "label": "rouvrir aes-avec-note.pdf"
+  },
+  { "key": "o", "ctrl": true },
+  { "wait": 2000 },
+  { "assert": "document.querySelector('#pwd-title') !== null", "label": "toujours protégé : mot de passe demandé" },
+  { "type": "view" },
+  { "key": "Enter" },
+  { "wait": 3000 },
+  { "eval": "(() => { [...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Annotations').click(); return true; })()", "label": "onglet Annotations" },
+  { "wait": 1000 },
+  {
+    "assert": "(document.querySelectorAll('.panel li').length === 1 && document.body.innerText.includes('NOTE-AES-LOT14')) || 'ERREUR ' + document.querySelector('.panel').innerText",
+    "label": "la note est dans le fichier rouvert"
+  },
+  { "click": ".panel li button[aria-label='Supprimer l’annotation']" },
+  { "wait": 1500 },
+  {
+    "assert": "(document.body.innerText.includes('Aucune annotation') && document.querySelector('button[title^=\"Annuler : Supprimer\"]') !== null) || 'ERREUR ' + document.querySelector('.panel').innerText + ' / ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "annotation supprimée (étape « Supprimer »)"
+  },
+  { "shot": "04-aes-note-supprimee.png" },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/aes-sans-note.pdf'); return true; })()",
+    "label": "chemin préparé : aes-sans-note.pdf"
+  },
+  { "key": "s", "ctrl": true, "shift": true },
+  { "wait": 3500 },
+  {
+    "assert": "(document.querySelector('main .error') === null && window.__last['save_document'].summary.path.endsWith('aes-sans-note.pdf')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "Enregistrer sous : aes-sans-note.pdf"
+  },
+  { "key": "w", "ctrl": true },
+  { "wait": 800 },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/aes-sans-note.pdf']); return true; })()",
+    "label": "rouvrir aes-sans-note.pdf"
+  },
+  { "key": "o", "ctrl": true },
+  { "wait": 2000 },
+  { "assert": "document.querySelector('#pwd-title') !== null", "label": "toujours protégé : mot de passe demandé" },
+  { "type": "view" },
+  { "key": "Enter" },
+  { "wait": 3000 },
+  { "eval": "(() => { [...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Annotations').click(); return true; })()", "label": "onglet Annotations" },
+  { "wait": 1000 },
+  {
+    "assert": "(document.body.innerText.includes('Aucune annotation') && !document.body.innerText.includes('NOTE-AES-LOT14')) || 'ERREUR ' + document.querySelector('.panel').innerText",
+    "label": "AES rouvert : annotation absente"
+  },
+  {
+    "assert": "Promise.all([window.__TAURI_INTERNALS__.invoke('security', { id: window.__last['open_document'].id }), window.__TAURI_INTERNALS__.invoke('attachments', { id: window.__last['open_document'].id })]).then(([s, a]) => s.encrypted === true || 'ERREUR ' + JSON.stringify([s, a]))",
+    "label": "AES rouvert : toujours chiffré"
+  },
+  { "shot": "05-aes-rouvert-sans-note.png" }
+]

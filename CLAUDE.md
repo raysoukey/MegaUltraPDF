@@ -173,10 +173,11 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   Corpus `fixtures/robustesse/` (`gen-fixtures`, qpdf via `MEGA_QPDF` pour le linéarisé),
   `cargo xtask fuzz`. Pas de `fetch` dans l'interface (test `no-network`) : un détail venu du
   protocole `mega://` passe par une commande (`render_failure`).
-- Compatibilité (Lot 13, ADR-0018) : `tests/conformance.rs` passe chaque sortie à `qpdf --check`
+- Compatibilité (Lot 13, ADR-0018) : `tests/conformance/` passe chaque sortie à `qpdf --check`
   (commandes en JSON comme l'interface ; CI : `MEGA_REQUIRE_QPDF=1`, local : `MEGA_QPDF`) ; toute
-  nouvelle variante d'`EditCommand` y entre. Signer : réécrire d'abord si lopdf ne voit pas le
-  fichier comme PDFium (pages, `/Root`, préfixe avant `%PDF-`). Mot de passe : invariant par
+  nouvelle variante d'`EditCommand` y entre (`variant`, `ALL_VARIANTS`, catalogue riche). Signer :
+  réécrire d'abord si lopdf ne voit pas le fichier comme PDFium (pages, `/Root`, préfixe avant
+  `%PDF-`). Mot de passe : invariant par
   SASLprep (PDFium ne le normalise pas). La recherche passe par `text_boxes` (ordre de lecture),
   jamais par la recherche de PDFium. `reading_order::layout_chars` (droite à gauche) et
   `vertical_runs` (CJK vertical). `DocumentProperties::pdfa` : déclaration, pas vérification.
@@ -243,6 +244,11 @@ cargo run -p mega-cli -- info fixtures/simple.pdf
   `/Encrypt /P` soi-même) ; sa balise « ModificationDate » n'existe pas (`/ModDate` lu par
   lopdf) ; `lopdf` déchiffre en silence un mot de passe utilisateur vide (`was_encrypted()`
   avant toute réécriture) ; chiffrer = `EncryptionVersion::V5` + `Aes256CryptFilter` + clé
-  `rand` ; les instantanés d'historique portent le mot de passe ; pièces jointes listées dans
-  l'ordre de l'arbre de noms (clés triées) ; `cargo clippy --all-targets` échoue tant qu'un
-  fichier de test ne compile pas : ne jamais enchaîner `task-done` après un gate qui a échoué.
+  `rand` ; PDFium écrit `/Metadata` en clair dans un document chiffré : `to_bytes` (et la
+  seconde sortie de `rewritten_bytes`) rechiffre ce seul flux (`crypt::seal_metadata`) ;
+  jamais `encrypt_metadata: false` ; PDFium retire aussi le `/Filter` d'un XMP compressé en
+  gardant ses octets (F21-5) : `from_bytes` lui confie une copie aux XMP décodés
+  (`crypt::unfiltered_metadata_copy`, `file_bytes` intacts) ; les instantanés d'historique
+  portent le mot de passe ; pièces jointes listées dans l'ordre de l'arbre de noms (clés
+  triées) ; `cargo clippy --all-targets` échoue tant qu'un fichier de test ne compile pas :
+  ne jamais enchaîner `task-done` après un gate qui a échoué.

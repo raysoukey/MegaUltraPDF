@@ -76,8 +76,9 @@ ajouter des objets chemin et texte à l'apparence d'une **`Ink` ou d'un `Stamp`*
 
 ## Alternatives écartées
 
-- `Square`/`Circle`/`Line` natifs avec `/BS` : impossible sans bindings bruts ; à revoir
-  avec `lopdf` (ADR-0003, Lot 5) qui pourra écrire les vrais sous-types et `/InkList`.
+- `Square`/`Circle`/`Line` natifs avec `/BS` : impossible sans bindings bruts. `lopdf`
+  (ADR-0003) écrit depuis le Lot 5 l'`/InkList` de nos formes ; les vrais sous-types restent à
+  faire.
 - `FreeText` + `/DA` : conforme mais invisible dans PDFium ; un lecteur qui régénère
   l'apparence (Acrobat) l'afficherait, pas nous.
 - Déplacer par `FPDFAnnot_SetRect` seul : comportement différent selon que le nouveau
@@ -88,17 +89,39 @@ ajouter des objets chemin et texte à l'apparence d'une **`Ink` ou d'un `Stamp`*
 - Un rectangle de MegaUltraPDF est une annotation `Ink` pour Acrobat : il s'affiche à
   l'identique, mais Acrobat le présentera comme un dessin, pas comme un rectangle éditable.
   Idem pour les textes libres (tampons). Documenté dans la note du lot.
-- Pas d'`/InkList` (clé requise par la norme pour `Ink`) : le fichier est lisible partout mais
-  non conforme ; dans Acrobat, modifier la couleur ou copier la forme régénère l'apparence
-  depuis l'`/InkList` absent et la fait disparaître. À corriger au Lot 5 avec `lopdf`
-  (ajout de `/InkList`, ou réécriture en vrais `Square`/`Circle`/`Line`).
-- La couleur d'une note est celle de PDFium (jaune) dans tous les lecteurs tant que l'`/AP`
-  généré subsiste ; `/C` est écrit mais sans effet. Le Lot 5 retirera `/AP` et
-  `/PDFIUM_HasGeneratedAP` des notes à l'enregistrement.
+- PDFium n'écrit pas l'`/InkList` (clé requise par la norme pour `Ink`) : la passe
+  d'enregistrement (`cleanup::before_save`, depuis le Lot 5) la déduit de l'apparence, courbes
+  comprises ; le fichier écrit est conforme.
+- La couleur d'une note est celle de PDFium (jaune) **dans MegaUltraPDF** tant que l'`/AP`
+  généré subsiste. À l'enregistrement, la même passe retire cet `/AP` et
+  `/PDFIUM_HasGeneratedAP` des notes : les autres lecteurs dessinent l'icône dans la couleur
+  `/C` écrite.
 - Chaque rendu avec `FPDF_ANNOT` crée des objets `Popup` orphelins dans le document PDFium
   (un par annotation à `/Contents` non vide) ; ils gonflent la mémoire et les instantanés
-  d'historique pendant la session, mais plus le fichier enregistré (rechargement propre
-  avant écriture). Élagage complet au Lot 5 (`lopdf::prune_objects`).
+  d'historique pendant la session, mais pas le fichier enregistré : la passe d'enregistrement
+  les élague (`cleanup::prune` ; jamais `lopdf::prune_objects`, de coût
+  quadratique).
 - Tests : `crates/mega-core/tests/annotations.rs` (lecture tierce, aller-retour par genre,
   déplacement, validation), `tests/edit.rs`, `tests/service.rs`, CLI `annots`, scénarios
   CDP `annotation.json` et `annotation-tierce.json`.
+
+## Mise à jour (Lot 14, 2026-10-31)
+
+Audit de compatibilité `docs/audit/2026-10-31-compatibilite-pdf.md`, constats E11 et L11.
+
+- **Apparence des marquages écrite à coup sûr** (E11). Le tableau ci-dessus disait l'apparence
+  « générée au premier rendu et enregistrée » ; or un surlignage ajouté puis enregistré sans
+  être affiché partait **sans** `/AP`, que PDF 2.0 et PDF/A exigent. Avant d'écrire,
+  `rewritten_bytes` fait rendre par PDFium les seules pages qui ont un marquage sans `/AP /N`
+  (`cleanup::save_plan`, une passe `lopdf`) ; un échec de rendu n'empêche pas d'enregistrer.
+- **Annotations tierces** (L11) :
+  - une `FreeText` d'un autre outil est affichée comme une note, mais `editable` est faux : la
+    modifier l'aurait supprimée et recréée en `Stamp`, perdant son type et son `/DA` ;
+  - une `Popup` ne figure plus dans la liste des annotations (l'`index` des autres reste celui
+    de `/Annots`) ;
+  - une `FileAttachment` apparaît dans les pièces jointes, avec sa page ; la supprimer retire
+    l'annotation.
+- **Limites amont** : PDFium ne dessine pas `Polygon` sans `/AP` ; l'itérateur d'annotations de
+  pdfium-render s'arrête sur une entrée `null` de `/Annots`, et le panneau de cette page reste
+  alors vide.
+- Toute suppression ou recréation d'annotation passe par la garde de nettoyage (ADR-0019 §1).

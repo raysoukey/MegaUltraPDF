@@ -235,7 +235,6 @@ impl Document {
     /// reste utilisable ; les passes `lopdf` ultérieures (métadonnées, filigrane…) le
     /// refuseront : protéger est la **dernière** étape. Refusé si déjà chiffré.
     pub fn protect(&mut self, p: &Protection) -> CoreResult<()> {
-        self.mark_changed();
         if p.user_password.is_empty() && p.owner_password.is_empty() {
             return Err(invalid("indiquez au moins un mot de passe"));
         }
@@ -267,6 +266,8 @@ impl Document {
         let mut filters: BTreeMap<Vec<u8>, Arc<dyn CryptFilter>> = BTreeMap::new();
         filters.insert(b"StdCF".to_vec(), Arc::new(Aes256CryptFilter));
         let state = EncryptionState::try_from(EncryptionVersion::V5 {
+            // XMP chiffré, comme le reste : PDFium l'écrit en clair, `Document::to_bytes` le
+            // rechiffre (tâche 21b du Lot 14).
             encrypt_metadata: true,
             crypt_filters: filters,
             file_encryption_key: &key,
@@ -289,6 +290,9 @@ impl Document {
             self.set_password(previous);
             return Err(e);
         }
+        // Rechargé protégé : la modification est faite. Un échec de rechargement laisse le
+        // document tel quel, non marqué (aucune garde de refus ne suit).
+        self.mark_changed();
         Ok(())
     }
 
@@ -296,7 +300,6 @@ impl Document {
     /// propriétaire). Un document chiffré ouvert sans mot de passe (protection propriétaire
     /// seule) ne peut pas prouver le droit de le faire : `WrongPassword`.
     pub fn unprotect(&mut self) -> CoreResult<()> {
-        self.mark_changed();
         self.unprotect_with(None)
     }
 
@@ -304,7 +307,6 @@ impl Document {
     /// de l'ouverture) : c'est ainsi qu'on déprotège un fichier à mot de passe propriétaire
     /// seul, qui s'ouvre sans rien demander. Un mot de passe faux donne `WrongPassword`.
     pub fn unprotect_with(&mut self, typed: Option<&str>) -> CoreResult<()> {
-        self.mark_changed();
         if !self.security()?.encrypted {
             return Err(invalid("le document n'est pas protégé"));
         }
@@ -341,6 +343,9 @@ impl Document {
             self.set_password(Some(password));
             return Err(e);
         }
+        // Document rechargé sans protection : la modification est faite (après toutes les
+        // gardes de refus, CLAUDE.md).
+        self.mark_changed();
         Ok(())
     }
 }

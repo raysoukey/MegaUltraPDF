@@ -418,11 +418,13 @@ impl Document {
     /// la copie, pas à la lecture vocale. Rendre un scan accessible demanderait de baliser le
     /// texte reconnu dans l'arbre de structure, ce que cette version ne fait pas.
     pub fn add_invisible_words(&mut self, page: u16, words: &[InvisibleWord]) -> CoreResult<()> {
-        self.mark_changed();
         let count = self.page_count();
         if page >= count {
             return Err(CoreError::PageOutOfRange { index: page, count });
         }
+        // Après la garde : un refus laisse le document intact (et ses octets réécrits tels
+        // quels à l'enregistrement).
+        self.mark_changed();
         let frame = self.page_frame(page)?;
         // Largeur d'**avance** à 100 pt (table AFM, proportionnelle à la taille) : c'est elle
         // que `Tz` étire, et que les lecteurs utilisent pour placer la sélection.

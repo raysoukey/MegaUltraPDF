@@ -858,3 +858,30 @@ fn pdfa1_watermarks_simulate_opacity_without_transparency() {
         assert!((c - 0.851).abs() < 0.01, "couleur éclaircie : {content}");
     }
 }
+
+/// Une page hors bornes est refusée **avant** que le document ne soit marqué modifié
+/// (CLAUDE.md : `mark_changed` après les gardes de refus) : enregistrer réécrit alors les
+/// octets d'origine tels quels.
+#[test]
+fn invisible_words_on_a_missing_page_leave_the_document_unchanged() {
+    let source = sample_pdf(1, "intact");
+    let mut doc = Document::from_bytes(source.clone(), None).unwrap();
+    let word = mega_core::overlay::InvisibleWord {
+        text: "Reconnu".to_string(),
+        rect: mega_core::Rect {
+            x: 100.0,
+            y: 600.0,
+            w: 80.0,
+            h: 14.0,
+        },
+    };
+    assert!(matches!(
+        doc.add_invisible_words(5, &[word]),
+        Err(CoreError::PageOutOfRange { index: 5, count: 1 })
+    ));
+    assert!(!doc.is_modified(), "un refus ne modifie pas le document");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("intact.pdf");
+    doc.save_as(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), source, "octets d'origine");
+}

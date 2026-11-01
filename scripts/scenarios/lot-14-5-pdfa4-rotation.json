@@ -1,0 +1,46 @@
+[
+  { "wait": 2000 },
+  { "assert": "document.querySelectorAll('.page img').length >= 1", "label": "pdfa-4-6-1-2-t01-pass-a.pdf ouvert et rendu" },
+  { "key": "i", "ctrl": true },
+  { "wait": 1200 },
+  {
+    "assert": "(() => { const d = document.querySelector('[role=dialog]'); return (d && d.innerText.includes('Conformité déclarée') && d.innerText.includes('PDF/A-4')) || 'ERREUR ' + (d ? d.innerText.slice(0, 400) : 'pas de dialogue'); })()",
+    "label": "les Propriétés affichent la conformité PDF/A-4 déclarée"
+  },
+  { "shot": "01-proprietes-pdfa4.png" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  {
+    "eval": "(() => { window.__thumbSrc = document.querySelector('.thumb img').src; return window.__thumbSrc; })()",
+    "label": "image de la vignette avant rotation (page carrée 500 × 500 : l’orientation ne peut pas servir de preuve)"
+  },
+  { "click": "button[title^='Pivoter à droite']" },
+  { "wait": 1200 },
+  {
+    "assert": "document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•') && document.querySelector('button[title^=\"Annuler : Pivoter\"]') !== null",
+    "label": "rotation appliquée (onglet modifié, étape « Pivoter »)"
+  },
+  {
+    "assert": "(() => { const src = document.querySelector('.thumb img').src; return src !== window.__thumbSrc || 'ERREUR vignette inchangée ' + src; })()",
+    "label": "la vignette a été redessinée"
+  },
+  { "key": "s", "ctrl": true },
+  { "wait": 3000 },
+  {
+    "assert": "(() => { const n = document.querySelector('.toast'); return (n && n.textContent.includes('PDF/A-4') && n.textContent.includes('plus garantie')) || 'ERREUR ' + (n ? n.textContent : 'aucun avis') + ' ' + ((document.querySelector('main .error') || {}).textContent || ''); })()",
+    "label": "enregistré ; l'avis prévient que la conformité PDF/A-4 n'est plus garantie"
+  },
+  {
+    "assert": "!document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')",
+    "label": "marque « modifié » disparue"
+  },
+  { "shot": "02-enregistre.png" },
+  { "key": "i", "ctrl": true },
+  { "wait": 1200 },
+  {
+    "assert": "(() => { const d = document.querySelector('[role=dialog]'); return (d && d.innerText.includes('PDF/A-4')) || 'ERREUR ' + (d ? d.innerText.slice(0, 400) : 'pas de dialogue'); })()",
+    "label": "après enregistrement, la déclaration PDF/A-4 est conservée (vérification externe : veraPDF)"
+  },
+  { "shot": "03-proprietes-apres.png" },
+  { "key": "Escape" }
+]

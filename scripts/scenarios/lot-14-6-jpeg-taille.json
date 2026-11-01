@@ -1,0 +1,47 @@
+[
+  { "wait": 2000 },
+  {
+    "eval": "(() => { if (!window.__origFetch) window.__origFetch = window.fetch.bind(window); const of = window.__origFetch; window.__picks = []; window.__dialogs = []; window.__last = {}; window.fetch = async (input, init) => { const url = typeof input === 'string' ? input : input.url; let cmd = null; try { const u = new URL(url); if (u.hostname === 'ipc.localhost' || u.protocol === 'ipc:') cmd = decodeURIComponent(u.pathname.slice(1)); } catch {} if (cmd === 'plugin:dialog|open' || cmd === 'plugin:dialog|save') { window.__dialogs.push(cmd); const v = window.__picks.length ? window.__picks.shift() : null; return new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json', 'Tauri-Response': 'ok' } }); } const res = await of(input, init); if (cmd) { try { window.__last[cmd] = await res.clone().json(); } catch { window.__last[cmd] = '(non JSON)'; } } return res; }; return 'dialogues natifs court-circuités (IPC)'; })()",
+    "label": "dialogues natifs remplacés par des chemins préparés (aucune vraie souris)"
+  },
+  { "assert": "document.querySelectorAll('.page img').length >= 1", "label": "copie de simple.pdf ouverte" },
+  {
+    "eval": "Promise.all(['simple-jpeg.pdf', 'photo-500k.jpg'].map((n) => window.__TAURI_INTERNALS__.invoke('file_size', { path: 'C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/' + n }))).then(([pdf, jpg]) => { window.__pdfBefore = pdf; window.__jpg = jpg; return 'PDF avant : ' + pdf + ' o ; JPEG : ' + jpg + ' o'; })",
+    "label": "tailles de départ"
+  },
+  { "assert": "window.__jpg > 450000 && window.__jpg < 650000", "label": "le JPEG fait environ 500 Ko" },
+  {
+    "eval": "(() => { window.__picks.push('C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/photo-500k.jpg'); return true; })()",
+    "label": "image préparée pour le dialogue « Ouvrir »"
+  },
+  { "click": "button[aria-label='Image']" },
+  { "wait": 300 },
+  { "drag": ".page[data-page='0'] .object-layer", "from": [100, 150], "to": [400, 380] },
+  { "wait": 3000 },
+  {
+    "assert": "(window.__dialogs.includes('plugin:dialog|open') && document.querySelector('main .error') === null && document.querySelector('button[title^=\"Annuler : Insérer\"]') !== null) || 'ERREUR ' + JSON.stringify(window.__dialogs) + ' ' + ((document.querySelector('main .error') || {}).textContent || '') + ' ' + (document.querySelector('button[title^=\"Annuler\"]') || {}).title",
+    "label": "image insérée (étape d'annulation « Insérer … »)"
+  },
+  { "click": "button[aria-label='Objets de la page']" },
+  { "wait": 1200 },
+  {
+    "assert": "document.querySelectorAll(\".page[data-page='0'] rect.object[data-kind=image]\").length === 1 || 'ERREUR ' + [...document.querySelectorAll(\".page[data-page='0'] rect.object\")].map((r) => r.getAttribute('data-kind')).join(',')",
+    "label": "un objet image sur la page 1"
+  },
+  { "shot": "01-image-inseree.png" },
+  { "key": "s", "ctrl": true },
+  { "wait": 4000 },
+  {
+    "assert": "(document.querySelector('main .error') === null && !document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "enregistré"
+  },
+  {
+    "eval": "window.__TAURI_INTERNALS__.invoke('file_size', { path: 'C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/simple-jpeg.pdf' }).then((s) => { window.__pdfAfter = s; const growth = s - window.__pdfBefore; return 'PDF après : ' + s + ' o ; croissance : ' + growth + ' o = ' + (growth / window.__jpg).toFixed(3) + ' × le JPEG'; })",
+    "label": "taille après enregistrement"
+  },
+  {
+    "assert": "(window.__pdfAfter - window.__pdfBefore) <= 1.2 * window.__jpg || 'ERREUR croissance ' + (window.__pdfAfter - window.__pdfBefore) + ' > 1,2 × ' + window.__jpg",
+    "label": "le fichier grossit de moins de 1,2 × la taille du JPEG (moins de 20 % de surcoût)"
+  },
+  { "shot": "02-enregistre.png" }
+]

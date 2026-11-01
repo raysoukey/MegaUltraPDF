@@ -1,0 +1,88 @@
+[
+  { "wait": 2000 },
+  {
+    "eval": "(() => { if (!window.__origFetch) window.__origFetch = window.fetch.bind(window); const of = window.__origFetch; window.__picks = []; window.__dialogs = []; window.__last = {}; window.fetch = async (input, init) => { const url = typeof input === 'string' ? input : input.url; let cmd = null; try { const u = new URL(url); if (u.hostname === 'ipc.localhost' || u.protocol === 'ipc:') cmd = decodeURIComponent(u.pathname.slice(1)); } catch {} if (cmd === 'plugin:dialog|open' || cmd === 'plugin:dialog|save') { window.__dialogs.push(cmd); const v = window.__picks.length ? window.__picks.shift() : null; return new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json', 'Tauri-Response': 'ok' } }); } const res = await of(input, init); if (cmd) { try { window.__last[cmd] = await res.clone().json(); } catch { window.__last[cmd] = '(non JSON)'; } } return res; }; return 'dialogues natifs court-circuités (IPC)'; })()",
+    "label": "dialogues natifs remplacés par des chemins préparés (aucune vraie souris)"
+  },
+  {
+    "eval": "(() => { window.__copied = null; navigator.clipboard.writeText = async (text) => { window.__copied = text; }; return 'presse-papiers intercepté (celui du poste reste intact)'; })()",
+    "label": "presse-papiers de la page intercepté"
+  },
+  { "assert": "document.querySelectorAll('.thumb').length === 3", "label": "edge-article ouvert (3 pages)" },
+  { "key": "PageDown" },
+  { "wait": 1500 },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '2'",
+    "label": "page 2 (ligne « Emoji : 😀 🚀 … ») à l'écran"
+  },
+  { "drag": ".page[data-page='1'] .text-layer", "fromFrac": [0.1405, 0.0842], "toFrac": [0.5784, 0.0842] },
+  { "wait": 500 },
+  {
+    "assert": "document.querySelectorAll(\".page[data-page='1'] .sel\").length >= 1 || 'ERREUR aucune sélection'",
+    "label": "glisser sur la ligne de l'émoji : texte sélectionné"
+  },
+  { "shot": "01-selection-emoji.png" },
+  { "key": "c", "ctrl": true },
+  { "wait": 800 },
+  {
+    "assert": "(typeof window.__copied === 'string' && window.__copied.startsWith('Emoji') && window.__copied.includes('😀') && window.__copied.includes('🚀') && window.__copied.includes('π')) || 'ERREUR ' + JSON.stringify(window.__copied)",
+    "label": "Ctrl+C copie « Emoji : 😀 🚀 — … π » (paires de substitution intactes)"
+  },
+  { "eval": "JSON.stringify(window.__copied)", "label": "texte copié" },
+  { "assert": "document.body.innerText.includes('Texte copié')", "label": "avis « Texte copié. »" },
+  { "key": "f", "ctrl": true },
+  { "wait": 400 },
+  {
+    "eval": "(() => { const i = document.querySelector('.searchbar input[type=text]'); i.value = '😀'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()",
+    "label": "rechercher « 😀 »"
+  },
+  { "wait": 1500 },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.trim() === '1 / 1' || 'ERREUR ' + document.querySelector('.searchbar .count').textContent",
+    "label": "« 😀 » trouvé une fois"
+  },
+  {
+    "assert": "document.querySelector('input[aria-label=\"Numéro de page\"]').value === '2'",
+    "label": "l'occurrence est en page 2"
+  },
+  { "shot": "02-recherche-emoji.png" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  {
+    "eval": "(() => { window.__picks.push(['C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/ArabicCIDTrueType.pdf']); return true; })()",
+    "label": "ouvrir polices/ArabicCIDTrueType.pdf"
+  },
+  { "key": "o", "ctrl": true },
+  { "wait": 3000 },
+  {
+    "assert": "(() => { const s = window.__last['open_document']; return (s && s.path.endsWith('ArabicCIDTrueType.pdf')) || 'ERREUR ' + JSON.stringify(s); })()",
+    "label": "ArabicCIDTrueType.pdf ouvert"
+  },
+  {
+    "eval": "window.__TAURI_INTERNALS__.invoke('page_text', { id: window.__last['open_document'].id, page: 0 })",
+    "label": "texte de la page (commande page_text)"
+  },
+  { "key": "f", "ctrl": true },
+  { "wait": 400 },
+  {
+    "eval": "(() => { const i = document.querySelector('.searchbar input[type=text]'); i.value = 'الخطوط'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()",
+    "label": "rechercher le mot isolé « الخطوط »"
+  },
+  { "wait": 1500 },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.trim() === '1 / 4' || 'ERREUR ' + document.querySelector('.searchbar .count').textContent",
+    "label": "« الخطوط » trouvé 4 fois (une par ligne)"
+  },
+  { "assert": "document.querySelectorAll('.page .hit').length === 4 || 'ERREUR aucune surbrillance'", "label": "quatre occurrences surlignées sur la page" },
+  { "shot": "03-recherche-arabe.png" },
+  {
+    "eval": "(() => { const i = document.querySelector('.searchbar input[type=text]'); i.value = 'انواع'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()",
+    "label": "rechercher le premier mot « انواع »"
+  },
+  { "wait": 1500 },
+  {
+    "assert": "document.querySelector('.searchbar .count').textContent.trim() === '1 / 4' || 'ERREUR ' + document.querySelector('.searchbar .count').textContent",
+    "label": "« انواع » trouvé 4 fois"
+  },
+  { "shot": "04-recherche-arabe-2.png" }
+]

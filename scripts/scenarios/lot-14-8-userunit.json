@@ -1,0 +1,21 @@
+[
+  { "wait": 2000 },
+  { "assert": "document.querySelectorAll('.page img').length >= 1", "label": "user-unit.pdf (simple.pdf + /UserUnit 10 posé par qpdf) ouvert" },
+  { "click": "button[title^='Propriétés']" },
+  { "wait": 1200 },
+  {
+    "eval": "document.querySelector('[role=dialog]') ? document.querySelector('[role=dialog]').innerText : 'PAS DE DIALOGUE'",
+    "label": "contenu de la boîte Propriétés"
+  },
+  {
+    "assert": "(() => { const d = document.querySelector('[role=dialog]'); const rows = d ? [...d.querySelectorAll('tr')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim()) : []; const row = rows.find((r) => r.includes('UserUnit')); return (row && row.includes('UserUnit 10') && /2\\D?100 × 2\\D?970 mm/.test(row)) || 'ERREUR ' + rows.join(' | '); })()",
+    "label": "taille physique affichée : « 2 100 × 2 970 mm (UserUnit 10) » pour une page de 595 × 842 pt"
+  },
+  { "shot": "01-proprietes-userunit.png" },
+  { "key": "Escape" },
+  { "wait": 300 },
+  {
+    "eval": "(() => { const r = document.querySelector('.page[data-page=\\'0\\']').getBoundingClientRect(); return 'page affichée : ' + Math.round(r.width) + ' × ' + Math.round(r.height) + ' px (PDFium ignore /UserUnit, comme prévu)'; })()",
+    "label": "affichage inchangé"
+  }
+]

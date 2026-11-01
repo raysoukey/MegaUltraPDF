@@ -1,0 +1,46 @@
+[
+  { "wait": 2000 },
+  { "assert": "document.querySelectorAll('.page img').length >= 1", "label": "copie de simple.pdf ouverte" },
+  {
+    "eval": "window.__TAURI_INTERNALS__.invoke('file_size', { path: 'C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/simple-omega.pdf' }).then((s) => { window.__before = s; return 'avant : ' + s + ' o'; })",
+    "label": "taille de départ"
+  },
+  { "click": "button[aria-label='Texte dans la page']" },
+  { "wait": 300 },
+  { "drag": ".page[data-page='0'] .object-layer", "from": [100, 150], "to": [100, 150] },
+  { "wait": 800 },
+  { "assert": "document.querySelector('#text-insert-title') !== null", "label": "dialogue d'insertion de texte ouvert" },
+  {
+    "eval": "(() => { const a = document.querySelector('.dialog textarea'); a.value = 'Ω'; a.dispatchEvent(new Event('input', { bubbles: true })); return document.querySelector('.dialog select') ? document.querySelector('.dialog select').value : '(pas de choix de police)'; })()",
+    "label": "texte « Ω » (police par défaut, bascule Unicode automatique)"
+  },
+  {
+    "eval": "(() => { [...document.querySelectorAll('.dialog button')].find((b) => b.textContent.trim() === 'Insérer').click(); return true; })()",
+    "label": "clic « Insérer »"
+  },
+  { "wait": 2500 },
+  {
+    "assert": "(document.querySelector('#text-insert-title') === null && document.querySelector('main .error') === null && document.querySelector('button[title^=\"Annuler : Insérer du texte\"]') !== null) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "« Ω » inséré sans erreur"
+  },
+  {
+    "assert": "window.__TAURI_INTERNALS__.invoke('page_text', { id: 1, page: 0 }).then((t) => t.includes('Ω') || 'ERREUR ' + t)",
+    "label": "« Ω » est dans le texte de la page (extractible)"
+  },
+  { "shot": "01-omega.png" },
+  { "key": "s", "ctrl": true },
+  { "wait": 3500 },
+  {
+    "assert": "(document.querySelector('main .error') === null && !document.querySelector('[role=tab][aria-selected=true]').textContent.trim().endsWith('•')) || 'ERREUR ' + ((document.querySelector('main .error') || {}).textContent || '')",
+    "label": "enregistré"
+  },
+  {
+    "eval": "window.__TAURI_INTERNALS__.invoke('file_size', { path: 'C:/Users/labre/Desktop/Reflexia/MegaUltraPDF/target/ui-check/lot-14/work/simple-omega.pdf' }).then((s) => { window.__after = s; return 'après : ' + s + ' o (' + (s / 1024).toFixed(1) + ' Kio)'; })",
+    "label": "taille après enregistrement"
+  },
+  {
+    "assert": "window.__after < 100 * 1024 || 'ERREUR ' + window.__after + ' o'",
+    "label": "le fichier reste sous 100 Ko (police DejaVu sous-ensemble)"
+  },
+  { "shot": "02-enregistre.png" }
+]

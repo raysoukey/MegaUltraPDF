@@ -30,7 +30,7 @@ et chaque lot de fonctionnalités s'accompagne d'une note d'apprentissage (`docs
 | 11 | Lecteur PDF par défaut : une seule instance (fichiers en onglets), état et bouton dans les préférences | ✅ |
 | 12 | Identité visuelle : icône d'application, icônes d'actions, logo, bannière | ✅ |
 | 13 | Robustesse et compatibilité : audit, fichiers abîmés ou piégés, fuzzing, journal local, sorties vérifiées par qpdf, chiffrements, hébreu/arabe/japonais vertical, PDF/A, écrans haute résolution, paquets | ✅ |
-| 14 | Compatibilité mesurée : corrections d'un audit sur 137 PDF, 132 réels et 5 générés sur ce poste (rien de supprimé ne survit, catalogue gardé à la fusion, version et XMP conservés, PDF/A et PDF/UA respectés, émojis et texte CJK extraits, fichiers plus légers), chaque écriture vérifiée par qpdf (et par MuPDF et pdf.js quand ils sont installés) | 🚧 |
+| 14 | Compatibilité mesurée : corrections d'un audit sur 137 PDF, 132 réels et 5 générés sur ce poste (rien de supprimé ne survit, catalogue gardé à la fusion, version et XMP conservés, PDF/A et PDF/UA respectés, émojis et texte CJK extraits, fichiers plus légers), chaque écriture vérifiée par qpdf (et par MuPDF et pdf.js quand ils sont installés) | ✅ |
 
 ## Installation
 

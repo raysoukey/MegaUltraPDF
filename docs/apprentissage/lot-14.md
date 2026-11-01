@@ -16,11 +16,11 @@
 ## Concepts Rust rencontrés
 
 1. **`#[must_use]` et un passage obligé** : `Saved` porte `#[must_use]`
-   (`crates/mega-core/src/cleanup/mod.rs:37`).
+   (`crates/mega-core/src/cleanup/mod.rs:42`).
    - Le compilateur avertit si une valeur est calculée puis jetée : un nettoyage dont on
      oublierait de lire le résultat ne passerait pas `clippy -D warnings`.
-   - Les octets ne sortent que par `into_checked` (`:53`), qui refuse si une suppression n'a
-     pas été nettoyée ; voir l'appel dans `crates/mega-core/src/edit.rs:869`.
+   - Les octets ne sortent que par `into_checked` (`:60`), qui refuse si une suppression n'a
+     pas été nettoyée ; voir l'appel dans `crates/mega-core/src/edit.rs:878`.
    - Pas encore de fiche : proposer `/concept must-use`.
 2. **Une `enum` à états nommés au lieu d'`Option<Option<_>>`** : `CidMap`
    (`crates/mega-core/src/cleanup/subset.rs:62`) et `FontState` (`:596`).
@@ -29,7 +29,7 @@
    - Fiche : [enums et match exhaustif](concepts/enums-et-match-exhaustif.md).
 3. **`match` exhaustif sans bras `_`** : un oubli devient une erreur de compilation.
    - Les entrées de la table de références sont toutes nommées
-     (`crates/mega-core/src/crypt.rs:816`) : si `lopdf` ajoute une variante, ce code ne
+     (`crates/mega-core/src/crypt.rs:849`) : si `lopdf` ajoute une variante, ce code ne
      compile plus tant qu'on n'a pas décidé quoi en faire.
    - Dans les tests, `variant` (`crates/mega-core/tests/conformance/main.rs:483`) nomme
      chaque `EditCommand`, et `missing_variants` (`:528`) vérifie à l'exécution que chacune
@@ -59,7 +59,7 @@
      sans `Box`.
    - Fiche : [`OnceLock`](concepts/oncelock.md).
 8. **Un objet-trait choisi à l'exécution** : `MetadataCipher::Encrypt(Arc<dyn CryptFilter>)`
-   (`crates/mega-core/src/crypt.rs:490`).
+   (`crates/mega-core/src/crypt.rs:523`).
    - Le fichier dit lequel de RC4, AES-128 ou AES-256 employer ; les appels vont à
      l'implémentation de ce type-là. `Arc` partage le filtre sans le copier.
    - Fiche : [traits et objets de trait](concepts/traits-et-objets-de-trait.md).
@@ -71,12 +71,12 @@
    - `text/tounicode.rs:35` (un cadre par formulaire) et `cleanup/mcid.rs:180`.
    - Fiche : [complexité et collections](concepts/complexite-et-collections.md).
 10. **Une recherche en temps linéaire sur des octets hostiles** : `may_have_filtered_metadata`
-    (`crates/mega-core/src/crypt.rs:719`).
+    (`crates/mega-core/src/crypt.rs:752`).
     - Trois curseurs n'avancent que vers la fin du fichier : aucune recherche ne repart de
       zéro pour chaque nom trouvé. Le test `:1361` le prouve sur 1 Mio de noms.
     - Fiche : [complexité et collections](concepts/complexite-et-collections.md).
 11. **Une fonction pure sur un `lopdf::Document`** : `reorder_kids`
-    (`crates/mega-core/src/pages/reorder.rs:232`) ne prend ni fichier ni PDFium.
+    (`crates/mega-core/src/pages/reorder.rs:235`) ne prend ni fichier ni PDFium.
     - Ses tests (`:314`) construisent un petit document à la main et regardent le résultat.
     - Même idée pour `load_preferring` (`crates/mega-core/src/document.rs:441`) : générique,
       elle reçoit le chargement sous forme de fermeture, et le test lui en passe une qui
@@ -95,7 +95,9 @@
   - pas de repli silencieux après une suppression : garde `ensure_cleanable`
     (`crates/mega-core/src/document.rs:295`) **avant** `mark_changed`, puis `into_checked` ;
   - passe-plat pour les filtres `Identity` : élagué sans renuméroter, car le numéro d'un objet
-    entre dans la clé de ses octets chiffrés ;
+    entre dans la clé de ses octets chiffrés ; il ne demande aucun mot de passe, même quand
+    `lopdf` ne s'authentifie pas (relecture finale, `crates/mega-core/src/crypt.rs`,
+    `is_identity_pass_through`) ;
   - version d'en-tête d'origine reposée après PDFium (`crypt::header_version`), jamais baissée ;
   - report du catalogue après fusion, extraction, scission (`pages/carry`), sans scripts ni
     arbre de structure ni `/MarkInfo` ;
@@ -125,14 +127,14 @@
   - Premier contournement (`encrypt_metadata: false` à la protection) annulé : il ne réglait
     que nos propres fichiers.
   - Correction : `seal_metadata` rechiffre ce seul flux à chaque sortie de PDFium
-    (`crates/mega-core/src/document.rs:219`, `crypt.rs:662`).
+    (`crates/mega-core/src/document.rs:219`, `crypt.rs:695`).
 - **PDFium retire le `/Filter` d'un XMP compressé** mais garde les octets compressés : titre,
   auteur et déclaration PDF/A illisibles dès la première édition. On lui donne une copie au XMP
   décodé, par un seul point d'entrée (`load_file_bytes`, `document.rs:423`). Le rechargement
   après une signature contournait d'abord la correction : d'où ce point unique.
 - **Une lecture `lopdf` trop indulgente** : `lopdf` saute un objet mal formé sans erreur. La
   copie réécrite pouvait donc montrer à PDFium un **autre** document. Elle n'est faite que si
-  tout concorde (`unfiltered_metadata_copy`, `crypt.rs:793`) :
+  tout concorde (`unfiltered_metadata_copy`, `crypt.rs:826`) :
   - `%PDF-` au tout début, lecture sans réparation de la remorque ;
   - table de références non réparée ;
   - chaque entrée en usage présente (`:810`) ;
@@ -140,7 +142,7 @@
 - **Un balayage quadratique** : pour chaque `/Metadata` trouvé, la première version de
   `may_have_filtered_metadata` cherchait le `obj` précédent et le `stream` suivant à travers
   tout le fichier ; 1 Mio de `/Type/Metadata` répétés prenait des minutes. Des curseurs qui
-  n'avancent jamais en arrière, et une fenêtre de 4 Kio, ont réglé cela (`crypt.rs:719`).
+  n'avancent jamais en arrière, et une fenêtre de 4 Kio, ont réglé cela (`crypt.rs:752`).
 - **`mark_changed()` appelé avant les gardes** : un appel refusé laissait le document
   « modifié », et l'enregistrement suivant le réécrivait au lieu de garder ses octets
   d'origine (une signature aurait été rompue).
@@ -148,22 +150,22 @@
     le déplacement.
   - `crop_pages` validait page par page en recadrant : un refus sur la page 3 laissait les
     pages 1 et 2 recadrées. Il calcule maintenant tout d'abord
-    (`crates/mega-core/src/overlay.rs:414`).
+    (`crates/mega-core/src/overlay.rs:416`).
 - **Le trou `ExtGState /Font` du sous-ensemble de police** : l'opérateur `gs` peut changer de
   police sans `Tf`, et les glyphes suivants auraient été comptés pour l'ancienne police. La
   passe renonce alors (`graphics_state_escapes`, `cleanup/subset.rs:444`). Même revue : un
   fichier citant les 65 536 CID faisait paniquer `subsetter` (`:794`).
 - **Pas de `FPDF_MovePages` dans pdfium-render** : l'ancien déplacement copiait la page, nouvel
   objet que plus rien ne visait. On réordonne `/Kids`, et l'on refuse si `lopdf` ne voit pas
-  les mêmes pages que PDFium (`crates/mega-core/src/pages/mod.rs:141`).
+  les mêmes pages que PDFium (`crates/mega-core/src/pages/mod.rs:148`).
 - **L'éditeur de liens à court de mémoire** : la suite de conformité se lance avec `-j 2`, deux
   compilations à la fois au lieu d'une par cœur (`CONTRIBUTING.md:49`).
 
 ## Exercices de lecture
 
-1. `crates/mega-core/src/pages/mod.rs:116` (`move_pages`) : pourquoi `reordered_bytes` est-il
+1. `crates/mega-core/src/pages/mod.rs:121` (`move_pages`) : pourquoi `reordered_bytes` est-il
    appelé **avant** `mark_changed`, et que perdrait un fichier signé si l'ordre était inverse ?
-2. `crates/mega-core/src/crypt.rs:793` (`unfiltered_metadata_copy`) : pourquoi les octets
+2. `crates/mega-core/src/crypt.rs:826` (`unfiltered_metadata_copy`) : pourquoi les octets
    d'origine (`file_bytes`) ne sont-ils jamais remplacés par la copie, alors que PDFium ne voit
    que la copie ?
 3. `crates/mega-core/src/cleanup/subset.rs:617` (`read_strings`) : que se passerait-il si

@@ -60,8 +60,10 @@ Quelques mots employés plus bas :
    - Toute opération qui **retire** une information appelle d'abord
      `Document::ensure_cleanable` : `delete_annotation`, `update_annotation`,
      `set_annotation_rect`, `delete_pages`, `delete_object`, `set_object_text`,
-     `delete_attachment` et le caviardage. La garde vérifie que `lopdf` relit la sortie
-     actuelle de PDFium (`cleanup::check_cleanable`). Sinon : refus `InvalidOperation`
+     `delete_attachment`, le caviardage et, depuis la relecture finale, `flatten_all` (les
+     annotations aplaties quittent `/Annots`, leur texte devient orphelin) et
+     `set_field_value` (l'ancienne apparence du champ devient orpheline). La garde vérifie
+     que `lopdf` relit la sortie actuelle de PDFium (`cleanup::check_cleanable`). Sinon : refus `InvalidOperation`
      (« la suppression est refusée, l'ajout reste possible »), document intact.
    - La garde passe **avant** `mark_changed()` : une opération refusée ne rend pas le document
      « modifié » (un fichier signé ne serait pas réécrit pour rien). La même règle vaut pour
@@ -89,7 +91,15 @@ Quelques mots employés plus bas :
    `crypt::LopdfSession` lit alors le fichier **sans déchiffrer**, élague les orphelins, remet
    `/Encrypt` et `/ID` tels quels et **ne renumérote pas** les objets : le numéro d'un objet
    entre dans la clé de ses octets chiffrés. Un tel fichier sans remorque classique (table de
-   références en flux) reste refusé, comme avant.
+   références en flux) reste refusé, comme avant ; les gardes et l'enregistrement lisent
+   toutefois la sortie de PDFium, qui en a toujours une.
+   - **Aucun mot de passe n'est nécessaire** (relecture finale, constat F24-1). Rien n'étant
+     chiffré hors des pièces jointes, PDFium ouvre ces fichiers sans vérifier de mot de passe,
+     même quand le mot de passe d'ouverture n'est pas vide ; `lopdf`, lui, ne s'y authentifie
+     pas et laisse le document chiffré. `LopdfSession` lit alors le dictionnaire `/Encrypt`
+     (jamais chiffré) et, pour le gestionnaire standard à filtres `Identity` en version 4 ou
+     plus, ouvre la session passe-plat, qui ne lit aucune clé. Les pièces jointes, seules
+     chiffrées, ne sont ni déchiffrées ni rechiffrées : leurs octets sont recopiés.
 3. **Version d'en-tête d'origine** (E2, E8). PDFium réécrit toujours l'en-tête en 1.x ; on
    reprend donc la version du fichier d'origine **après** PDFium, au moment où `lopdf` réécrit
    le fichier, plutôt que d'essayer de la faire écrire à PDFium, qui ne le sait pas.
@@ -280,6 +290,17 @@ Quelques mots employés plus bas :
   `lopdf` de plus : mesuré au CLI en fin de lot sur `producteurs/tracemonkey.pdf` (1 Mo, 14 pages,
   profil `debug`, médiane de 7 passes), une extraction de 13 pages prend 186 ms contre 170 ms pour
   une rotation sans contrôle, soit au plus 15 ms par Mo ; le profil `release` divise ce coût.
+- Après un enregistrement qui réécrit le fichier, PDFium est **rechargé depuis les octets
+  écrits** (relecture finale, I1). Sans cela, la lecture `lopdf` (qui relit le fichier écrit,
+  nettoyé) et PDFium (resté sur l'état d'avant le nettoyage) pouvaient donner des index
+  `/Annots` différents : retirer une pièce jointe de page après avoir supprimé une note et
+  enregistré supprimait la mauvaise. Coût mesuré au CLI sur `producteurs/tracemonkey.pdf`
+  (1 Mo, rotation d'une page puis enregistrement, profil `debug`, médianes de deux séries de
+  7 passes) : 163 ms avant, 165 à 166 ms après, soit environ 3 ms par Mo. Un enregistrement
+  sans modification (octets recopiés) ne recharge rien.
+- Un déplacement de pages sans effet (la sélection est déjà à sa place) ne touche à rien :
+  pas d'étape d'historique, document non modifié, octets du fichier recopiés tels quels à
+  l'enregistrement (une signature reste intacte).
 - Un document fusionné, extrait ou scindé garde son formulaire (remplissable), ses signets,
   ses pièces jointes, ses calques et son XMP ; il perd son arbre de structure et ses scripts.
 - L'identifiant `/ID` reste conforme : pour un fichier existant, le premier est conservé et le
@@ -306,12 +327,16 @@ sur le corpus de l'audit :
 - **F21-4** : le XMP d'un document chiffré écrit en clair par PDFium (corrigé, décision 8) ;
 - **F21-5** : le XMP compressé dont PDFium retire le filtre (corrigé, décision 8, sauf pour les
   fichiers ci-dessous).
-- **F24-1** (checklist de fin de lot) : un fichier dont seules les pièces jointes sont chiffrées
-  sous mot de passe (`navigation/encrypted-attachment.pdf`, cas L10 de l'audit) s'ouvre sans mot
-  de passe, mais `lopdf` ne sait pas le réécrire : toute suppression y est **refusée** (décision 1)
-  au lieu de fuir, et l'interface ne propose pas le mot de passe qui lèverait le refus ; le même
-  parcours réussit sur un document chiffré ordinaire (`enc-R6-U-view-O-master.pdf`). Demander ce
-  mot de passe à la volée est une dette reportée.
+- **F24-1** (checklist de fin de lot, corrigé par la relecture finale) : un fichier dont seules
+  les pièces jointes sont chiffrées (`navigation/encrypted-attachment.pdf`, cas L10 de l'audit ;
+  `chiffrement/enc-R6-encrypted-attachments.pdf`, observation O24-1) s'ouvre sans mot de passe,
+  mais toute suppression y était **refusée**. La cause n'était pas le mot de passe manquant :
+  `lopdf` ne s'authentifiait pas, et la session refusait le document resté chiffré **avant**
+  d'examiner ses filtres. Avec des filtres `Identity`, la session passe-plat s'applique
+  désormais sans mot de passe (décision 2) : la note supprimée disparaît du fichier, qui reste
+  chiffré, pièces jointes intactes (tests de `tests/conformance/encrypted.rs` sur le fichier
+  du corpus et de `tests/cleanup.rs` sur un fichier généré à mot de passe d'ouverture).
+  L'interface n'a donc pas à demander ce mot de passe : l'ancienne dette O24-1 est sans objet.
 
 Ce qui reste :
 
@@ -374,9 +399,11 @@ Ce qui reste :
 ## Dettes reportées
 
 - Découper `cleanup/subset.rs` (près de 1 500 lignes) et `cleanup/mod.rs` en sous-modules.
-- Partager les aides `lopdf` de page (quatre copies de `inherited_resources`) ; remplacer la
-  fonction récursive `refs_of` de `cleanup::reachable`, antérieure au lot (écart à
-  l'ADR-0017 : pas de récursion sur une structure venue du fichier).
+- Partager les aides `lopdf` de page (quatre copies de `inherited_resources`) ; remplacer par
+  une pile explicite les fonctions récursives antérieures au lot : `refs_of` de
+  `cleanup::reachable`, et `walk` de `signature_fields` (`digital_signature/pdf.rs`, bornée à
+  32 niveaux, avec ensemble des nœuds visités). Écart à l'ADR-0017 : pas de récursion sur une
+  structure venue du fichier.
 - Tailler `/W` et `/ToUnicode` aux seuls caractères utilisés (quelques Ko à gagner par police).
 - Faire passer l'image d'une signature visuelle par `content::image::place` (elle passe encore
   par PDFium).

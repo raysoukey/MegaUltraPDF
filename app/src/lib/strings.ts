@@ -492,7 +492,7 @@ export const fr = {
     ].join(', '),
   protectTitle: 'Protéger…',
   protectHint:
-    'AES-256. Protéger est la dernière étape : un document protégé ne peut plus recevoir de filigrane, de numérotation ni de nouvelles métadonnées tant que la protection n’est pas retirée.',
+    'AES-256. Le document reste modifiable avec son mot de passe : chaque enregistrement le chiffre de nouveau avec le même mot de passe.',
   protectAlready: 'Ce document est protégé par un mot de passe.',
   protectUserPassword: 'Mot de passe d’ouverture',
   protectConfirm: 'Confirmer',
@@ -1110,7 +1110,7 @@ export const en: Strings = {
     ].join(', '),
   protectTitle: 'Protect…',
   protectHint:
-    'AES-256. Protecting is the last step: a protected document can no longer receive a watermark, page numbers or new metadata until its protection is removed.',
+    'AES-256. The document stays editable with its password: every save encrypts it again with the same password.',
   protectAlready: 'This document is password-protected.',
   protectUserPassword: 'Open password',
   protectConfirm: 'Confirm',

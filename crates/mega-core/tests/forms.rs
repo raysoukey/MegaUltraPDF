@@ -639,3 +639,15 @@ fn only_save_drops_need_appearances_when_an_appearance_is_out_of_date() {
     assert!(appearance.contains("Salut"), "{appearance}");
     assert!(!appearance.contains("Bonjour"), "{appearance}");
 }
+
+/// Relecture finale du Lot 14 (I2) : aplatir retire les annotations de `/Annots` (leur
+/// dictionnaire, texte d'une note compris, devient orphelin) : c'est une suppression, que
+/// l'enregistrement doit pouvoir nettoyer (`ensure_cleanable`, drapeau `needs_cleanup`).
+#[test]
+fn flatten_sets_needs_cleanup() {
+    let mut doc =
+        Document::from_bytes(mega_core::testing::note_with_popup_pdf("SECRET"), None).unwrap();
+    assert!(!doc.needs_cleanup());
+    doc.flatten_all().unwrap();
+    assert!(doc.needs_cleanup());
+}

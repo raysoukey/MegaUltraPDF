@@ -251,6 +251,10 @@ impl Document {
     /// que les apparences. Le dictionnaire `/AcroForm` est ensuite retiré (`lopdf`) pour ne
     /// pas laisser de champs orphelins aux autres lecteurs.
     pub fn flatten_all(&mut self) -> CoreResult<()> {
+        // `flatten` retire les annotations de `/Annots` : leurs dictionnaires (le texte d'une
+        // note compris) deviennent orphelins, et seul le nettoyage à l'enregistrement les
+        // retire du fichier. C'est donc une suppression (ADR-0019, décision 1).
+        self.ensure_cleanable()?;
         self.mark_changed();
         let had_form = self.form_info()?.form_type != FormType::None;
         {

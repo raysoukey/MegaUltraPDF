@@ -306,6 +306,12 @@ sur le corpus de l'audit :
 - **F21-4** : le XMP d'un document chiffré écrit en clair par PDFium (corrigé, décision 8) ;
 - **F21-5** : le XMP compressé dont PDFium retire le filtre (corrigé, décision 8, sauf pour les
   fichiers ci-dessous).
+- **F24-1** (checklist de fin de lot) : un fichier dont seules les pièces jointes sont chiffrées
+  sous mot de passe (`navigation/encrypted-attachment.pdf`, cas L10 de l'audit) s'ouvre sans mot
+  de passe, mais `lopdf` ne sait pas le réécrire : toute suppression y est **refusée** (décision 1)
+  au lieu de fuir, et l'interface ne propose pas le mot de passe qui lèverait le refus ; le même
+  parcours réussit sur un document chiffré ordinaire (`enc-R6-U-view-O-master.pdf`). Demander ce
+  mot de passe à la volée est une dette reportée.
 
 Ce qui reste :
 

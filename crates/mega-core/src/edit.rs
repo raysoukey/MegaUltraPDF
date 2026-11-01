@@ -457,6 +457,10 @@ impl Command for EditCommand {
             #[cfg(feature = "ocr")]
             EditCommand::OcrPage { page, .. } => doc.page_has_text(*page).unwrap_or(true),
             // Un déplacement nul (la sélection est déjà à sa place) ne touche à rien.
+            // Invariant : `changes_order` (fonction pure) et `reorder_kids` (qui réordonne
+            // vraiment) doivent répondre la même chose ; le test
+            // `changes_order_agrees_with_reorder_kids` le garantit. S'ils divergeaient, un vrai
+            // déplacement serait cru sans effet et perdu à l'enregistrement.
             EditCommand::MovePages { pages, to } => crate::pages::changes_order(pages, *to),
             _ => true,
         }
@@ -810,14 +814,15 @@ impl Document {
             return Ok(());
         }
         let bytes = self.rewritten_bytes()?;
-        write_atomically(path, &bytes)?;
         // Le nettoyage a pu retirer des objets que PDFium garde en mémoire (popup d'une note
-        // supprimée, entrées de `/Annots`) : on recharge PDFium depuis les octets **écrits**,
-        // sinon un index lu dans le fichier (`lopdf_view`, qui relit `file_bytes`) et le même
-        // index dans PDFium désigneraient deux annotations différentes (relecture finale du
-        // Lot 14, I1). Comme pour une signature : rechargement, puis état « enregistré ».
-        // Un échec laisse le document « modifié » : le prochain enregistrement le réécrira.
+        // supprimée, entrées de `/Annots`) : on recharge PDFium depuis les octets qui vont être
+        // écrits, sinon un index lu dans le fichier (`lopdf_view`, qui relit `file_bytes`) et le
+        // même index dans PDFium désigneraient deux annotations différentes (relecture finale du
+        // Lot 14, I1). Le rechargement précède l'écriture : s'il échoue, rien n'a été écrit et
+        // le document reste « modifié » ; si c'est l'écriture qui échoue ensuite, PDFium décrit
+        // le même contenu, nettoyé, et le document reste « modifié » lui aussi.
         self.reload_from_bytes(bytes.clone())?;
+        write_atomically(path, &bytes)?;
         // Ce qui vient d'être écrit est désormais l'état du fichier.
         self.mark_saved(path, bytes);
         Ok(())
